@@ -1,0 +1,1 @@
+export const themeInitScript = `(function(){try{var k='mtaji-siasa-theme';var t=localStorage.getItem(k);var light=t==='light';var r=document.documentElement;r.classList.toggle('light',light);r.classList.toggle('dark',!light);r.style.colorScheme=light?'light':'dark';}catch(e){document.documentElement.classList.add('dark');document.documentElement.style.colorScheme='dark';}})();`;
