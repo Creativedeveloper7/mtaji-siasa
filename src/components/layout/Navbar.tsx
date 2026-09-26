@@ -93,7 +93,7 @@ export function Navbar() {
 
   const authMobile = !ready ? null : user ? (
     <>
-      <p className="text-small text-ink-muted">Signed in as {user.fullName}</p>
+      <p className="text-small text-ink">Signed in as {user.fullName}</p>
       {user.role === "admin" && (
         <Button href="/admin" variant="outline" fullWidth>
           Admin dashboard
@@ -130,9 +130,11 @@ export function Navbar() {
     <header
       className={cn(
         "sticky top-0 z-50 border-b transition-colors duration-base",
-        scrolled
-          ? "border-border bg-bg/90 backdrop-blur-md"
-          : "border-transparent bg-bg/70 backdrop-blur-sm"
+        open
+          ? "border-border bg-bg-elevated"
+          : scrolled
+            ? "border-border bg-bg/90 backdrop-blur-md"
+            : "border-transparent bg-bg/70 backdrop-blur-sm"
       )}
     >
       <div className="container-wide flex h-[var(--nav-height)] items-center justify-between gap-4">
@@ -164,7 +166,7 @@ export function Navbar() {
           <ThemeToggle />
           <button
             type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-md text-ink-muted hover:bg-surface hover:text-ink"
+            className="flex h-10 w-10 items-center justify-center rounded-md text-ink hover:bg-surface"
             aria-label="Search"
             onClick={() => setSearchOpen((v) => !v)}
           >
@@ -172,7 +174,7 @@ export function Navbar() {
           </button>
           <button
             type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-md text-ink-muted hover:bg-surface hover:text-ink"
+            className="flex h-10 w-10 items-center justify-center rounded-md text-ink hover:bg-surface"
             aria-label={open ? "Close menu" : "Open menu"}
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
@@ -183,7 +185,7 @@ export function Navbar() {
       </div>
 
       {searchOpen && (
-        <div className="border-t border-border px-[var(--container-pad)] py-3 lg:hidden">
+        <div className="border-t border-border bg-bg-elevated px-[var(--container-pad)] py-3 lg:hidden">
           <form action="/projects" method="get">
             <label className="sr-only" htmlFor="mobile-search">
               Search projects
@@ -201,31 +203,48 @@ export function Navbar() {
       )}
 
       {open && (
-        <div className="fixed inset-x-0 top-[var(--nav-height)] bottom-0 z-40 border-t border-border bg-bg lg:hidden">
-          <nav className="flex h-full flex-col px-[var(--container-pad)] py-6" aria-label="Mobile">
-            <ul className="space-y-1">
-              {navLinks.map((link) => (
-                <li key={link.label}>
+        <div className="fixed inset-x-0 top-[var(--nav-height)] bottom-0 z-40 lg:hidden">
+          <div className="absolute inset-0 bg-bg-elevated" aria-hidden />
+          <nav
+            className="mobile-nav-sheet relative flex h-full min-h-0 flex-col bg-bg-elevated px-[var(--container-pad)] pt-4"
+            aria-label="Mobile"
+          >
+            <div className="mobile-nav-scroll min-h-0 flex-1 pb-4">
+              <ul className="space-y-1 pb-2">
+                {navLinks.map((link) => (
+                  <li key={link.label}>
+                    <Link
+                      href={link.href}
+                      className={cn(
+                        "mobile-nav-link block rounded-md px-3 py-3 text-h3 hover:bg-surface focus-visible:bg-surface",
+                        isActive(link.href)
+                          ? "bg-accent-soft text-accent"
+                          : "text-ink"
+                      )}
+                    >
+                      {link.label}
+                    </Link>
+                  </li>
+                ))}
+                <li>
                   <Link
-                    href={link.href}
+                    href="/polls"
                     className={cn(
-                      "block rounded-md px-3 py-3 text-h3 transition-colors",
-                      isActive(link.href) ? "text-accent" : "text-ink"
+                      "mobile-nav-link block rounded-md px-3 py-3 text-h3 hover:bg-surface focus-visible:bg-surface",
+                      isActive("/polls")
+                        ? "bg-accent-soft text-accent"
+                        : "text-ink"
                     )}
                   >
-                    {link.label}
+                    Polls
                   </Link>
                 </li>
-              ))}
-              <li>
-                <Link href="/polls" className="block rounded-md px-3 py-3 text-h3 text-ink">
-                  Polls
-                </Link>
-              </li>
-            </ul>
-            <div className="mt-auto space-y-3 border-t border-border pt-6">
+              </ul>
+            </div>
+
+            <div className="mobile-nav-footer space-y-3 border-t border-border pt-5">
               <div className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2.5">
-                <span className="text-small text-ink-muted">Appearance</span>
+                <span className="text-small text-ink">Appearance</span>
                 <ThemeToggle />
               </div>
               {authMobile}
