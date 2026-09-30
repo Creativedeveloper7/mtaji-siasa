@@ -60,6 +60,58 @@ interface ContentContextValue {
 
 const ContentContext = createContext<ContentContextValue | null>(null);
 
+/** Previous seed values that should be refreshed when still untouched. */
+const LEGACY_PROJECT_IMAGES = new Set([
+  "https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=1400&q=80",
+  "https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?w=1400&q=80",
+  "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=1400&q=80",
+]);
+
+const LEGACY_ELIGIBILITY = new Set([
+  "Registered local suppliers within Kiambu County with valid tax compliance.",
+  "Youth aged 18–35 residing in Thika Town Ward.",
+  "NCA-registered contractors with demonstrated health facility experience.",
+]);
+
+const LEGACY_DEADLINES: Record<string, string> = {
+  "opp-001": "2026-04-30",
+  "opp-002": "2026-05-15",
+  "opp-003": "2026-03-28",
+  "opp-004": "2026-04-10",
+  "opp-005": "2026-06-01",
+  "opp-006": "2026-05-20",
+  "opp-007": "2026-07-31",
+  "opp-008": "2026-04-22",
+  "opp-009": "2026-03-15",
+  "opp-010": "2026-05-05",
+};
+
+function refreshSeedFields(stored: PlatformContent): PlatformContent {
+  const seed = createSeedContent();
+  const seedProjects = new Map(seed.projects.map((p) => [p.id, p]));
+  const seedOpps = new Map(seed.opportunities.map((o) => [o.id, o]));
+  return {
+    ...stored,
+    projects: stored.projects.map((p) => {
+      const s = seedProjects.get(p.id);
+      return s && LEGACY_PROJECT_IMAGES.has(p.image) ? { ...p, image: s.image } : p;
+    }),
+    opportunities: stored.opportunities.map((o) => {
+      const s = seedOpps.get(o.id);
+      if (!s) return o;
+      return {
+        ...o,
+        image: o.image || s.image,
+        deadline:
+          LEGACY_DEADLINES[o.id] === o.deadline ? s.deadline : o.deadline,
+        eligibility: LEGACY_ELIGIBILITY.has(o.eligibility)
+          ? s.eligibility
+          : o.eligibility,
+      };
+    }),
+  };
+}
+
 function upsertIn<T extends { id: string }>(list: T[], item: T): T[] {
   const idx = list.findIndex((x) => x.id === item.id);
   if (idx === -1) return [...list, item];
@@ -80,13 +132,15 @@ export function ContentProvider({ children }: { children: ReactNode }) {
         stored?.projects?.length &&
         Array.isArray(stored.milestones)
       ) {
-        setContent({
+        const next = refreshSeedFields({
           ...stored,
           products: (stored.products ?? []).map((p) => ({
             ...p,
             stock: Number.isFinite(Number(p.stock)) ? Number(p.stock) : 0,
           })),
         });
+        setContent(next);
+        writeJson(CONTENT_STORAGE_KEY, next);
       } else {
         writeJson(CONTENT_STORAGE_KEY, createSeedContent());
       }

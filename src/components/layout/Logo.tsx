@@ -35,11 +35,11 @@ export function Logo({
       </span>
       {showWordmark && (
         <span className="flex flex-col leading-none">
-          <span className="text-small font-medium tracking-tight text-ink">
-            M-TAJI <span className="text-accent">SIASA</span>
+          <span className="text-small font-extrabold tracking-tight text-ink">
+            M-TAJI <span className="text-brand-red">SIASA</span>
           </span>
-          <span className="mt-0.5 hidden text-[10px] tracking-[0.08em] text-ink-subtle sm:block">
-            VISIBILITY · EVIDENCE · ENGAGEMENT
+          <span className="mt-0.5 hidden text-[9px] font-semibold uppercase tracking-[0.1em] text-ink-subtle sm:block">
+            Campaigns · Kazi · Community
           </span>
         </span>
       )}

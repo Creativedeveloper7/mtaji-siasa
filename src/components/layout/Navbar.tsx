@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Menu, Search, X } from "lucide-react";
+import { ArrowUpRight, Menu, Search, X } from "lucide-react";
 import { Logo } from "./Logo";
 import { Button } from "@/components/ui/Button";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -11,7 +11,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { cn } from "@/lib/utils";
 
 const navLinks = [
-  { href: "/#platform", label: "Explore" },
+  { href: "/", label: "Home" },
   { href: "/leaders", label: "Leaders" },
   { href: "/projects", label: "Projects" },
   { href: "/opportunities", label: "Opportunities" },
@@ -83,10 +83,11 @@ export function Navbar() {
   ) : (
     <>
       <Button href="/signin" variant="ghost" size="sm">
-        Sign In
+        Sign in
       </Button>
-      <Button href="/signup" size="sm">
-        Get Started
+      <Button href="/signup" size="sm" className="font-bold">
+        Get started
+        <ArrowUpRight className="h-4 w-4" aria-hidden />
       </Button>
     </>
   );
@@ -118,10 +119,11 @@ export function Navbar() {
   ) : (
     <>
       <Button href="/signin" variant="secondary" fullWidth>
-        Sign In
+        Sign in
       </Button>
-      <Button href="/signup" fullWidth>
-        Get Started
+      <Button href="/signup" fullWidth className="font-bold">
+        Get started
+        <ArrowUpRight className="h-4 w-4" aria-hidden />
       </Button>
     </>
   );
@@ -146,13 +148,19 @@ export function Navbar() {
               key={link.label}
               href={link.href}
               className={cn(
-                "rounded-md px-3 py-2 text-small transition-colors duration-fast",
+                "relative rounded-md px-3 py-2 text-small transition-colors duration-fast",
                 isActive(link.href)
                   ? "text-ink"
                   : "text-ink-muted hover:text-ink"
               )}
             >
               {link.label}
+              {isActive(link.href) && (
+                <span
+                  aria-hidden
+                  className="absolute inset-x-3 -bottom-0.5 h-0.5 rounded-full bg-brand-green"
+                />
+              )}
             </Link>
           ))}
         </nav>

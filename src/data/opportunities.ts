@@ -8,8 +8,9 @@ export const opportunities: Opportunity[] = [
     category: "business",
     location: "Thika Town, Kiambu County",
     county: "Kiambu",
-    deadline: "2026-04-30",
-    eligibility: "Registered local suppliers within Kiambu County with valid tax compliance.",
+    deadline: "2027-04-30",
+    eligibility: "Open to registered local suppliers with relevant construction experience.",
+    image: "/home/opportunity-meeting.jpg",
     description:
       "Supply window for aggregates, culvert sections and related materials supporting feeder road rehabilitation works in Thika Town Ward.",
     organization: "Thika Town Ward Works Coordination",
@@ -24,8 +25,9 @@ export const opportunities: Opportunity[] = [
     category: "youth",
     location: "Thika Town, Kiambu County",
     county: "Kiambu",
-    deadline: "2026-05-15",
-    eligibility: "Youth aged 18–35 residing in Thika Town Ward.",
+    deadline: "2027-05-15",
+    eligibility: "Open to young residents aged 18–35 living in Thika Town.",
+    image: "/home/project-road.jpg",
     description:
       "Apprenticeship placements in grading, drainage and finishing trades linked to active public works sites.",
     projectId: "prj-001",
@@ -38,8 +40,9 @@ export const opportunities: Opportunity[] = [
     category: "tenders",
     location: "Kisumu Central, Kisumu County",
     county: "Kisumu",
-    deadline: "2026-03-28",
-    eligibility: "NCA-registered contractors with demonstrated health facility experience.",
+    deadline: "2027-03-28",
+    eligibility: "Open to qualified contractors with valid registration and compliance documents.",
+    image: "/home/project-health.jpg",
     description:
       "Open tender for finishing works including flooring, joinery and painting for the maternity wing upgrade.",
     projectId: "prj-003",
@@ -52,7 +55,7 @@ export const opportunities: Opportunity[] = [
     category: "jobs",
     location: "Mombasa County",
     county: "Mombasa",
-    deadline: "2026-04-10",
+    deadline: "2027-04-10",
     eligibility: "Qualified civil / environmental engineers with coastal drainage experience.",
     description:
       "Short-term consulting assignment to support conceptual flood corridor planning under an aspirant development vision. This is not a completed public works contract.",
@@ -65,7 +68,7 @@ export const opportunities: Opportunity[] = [
     category: "jobs",
     location: "Makongeni, Kiambu County",
     county: "Kiambu",
-    deadline: "2026-06-01",
+    deadline: "2027-06-01",
     eligibility: "Residents of Makongeni with basic numeracy and community referral.",
     description:
       "Part-time operator roles for metered community water kiosks once commissioning begins.",
@@ -81,7 +84,7 @@ export const opportunities: Opportunity[] = [
     category: "training",
     location: "Kisumu Central, Kisumu County",
     county: "Kisumu",
-    deadline: "2026-05-20",
+    deadline: "2027-05-20",
     eligibility: "Registered traders operating within the upgraded market precinct.",
     description:
       "Short coaching modules on record-keeping, collective purchasing and customer service for market traders.",
@@ -95,7 +98,7 @@ export const opportunities: Opportunity[] = [
     category: "funding",
     location: "Eldoret, Uasin Gishu County",
     county: "Uasin Gishu",
-    deadline: "2026-07-31",
+    deadline: "2027-07-31",
     eligibility: "Programme graduates with a viable agribusiness plan and local guarantor.",
     description:
       "Catalytic seed funding for graduates of the Eldoret agribusiness training programme.",
@@ -109,7 +112,7 @@ export const opportunities: Opportunity[] = [
     category: "training",
     location: "Nairobi County",
     county: "Nairobi",
-    deadline: "2026-04-22",
+    deadline: "2027-04-22",
     eligibility: "Women-owned micro and small enterprises registered in Nairobi.",
     description:
       "Clinics covering compliance documents, pricing and bid readiness for public-linked supply opportunities.",
@@ -122,7 +125,7 @@ export const opportunities: Opportunity[] = [
     category: "business",
     location: "Mavoko, Machakos County",
     county: "Machakos",
-    deadline: "2026-03-15",
+    deadline: "2027-03-15",
     eligibility: "Machakos-based suppliers with delivery capacity to Mavoko estates.",
     description:
       "Supply of paving materials and related inputs for subsequent estate road phases.",
@@ -136,7 +139,7 @@ export const opportunities: Opportunity[] = [
     category: "youth",
     location: "Mombasa County",
     county: "Mombasa",
-    deadline: "2026-05-05",
+    deadline: "2027-05-05",
     eligibility: "Youth aged 18–30 from Mombasa County with secondary education.",
     description:
       "Intake for digital customer support and content roles linked to civic engagement programmes.",

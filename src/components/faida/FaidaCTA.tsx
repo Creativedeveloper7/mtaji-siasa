@@ -30,7 +30,7 @@ export function FaidaCTA({
   intent = "connect",
   contextLabel,
   label,
-  variant = "primary",
+  variant = "green",
   size = "md",
   className,
   fullWidth,
@@ -59,8 +59,8 @@ export function FaidaCTA({
 }
 
 export function FaidaBanner({
-  title = "Stay connected through Faida",
-  body = "Faida is M-Taji's WhatsApp-powered engagement agent.",
+  title = "Stay connected through M-Taji Faida",
+  body = "Faida is M-Taji's WhatsApp-powered engagement and opportunities discovery agent for youth.",
   intent = "connect" as FaidaIntent,
 }: {
   title?: string;
@@ -68,10 +68,11 @@ export function FaidaBanner({
   intent?: FaidaIntent;
 }) {
   return (
-    <section className="rounded-lg border border-border-accent bg-accent-soft px-6 py-8 md:px-10 md:py-10">
+    <section className="relative overflow-hidden rounded-lg border border-brand-green/30 bg-brand-green/[0.07] px-6 py-8 md:px-10 md:py-10">
+      <span aria-hidden className="brand-stripe absolute inset-x-0 top-0 h-1" />
       <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
         <div className="max-w-xl">
-          <p className="meta-label text-accent">WhatsApp engagement</p>
+          <p className="meta-label text-brand-green">WhatsApp engagement</p>
           <h2 className="mt-3 text-h2 text-ink">{title}</h2>
           <p className="mt-3 text-body text-ink-muted">{body}</p>
         </div>

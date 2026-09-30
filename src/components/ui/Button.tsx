@@ -2,17 +2,28 @@ import { forwardRef, type ButtonHTMLAttributes } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
-type Variant = "primary" | "secondary" | "ghost" | "outline" | "danger";
+type Variant =
+  | "primary"
+  | "green"
+  | "secondary"
+  | "ghost"
+  | "outline"
+  | "outline-green"
+  | "danger";
 type Size = "sm" | "md" | "lg";
 
 const variants: Record<Variant, string> = {
   primary:
     "bg-accent text-ink-inverse hover:bg-accent-hover shadow-glow font-medium",
+  green:
+    "bg-brand-green text-ink-inverse hover:bg-brand-green-hover shadow-glow-green font-medium",
   secondary:
     "bg-surface text-ink border border-border-strong hover:bg-surface-hover hover:border-border-strong",
   ghost: "bg-transparent text-ink-muted hover:text-ink hover:bg-surface",
   outline:
     "bg-transparent text-ink border border-border-strong hover:border-accent/50 hover:text-accent",
+  "outline-green":
+    "bg-transparent text-ink border border-brand-green/40 hover:border-brand-green hover:bg-brand-green/10 hover:text-brand-green",
   danger: "bg-error/15 text-error border border-error/30 hover:bg-error/25",
 };
 

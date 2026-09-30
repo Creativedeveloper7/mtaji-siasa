@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { AdlyInterestModal } from "./AdlyInterestModal";
 import { AdlyAuthGateModal } from "./AdlyAuthGateModal";
+import { FaidaCTA } from "@/components/faida/FaidaCTA";
 import { cn } from "@/lib/utils";
 
 const POSTER_GALLERY = [
@@ -278,7 +279,10 @@ export function AdlyPublicPage() {
         <div className="pointer-events-none absolute inset-0 bg-grid-subtle opacity-40" />
         <div className="container-wide relative grid items-center gap-12 py-16 md:py-22 lg:grid-cols-2 lg:gap-16 lg:py-28">
           <div>
-            <p className="meta-label text-accent">Powered by M-Taji</p>
+            <p className="meta-label inline-flex items-center gap-2 text-brand-green">
+              <span className="brand-stripe h-1 w-6 rounded-full" aria-hidden />
+              Powered by M-Taji
+            </p>
             <h1 className="mt-4 text-display text-ink">
               Meet{" "}
               <span className="editorial-serif italic text-accent">Adly.</span>
@@ -299,7 +303,7 @@ export function AdlyPublicPage() {
               <Button
                 type="button"
                 size="lg"
-                variant="outline"
+                variant="outline-green"
                 onClick={() => setInterestOpen(true)}
               >
                 Show Interest
@@ -631,53 +635,140 @@ export function AdlyPublicPage() {
         </div>
       </section>
 
-      {/* WHY POWERS M-TAJI */}
+      {/* ECOSYSTEM — M-TAJI BRAND FAMILY */}
       <section className="section-y border-b border-border">
         <div className="container-wide">
           <Reveal>
-            <p className="meta-label text-accent">Ecosystem</p>
-            <h2 className="mt-3 text-h1 text-ink">
-              Built to power M-Taji Siasa.
+            <p className="meta-label text-accent">The M-Taji ecosystem</p>
+            <h2 className="mt-3 max-w-3xl text-h1 text-ink">
+              One brand. Two products built to work together.
             </h2>
             <p className="mt-4 max-w-2xl text-body text-ink-muted">
-              M-Taji Siasa is the public-facing platform. Adly is the
-              intelligence and creative layer behind it. Faida is the
-              WhatsApp-powered engagement layer.
+              M-Taji is the main brand. M-Taji Adly and M-Taji Faida are
+              products under it — each with its own job, all feeding the same
+              mission of visible leadership and engaged citizens.
             </p>
           </Reveal>
+
           <Reveal delay={100}>
-            <div className="mt-10 grid gap-4 md:grid-cols-3">
-              {[
-                {
-                  name: "M-Taji Siasa",
-                  role: "Discover",
-                  body: "Leaders, projects, GIS evidence and public storytelling.",
-                },
-                {
-                  name: "Adly",
-                  role: "Create · Simulate · Advertise · Measure",
-                  body: "Campaign intelligence and creative production.",
-                },
-                {
-                  name: "Faida",
-                  role: "Engage · Support · Connect",
-                  body: "Conversational citizen engagement on WhatsApp.",
-                },
-              ].map((layer, i) => (
-                <div
-                  key={layer.name}
-                  className={cn(
-                    "rounded-xl border p-6",
-                    i === 1
-                      ? "border-accent/40 bg-accent-soft"
-                      : "border-border bg-surface"
-                  )}
-                >
-                  <p className="meta-label text-accent">{layer.role}</p>
-                  <h3 className="mt-3 text-h3 text-ink">{layer.name}</h3>
-                  <p className="mt-2 text-small text-ink-muted">{layer.body}</p>
-                </div>
-              ))}
+            <div className="mt-12">
+              {/* Parent brand */}
+              <div className="relative mx-auto max-w-2xl overflow-hidden rounded-xl border border-border-accent bg-bg-elevated p-6 text-center shadow-raised md:p-8">
+                <span aria-hidden className="brand-stripe absolute inset-x-0 top-0 h-1" />
+                <span className="mx-auto block h-14 w-14 overflow-hidden rounded-lg bg-black ring-1 ring-border">
+                  <Image
+                    src="/mtaji-logo.png"
+                    alt="M-Taji logo"
+                    width={56}
+                    height={56}
+                    className="h-full w-full object-cover"
+                  />
+                </span>
+                <p className="meta-label mt-4 text-accent">Main brand</p>
+                <h3 className="mt-2 text-h2 text-ink">M-Taji</h3>
+                <p className="mx-auto mt-3 max-w-lg text-small text-ink-muted">
+                  The civic-technology brand behind M-Taji Siasa — making
+                  leaders, projects and development visible through evidence,
+                  GIS and public storytelling.
+                </p>
+              </div>
+
+              {/* Connector: trunk + branches */}
+              <div aria-hidden className="relative mx-auto h-10 md:h-14">
+                <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-border-accent md:h-1/2" />
+                <span className="absolute left-1/4 right-1/4 top-1/2 hidden h-px bg-border-accent md:block" />
+                <span className="absolute left-1/4 top-1/2 hidden h-1/2 w-px bg-border-accent md:block" />
+                <span className="absolute right-1/4 top-1/2 hidden h-1/2 w-px bg-brand-green/50 md:block" />
+              </div>
+
+              {/* Products */}
+              <div className="grid gap-4 md:grid-cols-2 md:gap-6">
+                <article className="relative flex flex-col rounded-xl border border-accent/40 bg-accent-soft p-6 md:p-8">
+                  <span className="absolute right-4 top-4 rounded-md bg-accent px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-ink-inverse">
+                    You are here
+                  </span>
+                  <p className="meta-label text-accent">Product · Intelligence</p>
+                  <h3 className="mt-3 text-h2 text-ink">
+                    <span className="text-ink-muted">M-Taji</span> Adly
+                  </h3>
+                  <p className="mt-1 text-small font-medium text-accent">
+                    Create · Simulate · Advertise · Measure
+                  </p>
+                  <p className="mt-4 text-small text-ink-muted">
+                    The AI campaign and development intelligence product —
+                    turning manifestos, projects and messages into visuals,
+                    simulations and measurable campaigns.
+                  </p>
+                  <ul className="mt-5 space-y-2 text-small text-ink">
+                    {[
+                      "Campaign posters & creatives",
+                      "AI development simulations",
+                      "Project timelapses",
+                      "Advertising intelligence",
+                    ].map((item) => (
+                      <li key={item} className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-auto pt-6">
+                    <Button type="button" onClick={handleGetStarted}>
+                      Get started with Adly
+                    </Button>
+                  </div>
+                </article>
+
+                <article className="flex flex-col rounded-xl border border-brand-green/35 bg-brand-green/[0.06] p-6 md:p-8">
+                  <p className="meta-label text-brand-green">Product · Engagement</p>
+                  <h3 className="mt-3 text-h2 text-ink">
+                    <span className="text-ink-muted">M-Taji</span> Faida
+                  </h3>
+                  <p className="mt-1 text-small font-medium text-brand-green">
+                    Engage · Support · Connect
+                  </p>
+                  <p className="mt-4 text-small text-ink-muted">
+                    The WhatsApp-powered engagement product — connecting
+                    citizens to leaders, projects and opportunities through
+                    simple conversations.
+                  </p>
+                  <ul className="mt-5 space-y-2 text-small text-ink">
+                    {[
+                      "Citizen conversations on WhatsApp",
+                      "Donations & support",
+                      "Volunteer & movement sign-ups",
+                      "Project and opportunity updates",
+                    ].map((item) => (
+                      <li key={item} className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 rounded-full bg-brand-green" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-auto pt-6">
+                    <FaidaCTA intent="connect" />
+                  </div>
+                </article>
+              </div>
+
+              {/* How they connect */}
+              <div className="mt-8 grid gap-3 rounded-xl border border-border bg-bg-elevated p-5 text-small md:grid-cols-3 md:p-6">
+                {[
+                  ["Adly creates", "Visuals, simulations and campaigns tell the story.", "text-accent"],
+                  ["M-Taji publishes", "Leaders and projects become visible with evidence.", "text-brand-red"],
+                  ["Faida engages", "Citizens respond, support and stay connected.", "text-brand-green"],
+                ].map(([title, body, tone], i) => (
+                  <div key={title} className="flex gap-3">
+                    <span className={cn("font-mono text-caption", tone)}>
+                      0{i + 1}
+                    </span>
+                    <div>
+                      <p className="font-medium text-ink">{title}</p>
+                      <p className="mt-1 text-caption text-ink-muted">{body}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </Reveal>
         </div>
@@ -728,7 +819,7 @@ export function AdlyPublicPage() {
                 <Button
                   type="button"
                   size="lg"
-                  variant="outline"
+                  variant="outline-green"
                   onClick={() => setInterestOpen(true)}
                 >
                   Show Interest

@@ -10,6 +10,7 @@ import { OpportunityCard } from "@/components/cards/OpportunityCard";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { ProjectCard } from "@/components/cards/ProjectCard";
 import { FaidaBanner } from "@/components/faida/FaidaCTA";
+import { CardCarousel } from "@/components/ui/CardCarousel";
 import { SafeImage } from "@/components/ui/SafeImage";
 import { useContent } from "@/components/content/ContentProvider";
 import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
@@ -222,16 +223,15 @@ export default function MediaDetailPage({
               Move from information to action with opportunities linked to this
               context.
             </p>
-            <div className="mt-6 flex gap-4 overflow-x-auto pb-2 md:grid md:grid-cols-2 md:overflow-visible lg:grid-cols-4">
+            <CardCarousel
+              label="Opportunities from this story"
+              gridClassName="md:grid-cols-2 lg:grid-cols-4"
+              className="mt-6"
+            >
               {relatedOpps.map((o) => (
-                <div
-                  key={o.id}
-                  className="w-[85%] shrink-0 sm:w-[45%] md:w-auto"
-                >
-                  <OpportunityCard opportunity={o} />
-                </div>
+                <OpportunityCard key={o.id} opportunity={o} />
               ))}
-            </div>
+            </CardCarousel>
           </div>
         </section>
       )}
@@ -240,16 +240,15 @@ export default function MediaDetailPage({
         <section className="border-t border-border bg-bg-elevated">
           <div className="container-wide section-y-sm">
             <h2 className="text-h2 text-ink">Related stories</h2>
-            <div className="mt-6 flex gap-4 overflow-x-auto pb-2 md:grid md:grid-cols-2 md:overflow-visible lg:grid-cols-4">
+            <CardCarousel
+              label="Related stories"
+              gridClassName="md:grid-cols-2 lg:grid-cols-4"
+              className="mt-6"
+            >
               {relatedStories.map((m) => (
-                <div
-                  key={m.id}
-                  className="w-[85%] shrink-0 sm:w-[45%] md:w-auto"
-                >
-                  <MediaCard item={m} />
-                </div>
+                <MediaCard key={m.id} item={m} />
               ))}
-            </div>
+            </CardCarousel>
           </div>
         </section>
       )}

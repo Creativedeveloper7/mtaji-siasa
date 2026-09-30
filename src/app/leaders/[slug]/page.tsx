@@ -7,6 +7,7 @@ import { ProfileHeader } from "@/components/leader/ProfileHeader";
 import { ProjectCard } from "@/components/cards/ProjectCard";
 import { OpportunityCard } from "@/components/cards/OpportunityCard";
 import { Button } from "@/components/ui/Button";
+import { CardCarousel } from "@/components/ui/CardCarousel";
 import { FaidaCTA } from "@/components/faida/FaidaCTA";
 import { useContent } from "@/components/content/ContentProvider";
 import { LoadingState } from "@/components/ui/EmptyState";
@@ -98,11 +99,11 @@ export default function LeaderProfilePage({
               {leader.vision && " Explore proposed vision projects instead."}
             </p>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <CardCarousel label={`Projects by ${displayName}`}>
               {leaderProjects.map((p) => (
                 <ProjectCard key={p.id} project={p} />
               ))}
-            </div>
+            </CardCarousel>
           )}
         </div>
 
@@ -117,11 +118,14 @@ export default function LeaderProfilePage({
                 View all
               </Link>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <CardCarousel
+              label={`Opportunities from ${displayName}`}
+              gridClassName="md:grid-cols-2"
+            >
               {leaderOpps.map((o) => (
                 <OpportunityCard key={o.id} opportunity={o} />
               ))}
-            </div>
+            </CardCarousel>
           </div>
         )}
       </section>

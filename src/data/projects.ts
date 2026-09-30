@@ -11,8 +11,7 @@ export const projects: Project[] = [
     county: "Kiambu",
     status: "in-progress",
     progress: 68,
-    image:
-      "https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=1400&q=80",
+    image: "/home/project-road.jpg",
     description:
       "Phased rehabilitation of priority feeder roads connecting residential estates to the commercial spine of Thika Town. Works include grading, drainage improvement, base strengthening and surface dressing, with progress verified through site milestones and mapped locations.",
     startDate: "2025-03-12",
@@ -47,8 +46,7 @@ export const projects: Project[] = [
     county: "Kiambu",
     status: "in-progress",
     progress: 54,
-    image:
-      "https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?w=1400&q=80",
+    image: "/home/project-water.jpg",
     description:
       "Borehole drilling, elevated storage and last-mile distribution points to improve reliable household water access in Makongeni. Citizens can view the installation footprint on satellite imagery and track commissioning milestones.",
     startDate: "2025-06-01",
@@ -71,8 +69,7 @@ export const projects: Project[] = [
     county: "Kisumu",
     status: "in-progress",
     progress: 72,
-    image:
-      "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=1400&q=80",
+    image: "/home/project-health.jpg",
     description:
       "Expansion and equipment upgrade of a constituency health facility, including maternity wing refurbishment, waiting bay shade structures and improved access pathways.",
     startDate: "2024-11-20",

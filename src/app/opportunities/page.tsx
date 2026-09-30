@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { OpportunityCard } from "@/components/cards/OpportunityCard";
 import { PageHeader } from "@/components/project/ProjectHero";
 import { SearchBar } from "@/components/ui/SearchBar";
+import { CardCarousel } from "@/components/ui/CardCarousel";
 import { EmptyState, LoadingState } from "@/components/ui/EmptyState";
 import { FaidaBanner } from "@/components/faida/FaidaCTA";
 import { OPPORTUNITY_CATEGORY_LABELS } from "@/lib/constants";
@@ -79,13 +80,16 @@ export default function OpportunitiesPage() {
             description="Try another category or search term."
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <CardCarousel
+            key={filtered.map((o) => o.id).join("|")}
+            label="Opportunities"
+          >
             {filtered.map((opp) => (
-              <div key={opp.id} id={opp.slug}>
+              <div key={opp.id} id={opp.slug} className="h-full">
                 <OpportunityCard opportunity={opp} />
               </div>
             ))}
-          </div>
+          </CardCarousel>
         )}
         <FaidaBanner
           title="Want more opportunities?"

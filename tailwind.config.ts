@@ -15,6 +15,7 @@ const config: Config = {
         bg: {
           DEFAULT: withAlpha("--color-bg"),
           elevated: withAlpha("--color-bg-elevated"),
+          soft: withAlpha("--color-bg-soft"),
         },
         surface: {
           DEFAULT: withAlpha("--color-surface"),
@@ -37,6 +38,12 @@ const config: Config = {
           hover: withAlpha("--color-accent-hover"),
           muted: "rgb(var(--color-accent) / 0.14)",
           soft: "rgb(var(--color-accent) / 0.08)",
+        },
+        brand: {
+          green: withAlpha("--color-brand-green"),
+          "green-hover": withAlpha("--color-brand-green-hover"),
+          red: withAlpha("--color-brand-red"),
+          "red-hover": withAlpha("--color-brand-red-hover"),
         },
         success: {
           DEFAULT: withAlpha("--color-success"),
@@ -61,6 +68,7 @@ const config: Config = {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
         serif: ["var(--font-serif)", "Georgia", "serif"],
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
+        script: ["var(--font-display)", "cursive"],
       },
       fontSize: {
         display: [
@@ -110,6 +118,7 @@ const config: Config = {
         soft: "var(--shadow-soft)",
         raised: "var(--shadow-raised)",
         glow: "var(--shadow-glow)",
+        "glow-green": "var(--shadow-glow-green)",
       },
       transitionDuration: {
         fast: "150ms",

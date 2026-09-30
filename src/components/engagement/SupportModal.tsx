@@ -216,7 +216,15 @@ export function SupportModal({ open, onClose, leaderName }: SupportModalProps) {
                         : "border-border bg-surface hover:border-border-strong"
                     }`}
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border bg-bg text-accent">
+                    <span
+                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${
+                        opt.id === "donate"
+                          ? "border-brand-red/30 bg-brand-red/10 text-brand-red"
+                          : opt.id === "volunteer"
+                            ? "border-brand-green/30 bg-brand-green/10 text-brand-green"
+                            : "border-border bg-bg text-accent"
+                      }`}
+                    >
                       <Icon className="h-4 w-4" aria-hidden />
                     </span>
                     <span>

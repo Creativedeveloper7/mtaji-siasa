@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ProjectCard } from "@/components/cards/ProjectCard";
 import { PageHeader } from "@/components/project/ProjectHero";
 import { SearchBar } from "@/components/ui/SearchBar";
+import { CardCarousel } from "@/components/ui/CardCarousel";
 import { FilterBar } from "@/components/ui/FilterBar";
 import { EmptyState, LoadingState } from "@/components/ui/EmptyState";
 import { COUNTIES } from "@/lib/constants";
@@ -106,11 +107,14 @@ export default function ProjectsPage() {
             description="Try a different category, county or search term."
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <CardCarousel
+            key={filtered.map((p) => p.id).join("|")}
+            label="Projects"
+          >
             {filtered.map((project) => (
               <ProjectCard key={project.id} project={project} />
             ))}
-          </div>
+          </CardCarousel>
         )}
       </section>
     </>

@@ -40,7 +40,7 @@ export function ProductCard({ product, leaderName }: ProductCardProps) {
             contextLabel={`${product.name}${leaderName ? ` · ${leaderName}` : ""}`}
             label="Request via Faida"
             size="sm"
-            variant="outline"
+            variant="outline-green"
             fullWidth
           />
         </div>

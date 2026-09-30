@@ -6,6 +6,7 @@ import { ProfileHeader } from "@/components/leader/ProfileHeader";
 import { ProjectCard } from "@/components/cards/ProjectCard";
 import { EmptyState, LoadingState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
+import { CardCarousel } from "@/components/ui/CardCarousel";
 import { useContent } from "@/components/content/ContentProvider";
 
 export default function LeaderProjectsPage({
@@ -41,11 +42,11 @@ export default function LeaderProjectsPage({
             }
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <CardCarousel label="Projects">
             {items.map((p) => (
               <ProjectCard key={p.id} project={p} />
             ))}
-          </div>
+          </CardCarousel>
         )}
       </section>
     </>

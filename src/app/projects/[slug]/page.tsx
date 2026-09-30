@@ -10,6 +10,7 @@ import { MilestoneTimeline } from "@/components/project/MilestoneTimeline";
 import { OpportunityCard } from "@/components/cards/OpportunityCard";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { FaidaBanner } from "@/components/faida/FaidaCTA";
+import { CardCarousel } from "@/components/ui/CardCarousel";
 import { SafeImage } from "@/components/ui/SafeImage";
 import { formatDate } from "@/lib/utils";
 import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
@@ -203,11 +204,11 @@ export default function ProjectDetailPage({
                 No opportunities linked yet.
               </p>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <CardCarousel label="Project opportunities">
                 {opps.map((o) => (
                   <OpportunityCard key={o.id} opportunity={o} />
                 ))}
-              </div>
+              </CardCarousel>
             )}
             <FaidaBanner
               title="Want more opportunities?"

@@ -7,6 +7,7 @@ html.dark {
   /* Surfaces — deep charcoal, not pure black */
   --color-bg: 11 11 11;
   --color-bg-elevated: 17 17 17;
+  --color-bg-soft: 21 20 17;
   --color-surface: 22 22 22;
   --color-surface-hover: 28 28 28;
   --color-surface-raised: 26 26 26;
@@ -26,10 +27,16 @@ html.dark {
   --color-accent: 229 177 42;
   --color-accent-hover: 240 195 74;
 
+  /* Supporting brand — M-Taji green + red */
+  --color-brand-green: 28 182 87;
+  --color-brand-green-hover: 60 201 106;
+  --color-brand-red: 230 43 52;
+  --color-brand-red-hover: 248 75 75;
+
   /* Semantic */
-  --color-success: 46 196 160;
+  --color-success: 28 182 87;
   --color-warning: 229 161 42;
-  --color-error: 232 93 93;
+  --color-error: 230 43 52;
 
   /* Map */
   --color-map-land: 26 31 28;
@@ -49,6 +56,8 @@ html.dark {
   --shadow-raised: 0 12px 40px rgba(0, 0, 0, 0.45);
   --shadow-glow: 0 0 0 1px rgba(229, 177, 42, 0.25),
     0 8px 28px rgba(229, 177, 42, 0.12);
+  --shadow-glow-green: 0 0 0 1px rgba(28, 182, 87, 0.3),
+    0 8px 28px rgba(28, 182, 87, 0.14);
 
   /* Grid line alpha for .bg-grid-subtle */
   --grid-line: 245 245 240;
@@ -64,6 +73,7 @@ html.dark {
 html.light {
   --color-bg: 250 250 247;
   --color-bg-elevated: 255 255 255;
+  --color-bg-soft: 248 245 238;
   --color-surface: 255 255 255;
   --color-surface-hover: 244 244 240;
   --color-surface-raised: 255 255 255;
@@ -80,9 +90,14 @@ html.light {
   --color-accent: 196 140 18;
   --color-accent-hover: 168 118 10;
 
-  --color-success: 15 140 110;
+  --color-brand-green: 0 138 57;
+  --color-brand-green-hover: 0 115 41;
+  --color-brand-red: 208 28 41;
+  --color-brand-red-hover: 180 20 32;
+
+  --color-success: 0 138 57;
   --color-warning: 180 120 10;
-  --color-error: 196 60 60;
+  --color-error: 208 28 41;
 
   --color-map-land: 232 236 230;
   --color-map-water: 210 228 234;
@@ -94,6 +109,8 @@ html.light {
   --shadow-raised: 0 16px 40px rgba(20, 20, 18, 0.1);
   --shadow-glow: 0 0 0 1px rgba(196, 140, 18, 0.28),
     0 8px 24px rgba(196, 140, 18, 0.12);
+  --shadow-glow-green: 0 0 0 1px rgba(0, 138, 57, 0.3),
+    0 8px 24px rgba(0, 138, 57, 0.12);
 
   --grid-line: 28 28 26;
   --grid-line-alpha: 0.06;
@@ -182,6 +199,56 @@ html.light {
     @apply font-serif font-normal italic;
   }
 
+  /* Homepage editorial system */
+  .eyebrow {
+    @apply inline-flex items-center gap-3 text-[10px] font-extrabold uppercase tracking-[0.15em] text-brand-red;
+  }
+
+  .eyebrow::before {
+    content: "";
+    @apply h-px w-6 bg-current opacity-70;
+  }
+
+  .eyebrow-light {
+    @apply text-accent;
+  }
+
+  .home-h1 {
+    @apply font-sans font-extrabold tracking-[-0.02em];
+    font-size: clamp(2.6rem, 6.4vw, 4.75rem);
+    line-height: 1.06;
+  }
+
+  .home-h2 {
+    @apply font-sans font-extrabold tracking-[-0.02em] text-ink;
+    font-size: clamp(2rem, 4.2vw, 2.75rem);
+    line-height: 1.12;
+  }
+
+  .script-accent {
+    @apply font-script font-bold not-italic;
+    font-size: 1.08em;
+    letter-spacing: 0;
+  }
+
+  .image-label {
+    @apply bg-[#1d1914] px-2 py-1.5 text-[9px] font-semibold uppercase tracking-[0.07em] text-white;
+  }
+
+  .band-dark {
+    background: #1d1914;
+    color: #fff;
+  }
+
+  .brand-stripe {
+    background: linear-gradient(
+      90deg,
+      rgb(var(--color-brand-green)) 0 33.33%,
+      rgb(var(--color-accent)) 33.33% 66.66%,
+      rgb(var(--color-brand-red)) 66.66% 100%
+    );
+  }
+
   .horizontal-scroll {
     @apply flex gap-4 overflow-x-auto pb-2;
     scroll-snap-type: x mandatory;
@@ -196,6 +263,34 @@ html.light {
   .horizontal-scroll > * {
     scroll-snap-align: start;
     flex-shrink: 0;
+  }
+
+  .card-carousel {
+    scroll-padding-inline: var(--container-pad);
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    touch-action: pan-x pan-y;
+  }
+
+  .card-carousel::-webkit-scrollbar {
+    display: none;
+  }
+
+  @media (min-width: 768px) {
+    .card-carousel {
+      scroll-padding-inline: 0;
+    }
+  }
+
+  .card-carousel > * {
+    scroll-snap-stop: always;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .card-carousel {
+      scroll-behavior: smooth;
+    }
   }
 
   /**

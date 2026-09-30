@@ -6,6 +6,7 @@ import { ProfileHeader } from "@/components/leader/ProfileHeader";
 import { OpportunityCard } from "@/components/cards/OpportunityCard";
 import { EmptyState, LoadingState } from "@/components/ui/EmptyState";
 import { FaidaBanner } from "@/components/faida/FaidaCTA";
+import { CardCarousel } from "@/components/ui/CardCarousel";
 import { useContent } from "@/components/content/ContentProvider";
 
 export default function LeaderOpportunitiesPage({
@@ -30,11 +31,11 @@ export default function LeaderOpportunitiesPage({
             description="Opportunities linked to this leader will appear here."
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <CardCarousel label="Opportunities">
             {items.map((o) => (
               <OpportunityCard key={o.id} opportunity={o} />
             ))}
-          </div>
+          </CardCarousel>
         )}
         <FaidaBanner
           title="Want more opportunities?"

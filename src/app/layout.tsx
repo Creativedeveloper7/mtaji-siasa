@@ -1,5 +1,10 @@
 import type { Metadata } from "next";
-import { DM_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import {
+  Caveat,
+  DM_Sans,
+  Instrument_Serif,
+  JetBrains_Mono,
+} from "next/font/google";
 import { SiteShell } from "@/components/layout/SiteShell";
 import { FaidaProvider } from "@/components/faida/FaidaProvider";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
@@ -28,13 +33,20 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
+const caveat = Caveat({
+  subsets: ["latin"],
+  weight: ["600", "700"],
+  variable: "--font-display",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: {
-    default: "M-Taji Siasa — See the work. Shape the future.",
+    default: "M-Taji Siasa — Campaigns, Projects & Opportunities for Leaders",
     template: "%s · M-Taji Siasa",
   },
   description:
-    "M-Taji Siasa brings leaders, public projects and citizens together through AI-powered visibility, live GIS tracking and simple digital engagement.",
+    "M-Taji Siasa is an AI-powered digital media platform that enables leaders to showcase, communicate, and promote their development projects and vision through live GIS mapping, AI-powered simulations, and targeted social media advertising, while enabling young people to discover, track, and access opportunities within public projects.",
   icons: {
     icon: [{ url: "/mtaji-logo.png", type: "image/png" }],
     apple: [{ url: "/mtaji-logo.png", type: "image/png" }],
@@ -49,7 +61,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`dark ${dmSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable}`}
+      className={`dark ${dmSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${caveat.variable}`}
       suppressHydrationWarning
     >
       <head>

@@ -33,13 +33,18 @@ const columns = [
 export function Footer() {
   return (
     <footer className="border-t border-border bg-bg-elevated">
+      <div aria-hidden className="brand-stripe h-1 w-full" />
       <div className="container-wide section-y-sm">
         <div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
             <Logo />
-            <p className="mt-4 max-w-sm text-small text-ink-muted">
-              Civic visibility for leaders, projects and citizens — powered by
-              GIS evidence and WhatsApp engagement through Faida.
+            <p className="mt-4 max-w-sm text-small font-bold text-ink">
+              Show the work. Bring people along.
+            </p>
+            <p className="mt-2 max-w-sm text-small text-ink-muted">
+              Campaigns, projects and opportunities for leaders and the
+              communities they serve — with M-Taji Siasa, M-Taji Adly and
+              M-Taji Faida.
             </p>
           </div>
           {columns.map((col) => (
@@ -50,7 +55,7 @@ export function Footer() {
                   <li key={link.href + link.label}>
                     <Link
                       href={link.href}
-                      className="text-small text-ink-muted transition-colors hover:text-ink"
+                      className="text-small text-ink-muted transition-colors hover:text-brand-green"
                     >
                       {link.label}
                     </Link>
