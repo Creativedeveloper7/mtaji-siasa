@@ -1,102 +1,101 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { OpportunityCard } from "@/components/cards/OpportunityCard";
-import { PageHeader } from "@/components/project/ProjectHero";
-import { SearchBar } from "@/components/ui/SearchBar";
-import { CardCarousel } from "@/components/ui/CardCarousel";
-import { EmptyState, LoadingState } from "@/components/ui/EmptyState";
-import { FaidaBanner } from "@/components/faida/FaidaCTA";
-import { OPPORTUNITY_CATEGORY_LABELS } from "@/lib/constants";
-import type { OpportunityCategory } from "@/types";
+import { PageHero } from "@/components/layout/PageHero";
+import { SectionIntro } from "@/components/layout/SectionIntro";
+import { ClosingBand } from "@/components/layout/ClosingBand";
+import { HomeOpportunities } from "@/components/landing/HomeOpportunities";
+import { LoadingState } from "@/components/ui/EmptyState";
+import { resolveOpportunityStatus } from "@/lib/related-content";
 import { useContent } from "@/components/content/ContentProvider";
-
-const categories: Array<"all" | OpportunityCategory> = [
-  "all",
-  "jobs",
-  "tenders",
-  "training",
-  "funding",
-  "youth",
-  "business",
-  "other",
-];
+import { useFaida } from "@/components/faida/FaidaProvider";
 
 export default function OpportunitiesPage() {
   const { content, ready } = useContent();
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<"all" | OpportunityCategory>("all");
-
-  const filtered = useMemo(() => {
-    return content.opportunities.filter((o) => {
-      const q = query.toLowerCase().trim();
-      const matchesQuery =
-        !q ||
-        o.title.toLowerCase().includes(q) ||
-        o.location.toLowerCase().includes(q) ||
-        o.eligibility.toLowerCase().includes(q);
-      const matchesCategory = category === "all" || o.category === category;
-      return matchesQuery && matchesCategory;
-    });
-  }, [content.opportunities, query, category]);
+  const { openFaida } = useFaida();
 
   if (!ready) return <LoadingState />;
 
+  const opportunities = content.opportunities;
+  const open = opportunities.filter(
+    (o) => resolveOpportunityStatus(o) !== "closed"
+  ).length;
+  const counties = new Set(opportunities.map((o) => o.county)).size;
+  const kinds = new Set(opportunities.map((o) => o.category)).size;
+  const linkedProjects = new Set(
+    opportunities.flatMap((o) => (o.projectId ? [o.projectId] : []))
+  ).size;
+
   return (
     <>
-      <PageHeader
-        title="Opportunities"
-        description="Discover opportunities connected to communities, projects and public programmes."
-      >
-        <div className="space-y-4">
-          <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-            {categories.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => setCategory(c)}
-                className={`h-9 shrink-0 rounded-md border px-3 text-small transition-colors ${
-                  category === c
-                    ? "border-accent/40 bg-accent-soft text-accent"
-                    : "border-border text-ink-muted hover:border-border-strong hover:text-ink"
-                }`}
-              >
-                {c === "all" ? "All" : OPPORTUNITY_CATEGORY_LABELS[c]}
-              </button>
-            ))}
-          </div>
-          <SearchBar
-            value={query}
-            onChange={setQuery}
-            placeholder="Search opportunities…"
-          />
-        </div>
-      </PageHeader>
+      <PageHero
+        eyebrow="Kazi for the next generation"
+        titleText="Find work, training and new Kazi."
+        title={
+          <>
+            Find work, training
+            <br />
+            and <em className="script-accent text-brand-green">new Kazi.</em>
+          </>
+        }
+        description="Public projects need people. Roads, clinics, water points and youth programmes create jobs, training places and supply contracts right where they are built. Every listing here tells you who can apply, where it is and when it closes, so you can decide quickly if it is for you."
+        image="/home/opportunity-meeting.jpg"
+        imageAlt="Illustrative community meeting where residents learn about local opportunities"
+        primary={{ label: "Browse opportunities", href: "#browse" }}
+        secondary={{
+          label: "Get alerts on WhatsApp",
+          onClick: () => openFaida("opportunity"),
+        }}
+        stats={[
+          { value: open, label: "Open now" },
+          { value: kinds, label: "Types of Kazi" },
+          { value: counties, label: "Counties" },
+          { value: linkedProjects, label: "Projects behind them" },
+        ]}
+        stepsLabel="How to use this page"
+        steps={[
+          {
+            title: "Browse",
+            body: "Search, or filter by type, location and who can apply.",
+          },
+          {
+            title: "Check if it fits",
+            body: "Each card shows eligibility and the deadline. Closing-soon listings are marked.",
+          },
+          {
+            title: "Apply or save",
+            body: "Open the listing to apply, or tap the bookmark to keep it for later.",
+          },
+        ]}
+      />
 
-      <section className="container-wide section-y-sm space-y-12">
-        {filtered.length === 0 ? (
-          <EmptyState
-            title="No opportunities match"
-            description="Try another category or search term."
+      <section id="browse" className="scroll-mt-20 bg-bg py-18 md:py-22">
+        <div className="container-wide">
+          <SectionIntro
+            eyebrow="Open opportunities"
+            title={
+              <>
+                Work that opens{" "}
+                <em className="script-accent text-brand-red">doors.</em>
+              </>
+            }
+            body="Jobs, tenders, training, funding and youth programmes linked to real projects in the community."
           />
-        ) : (
-          <CardCarousel
-            key={filtered.map((o) => o.id).join("|")}
-            label="Opportunities"
-          >
-            {filtered.map((opp) => (
-              <div key={opp.id} id={opp.slug} className="h-full">
-                <OpportunityCard opportunity={opp} />
-              </div>
-            ))}
-          </CardCarousel>
-        )}
-        <FaidaBanner
-          title="Want more opportunities?"
-          body="Connect with Faida and receive relevant updates through WhatsApp."
-          intent="opportunity"
-        />
+          <HomeOpportunities items={opportunities} layout="grid" searchable />
+        </div>
       </section>
+
+      <ClosingBand
+        eyebrow="M-Taji Faida"
+        title={
+          <>
+            Never miss{" "}
+            <em className="script-accent text-accent">new Kazi.</em>
+          </>
+        }
+        body="Connect with M-Taji Faida and get new jobs, training and tenders in your area sent straight to WhatsApp."
+        actionLabel="Get opportunity alerts"
+        onAction={() => openFaida("opportunity")}
+      />
     </>
   );
 }

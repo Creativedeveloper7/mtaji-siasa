@@ -48,7 +48,7 @@ export function HomeProducts() {
       {products.map((p) => (
         <article
           key={p.id}
-          className="flex h-full flex-col overflow-hidden rounded-md border border-border bg-surface md:flex-row"
+          className="flex h-full flex-col overflow-hidden border border-border bg-surface md:flex-row"
         >
           <div className="relative aspect-[4/3] md:aspect-auto md:w-[54%] md:min-h-[300px]">
             <Image

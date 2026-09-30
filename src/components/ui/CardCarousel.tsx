@@ -114,6 +114,9 @@ export function CardCarousel({
   if (count === 0) return null;
 
   const atEnd = active === count - 1;
+  const noun = /^[A-Z][a-z]/.test(label)
+    ? label.charAt(0).toLowerCase() + label.slice(1)
+    : label;
 
   return (
     <div className={className}>
@@ -157,39 +160,21 @@ export function CardCarousel({
             !isGrid && !overflowing && "hidden"
           )}
         >
-          <div className="flex items-center gap-4">
-            <span
-              className="text-caption font-bold tracking-[0.08em] text-ink"
-              aria-live="polite"
-            >
-              {pad(active + 1)}
-              <span className="mx-1.5 font-normal text-ink-subtle">/</span>
-              {pad(count)}
-            </span>
-            <div className="flex items-center gap-1.5" aria-hidden>
-              {items.map((_, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  tabIndex={-1}
-                  onClick={() => goTo(i)}
-                  className={cn(
-                    "h-1.5 rounded-full transition-all duration-base ease-premium",
-                    i === active
-                      ? "w-6 bg-accent"
-                      : "w-1.5 bg-ink-subtle/40 hover:bg-ink-subtle"
-                  )}
-                />
-              ))}
-            </div>
-          </div>
+          <span
+            className="text-caption font-bold tracking-[0.08em] text-ink"
+            aria-live="polite"
+          >
+            {pad(active + 1)}
+            <span className="mx-2 font-normal text-ink-subtle">/</span>
+            {pad(count)}
+          </span>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => goTo(active - 1)}
               disabled={active === 0}
-              aria-label={`Previous ${label.toLowerCase()}`}
-              className="flex h-9 w-9 items-center justify-center rounded-md border border-border-strong bg-surface text-ink transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-30"
+              aria-label={`Previous ${noun}`}
+              className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-transparent text-ink transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-30"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -197,8 +182,8 @@ export function CardCarousel({
               type="button"
               onClick={() => goTo(active + 1)}
               disabled={atEnd}
-              aria-label={`Next ${label.toLowerCase()}`}
-              className="flex h-9 w-9 items-center justify-center rounded-md border border-border-strong bg-surface text-ink transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-30"
+              aria-label={`Next ${noun}`}
+              className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-transparent text-ink transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-30"
             >
               <ChevronRight className="h-4 w-4" />
             </button>

@@ -5,6 +5,7 @@ import { Bookmark } from "lucide-react";
 import type { Opportunity } from "@/types";
 import { OpportunityCard } from "@/components/cards/OpportunityCard";
 import { CardCarousel } from "@/components/ui/CardCarousel";
+import { SearchBar } from "@/components/ui/SearchBar";
 import { OPPORTUNITY_CATEGORY_LABELS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +25,17 @@ function eligibilityGroup(o: Opportunity): string {
 const selectClass =
   "h-10 w-full rounded-md border border-border-strong bg-surface px-3 text-small text-ink transition-colors hover:border-accent/40 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/30";
 
-export function HomeOpportunities({ items }: { items: Opportunity[] }) {
+export function HomeOpportunities({
+  items,
+  layout = "carousel",
+  searchable = false,
+}: {
+  items: Opportunity[];
+  /** "carousel" scrolls at every size; "grid" becomes a grid from md upward */
+  layout?: "carousel" | "grid";
+  searchable?: boolean;
+}) {
+  const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
   const [location, setLocation] = useState("all");
   const [eligibility, setEligibility] = useState("all");
@@ -61,8 +72,13 @@ export function HomeOpportunities({ items }: { items: Opportunity[] }) {
     [items]
   );
 
+  const q = query.toLowerCase().trim();
   const filtered = items.filter(
     (o) =>
+      (!q ||
+        o.title.toLowerCase().includes(q) ||
+        o.location.toLowerCase().includes(q) ||
+        o.eligibility.toLowerCase().includes(q)) &&
       (type === "all" || o.category === type) &&
       (location === "all" || o.location === location) &&
       (eligibility === "all" || eligibilityGroup(o) === eligibility) &&
@@ -71,6 +87,16 @@ export function HomeOpportunities({ items }: { items: Opportunity[] }) {
 
   return (
     <div>
+      {searchable && (
+        <SearchBar
+          id="opportunity-search"
+          label="Search"
+          value={query}
+          onChange={setQuery}
+          placeholder="Search by title, place or who can apply…"
+          className="mb-3"
+        />
+      )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto] lg:items-end">
         <label className="block">
           <span className="mb-1.5 block text-caption font-bold text-ink">
@@ -131,11 +157,16 @@ export function HomeOpportunities({ items }: { items: Opportunity[] }) {
         </button>
       </div>
       <p className="mt-3 text-caption text-ink-muted">
-        Saved listings stay on this device. Open any opportunity for current
-        details and how to apply.
+        Saved listings stay on this device. Applications and current details
+        open in the live app.
       </p>
+      {layout === "grid" && (
+        <p className="mt-6 text-caption font-bold text-ink" aria-live="polite">
+          Showing {filtered.length} of {items.length} opportunities
+        </p>
+      )}
 
-      <div className="mt-8">
+      <div className={layout === "grid" ? "mt-4" : "mt-8"}>
         {filtered.length === 0 ? (
           <div className="rounded-md border border-dashed border-border-strong px-6 py-12 text-center">
             <p className="font-bold text-ink">
@@ -151,15 +182,16 @@ export function HomeOpportunities({ items }: { items: Opportunity[] }) {
           <CardCarousel
             key={filtered.map((o) => o.id).join("|")}
             label="Development opportunities"
-            desktop="carousel"
+            desktop={layout}
           >
             {filtered.map((o) => (
-              <OpportunityCard
-                key={o.id}
-                opportunity={o}
-                saved={saved.includes(o.id)}
-                onToggleSave={toggleSave}
-              />
+              <div key={o.id} id={o.slug} className="h-full scroll-mt-24">
+                <OpportunityCard
+                  opportunity={o}
+                  saved={saved.includes(o.id)}
+                  onToggleSave={toggleSave}
+                />
+              </div>
             ))}
           </CardCarousel>
         )}

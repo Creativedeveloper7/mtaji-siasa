@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight, MapPin } from "lucide-react";
 import type { Project, ProjectStatus } from "@/types";
 import { SafeImage } from "@/components/ui/SafeImage";
-import { PROJECT_STATUS_LABELS } from "@/lib/constants";
+import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 interface ProjectCardProps {
@@ -16,27 +16,44 @@ const statusDot: Record<ProjectStatus, string> = {
   "on-hold": "bg-brand-red",
 };
 
+const SECTORS: [RegExp, string][] = [
+  [/water|sanitation|borehole/i, "Water"],
+  [/health|hospital|clinic/i, "Healthcare"],
+  [/school|education|classroom/i, "Education"],
+  [/youth|training|skills|agribusiness/i, "Youth"],
+  [/road|bridge|market|infrastructure|housing/i, "Infrastructure"],
+];
+
+function projectSector(project: Project) {
+  const source = `${project.subcategory} ${project.name}`;
+  return (
+    SECTORS.find(([pattern]) => pattern.test(source))?.[1] ??
+    PROJECT_CATEGORY_LABELS[project.category]
+  );
+}
+
 export function ProjectCard({ project }: ProjectCardProps) {
   const progress = Math.max(0, Math.min(100, project.progress));
 
   return (
-    <article className="group flex h-full flex-col overflow-hidden rounded-md border border-border bg-surface shadow-soft transition-shadow duration-base hover:shadow-raised">
+    <article className="group flex h-full flex-col overflow-hidden border border-border bg-surface transition-colors duration-base hover:border-border-strong">
       <Link href={`/projects/${project.slug}`} className="flex h-full flex-col">
         <div className="relative aspect-[16/9] overflow-hidden bg-bg-elevated">
           <SafeImage
             src={project.image}
-            alt={project.name}
+            alt={`Illustrative image for ${project.name}`}
             fill
             className="object-cover transition-transform duration-slow ease-premium group-hover:scale-[1.03]"
             sizes="(max-width: 768px) 90vw, 33vw"
           />
+          <span aria-hidden className="image-label absolute bottom-3 left-3">
+            Illustrative image
+          </span>
         </div>
-        <div className="flex flex-1 flex-col p-5">
-          <div className="flex items-center justify-between gap-3">
-            <span className="truncate text-[10px] font-extrabold uppercase tracking-[0.12em] text-brand-green">
-              {project.subcategory}
-            </span>
-            <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.1em] text-ink">
+        <div className="flex flex-1 flex-col px-6 pb-6 pt-6">
+          <div className="flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-[0.11em]">
+            <span className="truncate text-brand-green">{projectSector(project)}</span>
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-ink-muted">
               <span
                 className={cn("h-1.5 w-1.5 rounded-full", statusDot[project.status])}
                 aria-hidden
@@ -44,7 +61,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
               {PROJECT_STATUS_LABELS[project.status]}
             </span>
           </div>
-          <h3 className="mt-3 text-[1.15rem] font-bold leading-snug text-ink">
+          <h3 className="mt-3 text-[1.3rem] font-extrabold leading-snug text-ink">
             {project.name}
           </h3>
           <p className="mt-3 flex items-center gap-1.5 text-caption text-ink-muted">
@@ -54,22 +71,22 @@ export function ProjectCard({ project }: ProjectCardProps) {
           <div className="mt-auto pt-6">
             <div className="flex items-center justify-between text-caption">
               <span className="text-ink-muted">Progress</span>
-              <span className="font-bold text-ink">{progress}%</span>
+              <span className="text-small font-bold text-ink">{progress}%</span>
             </div>
             <div
-              className="mt-2 h-1 overflow-hidden rounded-full bg-border-strong"
+              className="mt-2 h-1 overflow-hidden bg-border"
               role="progressbar"
               aria-valuenow={progress}
               aria-valuemin={0}
               aria-valuemax={100}
             >
               <div
-                className="h-full rounded-full bg-accent transition-[width] duration-slow ease-premium"
+                className="h-full bg-accent transition-[width] duration-slow ease-premium"
                 style={{ width: `${progress}%` }}
               />
             </div>
           </div>
-          <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-small font-bold text-ink">
+          <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-caption font-bold text-ink">
             <span className="transition-colors group-hover:text-accent">
               View project
             </span>

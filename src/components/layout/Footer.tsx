@@ -1,74 +1,33 @@
 import Link from "next/link";
 import { Logo } from "./Logo";
 
-const columns = [
-  {
-    title: "Explore",
-    links: [
-      { href: "/leaders", label: "Leaders" },
-      { href: "/projects", label: "Projects" },
-      { href: "/opportunities", label: "Opportunities" },
-      { href: "/media", label: "Media" },
-      { href: "/polls", label: "Polls" },
-      { href: "/adly", label: "Adly" },
-    ],
-  },
-  {
-    title: "Engage",
-    links: [
-      { href: "/signup", label: "Create account" },
-      { href: "/#faida", label: "Connect with Faida" },
-      { href: "/adly", label: "Open Adly" },
-    ],
-  },
-  {
-    title: "About",
-    links: [
-      { href: "/#platform", label: "How it works" },
-      { href: "/#ai-gis", label: "AI + GIS" },
-    ],
-  },
+const links = [
+  { href: "/leaders", label: "Leaders" },
+  { href: "/projects", label: "Projects" },
+  { href: "/opportunities", label: "Opportunities" },
+  { href: "/media", label: "Media" },
+  { href: "/polls", label: "Polls" },
+  { href: "/adly", label: "Adly" },
 ];
 
 export function Footer() {
   return (
-    <footer className="border-t border-border bg-bg-elevated">
-      <div aria-hidden className="brand-stripe h-1 w-full" />
-      <div className="container-wide section-y-sm">
-        <div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
-          <div>
-            <Logo />
-            <p className="mt-4 max-w-sm text-small font-bold text-ink">
-              Show the work. Bring people along.
-            </p>
-            <p className="mt-2 max-w-sm text-small text-ink-muted">
-              Campaigns, projects and opportunities for leaders and the
-              communities they serve — with M-Taji Siasa, M-Taji Adly and
-              M-Taji Faida.
-            </p>
-          </div>
-          {columns.map((col) => (
-            <div key={col.title}>
-              <p className="meta-label">{col.title}</p>
-              <ul className="mt-4 space-y-2.5">
-                {col.links.map((link) => (
-                  <li key={link.href + link.label}>
-                    <Link
-                      href={link.href}
-                      className="text-small text-ink-muted transition-colors hover:text-brand-green"
-                    >
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
+    <footer className="bg-bg-soft py-12">
+      <div className="container-wide flex flex-col gap-8 md:flex-row md:items-center md:justify-between">
+        <Logo />
+
+        <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-3">
+          {links.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="text-caption text-ink transition-colors hover:text-brand-green"
+            >
+              {link.label}
+            </Link>
           ))}
-        </div>
-        <div className="mt-12 flex flex-col gap-2 border-t border-border pt-6 text-caption text-ink-subtle md:flex-row md:items-center md:justify-between">
-          <p>© {new Date().getFullYear()} M-Taji Siasa. Demo prototype.</p>
-          <p>Fictional leaders and projects for demonstration only.</p>
-        </div>
+        </nav>
+        <p className="text-[11px] text-ink">Show the work. Bring people along.</p>
       </div>
     </footer>
   );

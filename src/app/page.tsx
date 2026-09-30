@@ -6,11 +6,14 @@ import { ArrowUpRight } from "lucide-react";
 import { LandingHero } from "@/components/landing/LandingHero";
 import { HomeProducts } from "@/components/landing/HomeProducts";
 import { HomeOpportunities } from "@/components/landing/HomeOpportunities";
+import { HomeProjectPreview } from "@/components/landing/HomeProjectPreview";
 import { ProjectCard } from "@/components/cards/ProjectCard";
 import { CardCarousel } from "@/components/ui/CardCarousel";
 import { useContent } from "@/components/content/ContentProvider";
 import { useFaida } from "@/components/faida/FaidaProvider";
 import { LoadingState } from "@/components/ui/EmptyState";
+import { SectionIntro } from "@/components/layout/SectionIntro";
+import { ClosingBand } from "@/components/layout/ClosingBand";
 
 const outlineButton =
   "inline-flex h-10 items-center gap-2 rounded-md border border-border-strong bg-surface px-4 text-small font-bold text-ink transition-colors hover:border-accent/60 hover:text-accent";
@@ -18,7 +21,12 @@ const outlineButton =
 const useCases = [
   {
     tag: "For elected leaders",
-    title: <>Make delivery visible.</>,
+    title: (
+      <>
+        Make delivery visible.{" "}
+        <em className="script-accent text-accent">Ongeza Support kwa ground.</em>
+      </>
+    ),
     body: "Showcase the development you’ve delivered through live satellite imagery and AI progress videos voters can see and follow.",
     href: "/leaders",
     tone: "text-accent",
@@ -26,7 +34,12 @@ const useCases = [
   },
   {
     tag: "For aspirants",
-    title: <>Make your vision real.</>,
+    title: (
+      <>
+        Make your manifesto &amp; vision real.{" "}
+        <em className="script-accent text-brand-green">Pata Kura.</em>
+      </>
+    ),
     body: "Use AI to turn your ideas into clear project visualizations that voters can picture, appreciate and believe in.",
     href: "/adly",
     tone: "text-brand-green",
@@ -37,7 +50,7 @@ const useCases = [
     title: (
       <>
         Explore opportunities.{" "}
-        <em className="script-accent text-accent">Pata Kazi.</em>
+        <em className="script-accent text-brand-red">Pata Kazi.</em>
       </>
     ),
     body: "Find training, jobs, tenders, partnerships, content creation and creative arts opportunities within public projects. Use AI to help you apply and gain access.",
@@ -46,29 +59,6 @@ const useCases = [
     bar: "border-t-brand-red",
   },
 ];
-
-function SectionIntro({
-  eyebrow,
-  title,
-  body,
-  action,
-}: {
-  eyebrow: string;
-  title: React.ReactNode;
-  body: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-      <div className="max-w-2xl">
-        <p className="eyebrow">{eyebrow}</p>
-        <h2 className="home-h2 mt-5">{title}</h2>
-        <p className="mt-4 text-small leading-relaxed text-ink-muted md:text-body">{body}</p>
-      </div>
-      {action}
-    </div>
-  );
-}
 
 export default function HomePage() {
   const { content, ready } = useContent();
@@ -101,7 +91,7 @@ export default function HomePage() {
               <ArrowUpRight className="h-4 w-4" aria-hidden />
             </Link>
           </div>
-          <figure className="relative overflow-hidden rounded-md shadow-[0_18px_48px_rgba(30,24,16,0.14)]">
+          <figure className="relative overflow-hidden shadow-[0_18px_48px_rgba(30,24,16,0.14)]">
             <div className="relative aspect-[3/2]">
               <Image
                 src="/home/talanta-gis-map.jpg"
@@ -118,8 +108,35 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* Project view */}
+      <section
+        aria-labelledby="project-preview-title"
+        className="bg-bg-soft py-20 md:py-24"
+      >
+        <div className="container-wide">
+          <SectionIntro
+            id="project-preview-title"
+            eyebrow="M-Taji Siasa / Project view"
+            title={
+              <>
+                The whole project.{" "}
+                <em className="script-accent text-brand-green">In view.</em>
+              </>
+            }
+            body="See the place, the work and the progress together."
+            action={
+              <Link href="/projects" className={`${outlineButton} self-start md:self-auto`}>
+                Explore live projects
+                <ArrowUpRight className="h-4 w-4" aria-hidden />
+              </Link>
+            }
+          />
+          <HomeProjectPreview />
+        </div>
+      </section>
+
       {/* Three AI use cases */}
-      <section id="ai-gis" className="bg-bg pb-20 pt-10 md:pb-24">
+      <section id="ai-gis" className="bg-bg py-20 md:py-24">
         <div className="container-wide">
           <SectionIntro
             eyebrow="Built around the people public development serves"
@@ -136,7 +153,7 @@ export default function HomePage() {
             {useCases.map((card) => (
               <article
                 key={card.tag}
-                className={`flex h-full flex-col rounded-md border border-border border-t-2 bg-surface p-6 ${card.bar}`}
+                className={`flex h-full flex-col border border-border border-t-2 bg-surface p-6 ${card.bar}`}
               >
                 <p className={`text-[10px] font-extrabold uppercase tracking-[0.12em] ${card.tone}`}>
                   {card.tag}
@@ -227,29 +244,18 @@ export default function HomePage() {
       </section>
 
       {/* Faida closing band */}
-      <section id="faida" className="band-dark py-18 md:py-20">
-        <div className="container-wide flex flex-col gap-8 md:flex-row md:items-center md:justify-between">
-          <div className="max-w-2xl">
-            <p className="eyebrow eyebrow-light">M-Taji Faida</p>
-            <h2 className="home-h2 mt-5 text-white">
-              Keep citizens <em className="script-accent text-accent">connected.</em>
-            </h2>
-            <p className="mt-4 text-small leading-relaxed text-white/75 md:text-body">
-              Keep citizens connected to opportunities, updates, questions and
-              community feedback through M-Taji Faida’s WhatsApp-powered
-              engagement agent.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => openFaida("connect")}
-            className="inline-flex h-11 shrink-0 items-center gap-2 self-start rounded-md bg-accent px-5 text-small font-bold text-[#211b12] transition-colors hover:bg-accent-hover md:self-auto"
-          >
-            Connect with Faida
-            <ArrowUpRight className="h-4 w-4" aria-hidden />
-          </button>
-        </div>
-      </section>
+      <ClosingBand
+        id="faida"
+        eyebrow="M-Taji Faida"
+        title={
+          <>
+            Keep citizens <em className="script-accent text-accent">connected.</em>
+          </>
+        }
+        body="Keep citizens connected to opportunities, updates, questions and community feedback through M-Taji Faida’s WhatsApp-powered engagement agent."
+        actionLabel="Connect with Faida"
+        onAction={() => openFaida("connect")}
+      />
     </>
   );
 }

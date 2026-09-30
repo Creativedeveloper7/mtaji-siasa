@@ -26,33 +26,31 @@ export function OpportunityCard({
   const href = `/opportunities/${opportunity.slug}`;
 
   return (
-    <article className="group flex h-full flex-col overflow-hidden rounded-md border border-border bg-surface shadow-soft transition-shadow duration-base hover:shadow-raised">
+    <article className="group flex h-full flex-col overflow-hidden border border-border bg-surface transition-colors duration-base hover:border-border-strong">
       <Link href={href} className="flex flex-1 flex-col">
         {opportunity.image && (
           <div className="relative aspect-[16/9] overflow-hidden bg-bg-elevated">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={opportunity.image}
-              alt=""
+              alt={`Illustrative image for ${opportunity.title}`}
               className="h-full w-full object-cover transition-transform duration-slow ease-premium group-hover:scale-[1.03]"
             />
+            <span aria-hidden className="image-label absolute bottom-3 left-3">
+              Illustrative image
+            </span>
           </div>
         )}
-        <div className="flex flex-1 flex-col px-5 pt-5">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-brand-green">
+        <div className="flex flex-1 flex-col px-6 pt-6">
+          <div className="flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-[0.11em]">
+            <span className="text-brand-green">
               {OPPORTUNITY_CATEGORY_LABELS[opportunity.category]}
             </span>
-            <span
-              className={cn(
-                "text-[10px] font-extrabold uppercase tracking-[0.1em]",
-                statusTone[status]
-              )}
-            >
+            <span className={statusTone[status]}>
               {OPPORTUNITY_STATUS_LABELS[status]}
             </span>
           </div>
-          <h3 className="mt-3 text-[1.15rem] font-bold leading-snug text-ink">
+          <h3 className="mt-3 text-[1.3rem] font-extrabold leading-snug text-ink">
             {opportunity.title}
           </h3>
           <p className="mt-3 flex items-center gap-1.5 text-caption text-ink-muted">
@@ -71,10 +69,10 @@ export function OpportunityCard({
           </div>
         </div>
       </Link>
-      <div className="mx-5 mt-4 flex items-center justify-between gap-3 border-t border-border py-4">
+      <div className="mx-6 mt-4 flex items-center justify-between gap-3 border-t border-border py-4">
         <Link
           href={href}
-          className="inline-flex items-center gap-2 text-small font-bold text-ink transition-colors hover:text-accent"
+          className="inline-flex items-center gap-2 text-caption font-bold text-ink transition-colors hover:text-accent"
         >
           View opportunity
           <ArrowUpRight className="h-4 w-4" aria-hidden />
