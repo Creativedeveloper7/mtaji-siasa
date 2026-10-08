@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Logo } from "@/components/layout/Logo";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { cn } from "@/lib/utils";
-import type { UserRole } from "@/types/auth";
+import type { AuthSession, UserRole } from "@/types/auth";
 import { LoadingState } from "@/components/ui/EmptyState";
 
 const roles: Array<{
@@ -45,6 +45,7 @@ function SignupForm() {
   const [role, setRole] = useState<Exclude<UserRole, "admin">>("citizen");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [created, setCreated] = useState<AuthSession | null>(null);
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -64,13 +65,32 @@ function SignupForm() {
       setLoading(false);
       return;
     }
-    const destination = next.startsWith("/")
-      ? next
-      : role === "leader" || role === "aspirant"
-        ? "/dashboard"
-        : "/";
-    window.location.assign(destination);
+    setCreated(result.session);
+    setLoading(false);
   };
+
+  const destination = created
+    ? workspaceFor(created.role, next)
+    : workspaceFor(role, next);
+
+  if (created) {
+    return (
+      <section className="container-narrow py-12 md:py-20">
+        <Logo size={48} />
+        <p className="meta-label mt-8 text-accent">Account</p>
+        <h1 className="mt-3 text-h1 text-ink">Account created</h1>
+        <p className="mt-3 text-body text-ink-muted">
+          You&apos;re signed in as {created.fullName}.
+          {destination.href === "/dashboard" || destination.href === "/admin"
+            ? " Continue to your dashboard."
+            : ""}
+        </p>
+        <Button href={destination.href} size="lg" fullWidth className="mt-8">
+          {destination.label}
+        </Button>
+      </section>
+    );
+  }
 
   return (
     <section className="container-narrow py-12 md:py-20">
@@ -163,6 +183,12 @@ export default function SignupPage() {
       <SignupForm />
     </Suspense>
   );
+}
+
+function workspaceFor(role: UserRole, next: string): { href: string; label: string } {
+  if (next.startsWith("/") && next !== "/") return { href: next, label: "Continue" };
+  if (role === "admin") return { href: "/admin", label: "Go to admin" };
+  return { href: "/dashboard", label: "Go to dashboard" };
 }
 
 function Field({

@@ -104,10 +104,6 @@ function AdlyGate({ children }: { children: ReactNode }) {
                 Back to Adly
               </Button>
             </div>
-            <p className="mt-8 text-caption text-ink-subtle">
-              Demo: <span className="font-mono text-ink">leader@mtaji.ke</span> /{" "}
-              <span className="font-mono text-ink">Leader@2026</span>
-            </p>
           </div>
         </main>
       </div>

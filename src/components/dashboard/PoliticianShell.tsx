@@ -81,7 +81,7 @@ export function PoliticianShell({ children }: { children: ReactNode }) {
   );
 
   return (
-    <RequireAuth roles={["leader", "aspirant"]}>
+    <RequireAuth roles={["leader", "aspirant", "citizen", "organization"]}>
       <div className="flex min-h-dvh bg-bg">
         <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-bg-elevated lg:flex">
           <div className="border-b border-border px-4 py-4">

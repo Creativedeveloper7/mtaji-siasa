@@ -23,6 +23,7 @@ export function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, signOut, ready } = useAuth();
+  const dashboard = user && user.role !== "admin" ? "/dashboard" : null;
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -60,8 +61,8 @@ export function Navbar() {
           Admin
         </Button>
       )}
-      {(user.role === "leader" || user.role === "aspirant") && (
-        <Button href="/dashboard" variant="outline" size="sm">
+      {dashboard && (
+        <Button href={dashboard} size="sm">
           Dashboard
         </Button>
       )}
@@ -99,9 +100,9 @@ export function Navbar() {
           Admin dashboard
         </Button>
       )}
-      {(user.role === "leader" || user.role === "aspirant") && (
-        <Button href="/dashboard" variant="outline" fullWidth>
-          Politician dashboard
+      {dashboard && (
+        <Button href={dashboard} fullWidth>
+          Go to dashboard
         </Button>
       )}
       {(user.role === "leader" ||
@@ -171,6 +172,16 @@ export function Navbar() {
 
         <div className="flex items-center gap-1 lg:hidden">
           <ThemeToggle />
+          {dashboard && (
+            <Button href={dashboard} size="sm">
+              Dashboard
+            </Button>
+          )}
+          {user?.role === "admin" && (
+            <Button href="/admin" size="sm" variant="outline">
+              Admin
+            </Button>
+          )}
           <button
             type="button"
             className="flex h-10 w-10 items-center justify-center rounded-md text-ink hover:bg-surface"

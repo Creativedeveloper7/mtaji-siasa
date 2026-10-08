@@ -96,7 +96,6 @@ export default function SignInClient() {
           type="email"
           required
           autoComplete="email"
-          defaultValue="leader@mtaji.ke"
         />
         <Field
           label="Password"
@@ -105,7 +104,6 @@ export default function SignInClient() {
           type="password"
           required
           autoComplete="current-password"
-          defaultValue="Leader@2026"
         />
 
         {error && (
@@ -118,29 +116,6 @@ export default function SignInClient() {
           {loading ? "Signing in…" : "Sign In"}
         </Button>
       </form>
-
-      <div className="mt-8 rounded-lg border border-border bg-surface p-4 text-small text-ink-muted">
-        <p className="meta-label text-accent">Demo accounts</p>
-        <ul className="mt-3 space-y-1.5">
-          <li>
-            Admin — <span className="font-mono text-ink">admin@mtaji.ke</span> /{" "}
-            <span className="font-mono text-ink">Admin@2026</span>
-          </li>
-          <li>
-            Leader — <span className="font-mono text-ink">leader@mtaji.ke</span> /{" "}
-            <span className="font-mono text-ink">Leader@2026</span>
-          </li>
-          <li>
-            Aspirant —{" "}
-            <span className="font-mono text-ink">aspirant@mtaji.ke</span> /{" "}
-            <span className="font-mono text-ink">Aspirant@2026</span>
-          </li>
-          <li>
-            Citizen — <span className="font-mono text-ink">citizen@mtaji.ke</span>{" "}
-            / <span className="font-mono text-ink">Citizen@2026</span>
-          </li>
-        </ul>
-      </div>
 
       <p className="mt-6 text-center text-small text-ink-muted">
         New here?{" "}

@@ -14,27 +14,39 @@ export function usePoliticianProfile() {
 
   const account = users.find((entry) => entry.id === user?.userId);
   const leader = content.leaders.find((item) => item.id === user?.leaderId);
+  const leaderReady = Boolean(leader);
 
   useEffect(() => {
-    if (!authReady || !contentReady || !user) return;
-    if (user.role !== "leader" && user.role !== "aspirant") return;
-    if (user.leaderId && content.leaders.some((item) => item.id === user.leaderId)) return;
+    if (!authReady || !contentReady || !user || leaderReady) return;
+    if (
+      user.role !== "leader" &&
+      user.role !== "aspirant" &&
+      user.role !== "citizen" &&
+      user.role !== "organization"
+    ) {
+      return;
+    }
     if (pending.current === user.userId) return;
     pending.current = user.userId;
     let cancel = false;
     (async () => {
-      const result = await apiJson<{ session?: AuthSession }>("/api/auth/profile", { method: "POST" });
-      if (cancel) return;
+      const result = await apiJson<{ session?: AuthSession }>("/api/auth/profile", {
+        method: "POST",
+      });
+      if (cancel) {
+        pending.current = null;
+        return;
+      }
       if (result.ok && result.data.session) {
-        applySession(result.data.session);
         await reload();
+        applySession(result.data.session);
       }
       pending.current = null;
     })();
     return () => {
       cancel = true;
     };
-  }, [authReady, contentReady, user, content.leaders, applySession, reload]);
+  }, [authReady, contentReady, user, leaderReady, applySession, reload]);
 
   return {
     ready: authReady && contentReady,

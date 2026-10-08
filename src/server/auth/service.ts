@@ -187,8 +187,14 @@ export function ensurePoliticianProfile(userId: string):
   | { ok: true; session: AuthSession; leaderId: string }
   | { ok: false; error: string; status: number } {
   const users = getRepositories().users;
-  const account = users.findById(userId);
+  let account = users.findById(userId);
   if (!account) return { ok: false, error: "Sign in required.", status: 401 };
+  if (account.role === "citizen" || account.role === "organization") {
+    account = users.update({ ...account, role: "leader" }) ?? {
+      ...account,
+      role: "leader",
+    };
+  }
   if (account.role !== "leader" && account.role !== "aspirant") {
     return { ok: false, error: "Only a politician account can open a profile.", status: 403 };
   }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { cn } from "@/lib/utils";
 
 function Typewriter({
@@ -59,6 +60,14 @@ function Typewriter({
 }
 
 export function LandingHero() {
+  const { user, ready } = useAuth();
+  const workspace =
+    ready && user?.role === "admin"
+      ? { href: "/admin", label: "Go to admin" }
+      : ready && user
+        ? { href: "/dashboard", label: "Go to dashboard" }
+        : null;
+
   return (
     <section
       className="relative isolate overflow-hidden bg-[#1d1914] text-white"
@@ -117,10 +126,10 @@ export function LandingHero() {
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href="/signup"
+              href={workspace?.href ?? "/signup"}
               className="inline-flex h-11 items-center gap-2 rounded-md bg-accent px-5 text-small font-bold text-[#211b12] transition-colors hover:bg-accent-hover"
             >
-              Get started
+              {workspace?.label ?? "Get started"}
               <ArrowUpRight className="h-4 w-4" aria-hidden />
             </Link>
             <Link
