@@ -10,22 +10,16 @@ import {
   type ReactNode,
 } from "react";
 import type { AuthSession, UserAccount, UserRole } from "@/types/auth";
-import {
-  SESSION_STORAGE_KEY,
-  USERS_STORAGE_KEY,
-  createId,
-  createSeedUsers,
-  readJson,
-  writeJson,
-} from "@/lib/store";
+import { apiJson } from "@/lib/api-client";
 
 interface AuthContextValue {
   user: AuthSession | null;
   users: UserAccount[];
   ready: boolean;
-  signIn: (email: string, password: string) =>
-    | { ok: true; session: AuthSession }
-    | { ok: false; error: string };
+  signIn: (
+    email: string,
+    password: string
+  ) => Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }>;
   signUp: (input: {
     fullName: string;
     email: string;
@@ -33,94 +27,91 @@ interface AuthContextValue {
     password: string;
     role: UserRole;
     leaderId?: string;
-  }) => { ok: true; session: AuthSession } | { ok: false; error: string };
-  signOut: () => void;
-  updateUser: (user: UserAccount) => void;
-  deleteUser: (id: string) => void;
+  }) => Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }>;
+  signOut: () => Promise<void>;
+  updateUser: (user: UserAccount) => Promise<void>;
+  deleteUser: (id: string) => Promise<void>;
   linkLeaderProfile: (userId: string, leaderId: string) => void;
+  applySession: (session: AuthSession | null) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function toSession(account: UserAccount): AuthSession {
+function accountFromPublic(user: Omit<UserAccount, "password"> & { password?: string }): UserAccount {
+  return { ...user, password: user.password ?? "" };
+}
+
+function accountFromSession(session: AuthSession): UserAccount {
   return {
-    userId: account.id,
-    email: account.email,
-    fullName: account.fullName,
-    role: account.role,
-    leaderId: account.leaderId,
+    id: session.userId,
+    fullName: session.fullName,
+    email: session.email,
+    phone: "",
+    password: "",
+    role: session.role,
+    createdAt: "",
+    leaderId: session.leaderId,
   };
 }
 
-function hydrateAuthState(): {
-  users: UserAccount[];
-  user: AuthSession | null;
-  ready: boolean;
-} {
-  if (typeof window === "undefined") {
-    return { users: createSeedUsers(), user: null, ready: false };
-  }
-  try {
-    const seeded = createSeedUsers();
-    const stored = readJson<UserAccount[] | null>(USERS_STORAGE_KEY, null);
-    const merged = stored?.length ? mergeUsers(seeded, stored) : seeded;
-    writeJson(USERS_STORAGE_KEY, merged);
-
-    const session = readJson<AuthSession | null>(SESSION_STORAGE_KEY, null);
-    if (session) {
-      const account = merged.find((u) => u.id === session.userId);
-      if (account) {
-        const fresh = toSession(account);
-        writeJson(SESSION_STORAGE_KEY, fresh);
-        return { users: merged, user: fresh, ready: true };
-      }
-      writeJson(SESSION_STORAGE_KEY, null);
-    }
-    return { users: merged, user: null, ready: true };
-  } catch {
-    return { users: createSeedUsers(), user: null, ready: true };
-  }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [users, setUsers] = useState<UserAccount[]>(() => createSeedUsers());
+  const [users, setUsers] = useState<UserAccount[]>([]);
   const [user, setUser] = useState<AuthSession | null>(null);
   const [ready, setReady] = useState(false);
 
-  useEffect(() => {
-    try {
-      const hydrated = hydrateAuthState();
-      setUsers(hydrated.users);
-      setUser(hydrated.user);
-    } catch {
-      /* keep seed users */
-    } finally {
-      setReady(true);
+  const loadDirectory = useCallback(async (session: AuthSession | null) => {
+    if (session?.role !== "admin") {
+      setUsers(session ? [accountFromSession(session)] : []);
+      return;
     }
+    const result = await apiJson<{ users?: Array<Omit<UserAccount, "password">> }>("/api/auth/users");
+    if (!result.ok || !result.data.users) {
+      setUsers([accountFromSession(session)]);
+      return;
+    }
+    setUsers(result.data.users.map((account) => accountFromPublic(account)));
   }, []);
 
-  const persistUsers = useCallback((next: UserAccount[]) => {
-    setUsers(next);
-    writeJson(USERS_STORAGE_KEY, next);
-  }, []);
+  const applySession = useCallback(
+    (session: AuthSession | null) => {
+      setUser(session);
+      void loadDirectory(session);
+    },
+    [loadDirectory]
+  );
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      const result = await apiJson<{ user: AuthSession | null }>("/api/auth/session");
+      if (cancel) return;
+      const session = result.ok ? result.data.user : null;
+      setUser(session);
+      await loadDirectory(session);
+      if (!cancel) setReady(true);
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [loadDirectory]);
 
   const signIn = useCallback(
-    (email: string, password: string) => {
-      const normalized = email.trim().toLowerCase();
-      const account = users.find((u) => u.email.toLowerCase() === normalized);
-      if (!account || account.password !== password) {
-        return { ok: false as const, error: "Invalid email or password." };
+    async (email: string, password: string) => {
+      const result = await apiJson<{ ok: boolean; error?: string; session?: AuthSession }>(
+        "/api/auth/sign-in",
+        { method: "POST", body: JSON.stringify({ email, password }) }
+      );
+      if (!result.ok || !result.data.session) {
+        return { ok: false as const, error: result.data.error || "Invalid email or password." };
       }
-      const session = toSession(account);
-      setUser(session);
-      writeJson(SESSION_STORAGE_KEY, session);
-      return { ok: true as const, session };
+      applySession(result.data.session);
+      return { ok: true as const, session: result.data.session };
     },
-    [users]
+    [applySession]
   );
 
   const signUp = useCallback(
-    (input: {
+    async (input: {
       fullName: string;
       email: string;
       phone: string;
@@ -128,75 +119,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role: UserRole;
       leaderId?: string;
     }) => {
-      const email = input.email.trim().toLowerCase();
-      if (users.some((u) => u.email.toLowerCase() === email)) {
-        return { ok: false as const, error: "An account with this email already exists." };
+      const result = await apiJson<{ ok: boolean; error?: string; session?: AuthSession }>(
+        "/api/auth/sign-up",
+        { method: "POST", body: JSON.stringify(input) }
+      );
+      if (!result.ok || !result.data.session) {
+        return { ok: false as const, error: result.data.error || "Could not create the account." };
       }
-      if (input.password.length < 6) {
-        return { ok: false as const, error: "Password must be at least 6 characters." };
-      }
-      const role: UserRole =
-        input.role === "admin" ? "citizen" : input.role;
-      const account: UserAccount = {
-        id: createId("usr"),
-        fullName: input.fullName.trim(),
-        email,
-        phone: input.phone.trim(),
-        password: input.password,
-        role,
-        createdAt: new Date().toISOString(),
-        leaderId: input.leaderId,
-      };
-      const next = [...users, account];
-      persistUsers(next);
-      const session = toSession(account);
-      setUser(session);
-      writeJson(SESSION_STORAGE_KEY, session);
-      return { ok: true as const, session };
+      applySession(result.data.session);
+      return { ok: true as const, session: result.data.session };
     },
-    [users, persistUsers]
+    [applySession]
   );
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
+    await apiJson("/api/auth/sign-out", { method: "POST" });
     setUser(null);
-    writeJson(SESSION_STORAGE_KEY, null);
+    setUsers([]);
   }, []);
 
   const updateUser = useCallback(
-    (account: UserAccount) => {
-      const exists = users.some((u) => u.id === account.id);
-      const next = exists
-        ? users.map((u) => (u.id === account.id ? account : u))
-        : [...users, account];
-      persistUsers(next);
-      if (user?.userId === account.id) {
-        const session = toSession(account);
-        setUser(session);
-        writeJson(SESSION_STORAGE_KEY, session);
-      }
+    async (account: UserAccount) => {
+      const payload = account.password ? account : { ...account, password: undefined };
+      const result = await apiJson<{ ok: boolean }>("/api/auth/users", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      if (!result.ok) return;
+      const session = await apiJson<{ user: AuthSession | null }>("/api/auth/session");
+      const next = session.ok ? session.data.user : user;
+      setUser(next);
+      await loadDirectory(next);
     },
-    [users, persistUsers, user]
+    [loadDirectory, user]
+  );
+
+  const deleteUser = useCallback(
+    async (id: string) => {
+      const result = await apiJson("/api/auth/users?id=" + encodeURIComponent(id), { method: "DELETE" });
+      if (!result.ok) return;
+      await loadDirectory(user);
+    },
+    [loadDirectory, user]
   );
 
   const linkLeaderProfile = useCallback(
     (userId: string, leaderId: string) => {
-      const account = users.find((u) => u.id === userId);
+      const account = users.find((entry) => entry.id === userId);
       if (!account) return;
-      updateUser({ ...account, leaderId });
+      void updateUser({ ...account, leaderId });
     },
     [users, updateUser]
-  );
-
-  const deleteUser = useCallback(
-    (id: string) => {
-      const next = users.filter((u) => u.id !== id);
-      persistUsers(next);
-      if (user?.userId === id) {
-        setUser(null);
-        writeJson(SESSION_STORAGE_KEY, null);
-      }
-    },
-    [users, persistUsers, user]
   );
 
   const value = useMemo(
@@ -210,34 +183,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateUser,
       deleteUser,
       linkLeaderProfile,
+      applySession,
     }),
-    [
-      user,
-      users,
-      ready,
-      signIn,
-      signUp,
-      signOut,
-      updateUser,
-      deleteUser,
-      linkLeaderProfile,
-    ]
+    [user, users, ready, signIn, signUp, signOut, updateUser, deleteUser, linkLeaderProfile, applySession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-function mergeUsers(seed: UserAccount[], stored: UserAccount[]) {
-  const byEmail = new Map(stored.map((u) => [u.email.toLowerCase(), u]));
-  for (const s of seed) {
-    const existing = byEmail.get(s.email.toLowerCase());
-    if (!existing) {
-      byEmail.set(s.email.toLowerCase(), s);
-    } else if (!existing.leaderId && s.leaderId) {
-      byEmail.set(s.email.toLowerCase(), { ...existing, leaderId: s.leaderId, role: s.role });
-    }
-  }
-  return Array.from(byEmail.values());
 }
 
 export function useAuth() {

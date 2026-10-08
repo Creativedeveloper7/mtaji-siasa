@@ -46,13 +46,13 @@ function SignupForm() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!ready) return;
     setError("");
     setLoading(true);
     const form = new FormData(e.currentTarget);
-    const result = signUp({
+    const result = await signUp({
       fullName: String(form.get("name") || ""),
       email: String(form.get("email") || ""),
       phone: String(form.get("phone") || ""),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   HandCoins,
   Package,
@@ -15,6 +15,7 @@ import {
 } from "@/components/admin/AdminUI";
 import { Button } from "@/components/ui/Button";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
+import { apiJson } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/utils";
 
 type FundSourceId =
@@ -39,8 +40,6 @@ const TOP_UP_SOURCES = [
   { value: "merchandise", label: "Merchandise sales" },
 ] as const;
 
-const WALLET_STORAGE_PREFIX = "mtaji-siasa-wallet-v1:";
-
 interface WalletState {
   sources: Record<FundSourceId, number>;
   lastTopUpAt?: string;
@@ -53,30 +52,6 @@ const DEFAULT_SOURCES: Record<FundSourceId, number> = {
   donations: 41000,
   transfers: 15000,
 };
-
-function loadWallet(leaderId: string): WalletState {
-  if (typeof window === "undefined") {
-    return { sources: { ...DEFAULT_SOURCES } };
-  }
-  try {
-    const raw = localStorage.getItem(`${WALLET_STORAGE_PREFIX}${leaderId}`);
-    if (!raw) return { sources: { ...DEFAULT_SOURCES } };
-    const parsed = JSON.parse(raw) as WalletState;
-    return {
-      ...parsed,
-      sources: { ...DEFAULT_SOURCES, ...parsed.sources },
-    };
-  } catch {
-    return { sources: { ...DEFAULT_SOURCES } };
-  }
-}
-
-function saveWallet(leaderId: string, state: WalletState) {
-  localStorage.setItem(
-    `${WALLET_STORAGE_PREFIX}${leaderId}`,
-    JSON.stringify(state)
-  );
-}
 
 export default function PoliticianWalletPage() {
   const { leader } = usePoliticianProfile();
@@ -91,17 +66,15 @@ export default function PoliticianWalletPage() {
 
   useEffect(() => {
     if (!leader) return;
-    setWallet(loadWallet(leader.id));
+    let cancel = false;
+    (async () => {
+      const result = await apiJson<{ wallet?: WalletState }>("/api/wallet");
+      if (!cancel && result.ok && result.data.wallet) setWallet(result.data.wallet);
+    })();
+    return () => {
+      cancel = true;
+    };
   }, [leader]);
-
-  const persist = useCallback(
-    (next: WalletState) => {
-      if (!leader) return;
-      setWallet(next);
-      saveWallet(leader.id, next);
-    },
-    [leader]
-  );
 
   const fundCards: FundSource[] = useMemo(() => {
     const sources = wallet?.sources ?? DEFAULT_SOURCES;
@@ -150,26 +123,23 @@ export default function PoliticianWalletPage() {
       setTopUpNote("Enter a valid top-up amount.");
       return;
     }
-    setTopUpNote(
-      `Opening Paystack for ${formatCurrency(amount)} via ${
-        TOP_UP_SOURCES.find((s) => s.value === topUpSource)?.label ?? topUpSource
-      }…`
-    );
-    // Prototype: credit transfers ledger after “checkout”
-    window.setTimeout(() => {
-      persist({
-        ...wallet,
-        sources: {
-          ...wallet.sources,
-          transfers: wallet.sources.transfers + amount,
-        },
-        lastTopUpAt: new Date().toISOString(),
-      });
+    const sourceLabel =
+      TOP_UP_SOURCES.find((s) => s.value === topUpSource)?.label ?? topUpSource;
+    setTopUpNote(`Recording ${formatCurrency(amount)} via ${sourceLabel}…`);
+    void apiJson<{ ok: boolean; error?: string; wallet?: WalletState }>("/api/wallet/top-up", {
+      method: "POST",
+      body: JSON.stringify({ amount, source: topUpSource }),
+    }).then((result) => {
+      if (!result.ok || !result.data.wallet) {
+        setTopUpNote(result.data.error || "Could not record the top-up.");
+        return;
+      }
+      setWallet(result.data.wallet);
       setTopUpAmount("");
       setTopUpNote(
-        `Paystack checkout simulated. ${formatCurrency(amount)} added to Transfers & top-ups.`
+        `${formatCurrency(amount)} recorded on Transfers & top-ups. This is not a live Paystack charge.`
       );
-    }, 900);
+    });
   };
 
   const handleWithdraw = () => {
@@ -183,31 +153,20 @@ export default function PoliticianWalletPage() {
       return;
     }
 
-    // Draw proportionally from sources for the prototype
-    let remaining = amount;
-    const nextSources = { ...wallet.sources };
-    const order: FundSourceId[] = [
-      "transfers",
-      "merchandise",
-      "donations",
-      "crowdfunding",
-    ];
-    for (const id of order) {
-      if (remaining <= 0) break;
-      const take = Math.min(nextSources[id], remaining);
-      nextSources[id] -= take;
-      remaining -= take;
-    }
-
-    persist({
-      ...wallet,
-      sources: nextSources,
-      lastWithdrawalAt: new Date().toISOString(),
+    void apiJson<{ ok: boolean; error?: string; wallet?: WalletState }>("/api/wallet/withdraw", {
+      method: "POST",
+      body: JSON.stringify({ amount }),
+    }).then((result) => {
+      if (!result.ok || !result.data.wallet) {
+        setWithdrawNote(result.data.error || "Could not record the withdrawal.");
+        return;
+      }
+      setWallet(result.data.wallet);
+      setWithdrawAmount("");
+      setWithdrawNote(
+        `Withdrawal of ${formatCurrency(amount)} recorded. Processing typically takes 1–2 business days.`
+      );
     });
-    setWithdrawAmount("");
-    setWithdrawNote(
-      `Withdrawal request submitted for ${formatCurrency(amount)}. Processing typically takes 1–2 business days.`
-    );
   };
 
   return (

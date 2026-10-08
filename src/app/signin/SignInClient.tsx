@@ -29,7 +29,7 @@ export default function SignInClient() {
     window.location.replace(destination);
   }, [ready, user, next]);
 
-  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!ready) return;
     setError("");
@@ -37,7 +37,7 @@ export default function SignInClient() {
     const form = new FormData(e.currentTarget);
     const email = String(form.get("email") || "");
     const password = String(form.get("password") || "");
-    const result = signIn(email, password);
+    const result = await signIn(email, password);
     if (!result.ok) {
       setError(result.error);
       setLoading(false);

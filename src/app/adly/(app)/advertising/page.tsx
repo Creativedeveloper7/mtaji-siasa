@@ -112,7 +112,7 @@ export default function AdlyAdvertisingPage() {
       image,
       platformIds: selected,
     };
-    upsertCreative(creative);
+    await upsertCreative(creative);
 
     const draft: Campaign = {
       id: campaignId,
@@ -147,8 +147,8 @@ export default function AdlyAdvertisingPage() {
     };
 
     const review = await mockPolicyReviewService.review(draft);
-    upsertPolicyReview(review);
-    upsertCampaign({ ...draft, policyReviewId: review.id });
+    await upsertCampaign(draft);
+    await upsertPolicyReview(review);
     const submit = await mockAdsPlatformService.submitForReview(campaignId);
     setReviewNote(submit.note);
     setBusy(false);

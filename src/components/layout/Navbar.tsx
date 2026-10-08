@@ -50,8 +50,7 @@ export function Navbar() {
     pathname === href || pathname.startsWith(`${href}/`);
 
   const handleSignOut = () => {
-    signOut();
-    router.push("/");
+    void signOut().then(() => router.push("/"));
   };
 
   const authDesktop = !ready ? null : user ? (

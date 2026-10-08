@@ -3,6 +3,7 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { apiJson } from "@/lib/api-client";
 
 const ROLES = [
   "Politician",
@@ -21,8 +22,6 @@ const INTERESTS = [
   "Other",
 ] as const;
 
-const INTEREST_STORAGE_KEY = "mtaji-siasa-adly-interest-v1";
-
 const fieldClass =
   "h-11 w-full rounded-md border border-border bg-surface px-3 text-small text-ink transition-colors hover:border-border-strong focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30";
 
@@ -34,12 +33,14 @@ interface AdlyInterestModalProps {
 export function AdlyInterestModal({ open, onClose }: AdlyInterestModalProps) {
   const titleId = useId();
   const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
   const [role, setRole] = useState<(typeof ROLES)[number]>("Politician");
   const [interests, setInterests] = useState<string[]>([]);
 
   useEffect(() => {
     if (!open) return;
     setDone(false);
+    setError("");
     setRole("Politician");
     setInterests([]);
     const onKey = (e: KeyboardEvent) => {
@@ -61,28 +62,24 @@ export function AdlyInterestModal({ open, onClose }: AdlyInterestModalProps) {
     );
   };
 
-  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setError("");
     const form = new FormData(e.currentTarget);
-    const entry = {
-      fullName: String(form.get("fullName") || ""),
-      email: String(form.get("email") || ""),
-      phone: String(form.get("phone") || ""),
-      organization: String(form.get("organization") || ""),
-      role,
-      interests,
-      createdAt: new Date().toISOString(),
-    };
-    try {
-      const existing = JSON.parse(
-        localStorage.getItem(INTEREST_STORAGE_KEY) || "[]"
-      ) as unknown[];
-      localStorage.setItem(
-        INTEREST_STORAGE_KEY,
-        JSON.stringify([entry, ...existing].slice(0, 50))
-      );
-    } catch {
-      /* ignore */
+    const result = await apiJson<{ ok: boolean; error?: string }>("/api/engagement/adly-interest", {
+      method: "POST",
+      body: JSON.stringify({
+        fullName: String(form.get("fullName") || ""),
+        email: String(form.get("email") || ""),
+        phone: String(form.get("phone") || ""),
+        organization: String(form.get("organization") || ""),
+        role,
+        interests,
+      }),
+    });
+    if (!result.ok) {
+      setError(result.data.error || "Could not send your interest.");
+      return;
     }
     setDone(true);
   };
@@ -206,7 +203,8 @@ export function AdlyInterestModal({ open, onClose }: AdlyInterestModalProps) {
                 </div>
               </fieldset>
             </div>
-            <footer className="border-t border-border px-5 py-4 md:px-6">
+            <footer className="space-y-3 border-t border-border px-5 py-4 md:px-6">
+              {error ? <p className="text-small text-error">{error}</p> : null}
               <Button type="submit" fullWidth>
                 Submit Interest
               </Button>

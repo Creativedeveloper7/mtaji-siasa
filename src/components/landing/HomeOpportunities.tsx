@@ -8,8 +8,8 @@ import { CardCarousel } from "@/components/ui/CardCarousel";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { OPPORTUNITY_CATEGORY_LABELS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-
-const SAVED_KEY = "mtaji-siasa-saved-opportunities-v1";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { apiJson } from "@/lib/api-client";
 
 function eligibilityGroup(o: Opportunity): string {
   const text = o.eligibility.toLowerCase();
@@ -41,26 +41,29 @@ export function HomeOpportunities({
   const [eligibility, setEligibility] = useState("all");
   const [saved, setSaved] = useState<string[]>([]);
   const [savedOnly, setSavedOnly] = useState(false);
+  const { user, ready: authReady } = useAuth();
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(SAVED_KEY);
-      if (raw) setSaved(JSON.parse(raw));
-    } catch {
-      /* ignore */
-    }
-  }, []);
+    if (!authReady || !user) return;
+    let cancel = false;
+    (async () => {
+      const result = await apiJson<{ ids?: string[] }>("/api/engagement/saved");
+      if (!cancel && result.ok && result.data.ids) setSaved(result.data.ids);
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [authReady, user]);
 
   const toggleSave = (id: string) => {
-    setSaved((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      try {
-        window.localStorage.setItem(SAVED_KEY, JSON.stringify(next));
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
+    const next = saved.includes(id) ? saved.filter((item) => item !== id) : [...saved, id];
+    setSaved(next);
+    if (user) {
+      void apiJson("/api/engagement/saved", {
+        method: "PUT",
+        body: JSON.stringify({ ids: next }),
+      });
+    }
   };
 
   const options = useMemo(
@@ -157,8 +160,10 @@ export function HomeOpportunities({
         </button>
       </div>
       <p className="mt-3 text-caption text-ink-muted">
-        Saved listings stay on this device. Applications and current details
-        open in the live app.
+        {user
+          ? "Saved listings follow your account."
+          : "Sign in to keep saved listings on your account."}{" "}
+        Applications and current details open in the live app.
       </p>
       {layout === "grid" && (
         <p className="mt-6 text-caption font-bold text-ink" aria-live="polite">

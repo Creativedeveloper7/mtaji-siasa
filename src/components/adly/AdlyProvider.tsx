@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -20,7 +21,7 @@ import type {
   Timelapse,
 } from "@/types/adly";
 import { computeAdlyStats, createSeedAdlyContent } from "@/data/adly";
-import { loadAdlyContent, saveAdlyContent } from "@/lib/adly-store";
+import { apiJson } from "@/lib/api-client";
 import { createId } from "@/lib/store";
 
 interface AdlyContextValue {
@@ -28,86 +29,88 @@ interface AdlyContextValue {
   content: AdlyContent;
   stats: ReturnType<typeof computeAdlyStats>;
   resetToSeed: () => void;
-  upsertCampaign: (item: Campaign) => void;
-  deleteCampaign: (id: string) => void;
+  upsertCampaign: (item: Campaign) => Promise<void>;
+  deleteCampaign: (id: string) => Promise<void>;
   getCampaign: (id: string) => Campaign | undefined;
-  upsertCreative: (item: AdCreative) => void;
-  upsertPolicyReview: (item: PolicyReview) => void;
-  upsertPoster: (item: Poster) => void;
-  upsertTimelapse: (item: Timelapse) => void;
-  upsertSimulation: (item: Simulation) => void;
-  addInsight: (item: Omit<AdlyInsight, "id"> & { id?: string }) => void;
+  upsertCreative: (item: AdCreative) => Promise<void>;
+  upsertPolicyReview: (item: PolicyReview) => Promise<void>;
+  upsertPoster: (item: Poster) => Promise<void>;
+  upsertTimelapse: (item: Timelapse) => Promise<void>;
+  upsertSimulation: (item: Simulation) => Promise<void>;
+  addInsight: (item: Omit<AdlyInsight, "id"> & { id?: string }) => Promise<void>;
 }
 
 const AdlyContext = createContext<AdlyContextValue | null>(null);
 
-function upsertIn<T extends { id: string }>(list: T[], item: T): T[] {
-  const idx = list.findIndex((x) => x.id === item.id);
-  if (idx === -1) return [...list, item];
-  const next = [...list];
-  next[idx] = item;
-  return next;
-}
-
 export function AdlyProvider({ children }: { children: ReactNode }) {
   const [content, setContent] = useState<AdlyContent>(() => createSeedAdlyContent());
-  const [ready, setReady] = useState(true);
+  const [ready, setReady] = useState(false);
+  const queue = useRef(Promise.resolve());
+
+  const reload = useCallback(async () => {
+    const result = await apiJson<{ content?: AdlyContent }>("/api/adly");
+    if (result.ok && result.data.content) setContent(result.data.content);
+  }, []);
 
   useEffect(() => {
-    try {
-      setContent(loadAdlyContent());
-    } catch {
-      /* keep seed */
-    } finally {
-      setReady(true);
-    }
+    let cancel = false;
+    reload().finally(() => {
+      if (!cancel) setReady(true);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [reload]);
+
+  const enqueue = useCallback((task: () => Promise<void>) => {
+    const run = queue.current.then(task, task);
+    queue.current = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
   }, []);
 
-  const persist = useCallback((next: AdlyContent) => {
-    setContent(next);
-    saveAdlyContent(next);
-  }, []);
+  const save = useCallback(
+    (collection: string, item: unknown) =>
+      enqueue(async () => {
+        const result = await apiJson(`/api/adly/${collection}`, {
+          method: "PUT",
+          body: JSON.stringify(item),
+        });
+        if (result.ok) await reload();
+      }),
+    [enqueue, reload]
+  );
 
   const value = useMemo<AdlyContextValue>(
     () => ({
       ready,
       content,
       stats: computeAdlyStats(content),
-      resetToSeed: () => persist(createSeedAdlyContent()),
-      upsertCampaign: (item) =>
-        persist({ ...content, campaigns: upsertIn(content.campaigns, item) }),
+      resetToSeed: () => {
+        void enqueue(async () => {
+          const result = await apiJson<{ content?: AdlyContent }>("/api/adly/reset", { method: "POST" });
+          if (result.ok && result.data.content) setContent(result.data.content);
+        });
+      },
+      upsertCampaign: (item) => save("campaigns", item),
       deleteCampaign: (id) =>
-        persist({
-          ...content,
-          campaigns: content.campaigns.filter((c) => c.id !== id),
+        enqueue(async () => {
+          const result = await apiJson(`/api/adly/campaigns?id=${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
+          if (result.ok) await reload();
         }),
-      getCampaign: (id) => content.campaigns.find((c) => c.id === id),
-      upsertCreative: (item) =>
-        persist({ ...content, creatives: upsertIn(content.creatives, item) }),
-      upsertPolicyReview: (item) =>
-        persist({
-          ...content,
-          policyReviews: upsertIn(content.policyReviews, item),
-        }),
-      upsertPoster: (item) =>
-        persist({ ...content, posters: upsertIn(content.posters, item) }),
-      upsertTimelapse: (item) =>
-        persist({ ...content, timelapses: upsertIn(content.timelapses, item) }),
-      upsertSimulation: (item) =>
-        persist({
-          ...content,
-          simulations: upsertIn(content.simulations, item),
-        }),
-      addInsight: (item) =>
-        persist({
-          ...content,
-          insights: [
-            { ...item, id: item.id || createId("ins") },
-            ...content.insights,
-          ],
-        }),
+      getCampaign: (id) => content.campaigns.find((item) => item.id === id),
+      upsertCreative: (item) => save("creatives", item),
+      upsertPolicyReview: (item) => save("policy-reviews", item),
+      upsertPoster: (item) => save("posters", item),
+      upsertTimelapse: (item) => save("timelapses", item),
+      upsertSimulation: (item) => save("simulations", item),
+      addInsight: (item) => save("insights", { ...item, id: item.id || createId("ins") }),
     }),
-    [ready, content, persist]
+    [ready, content, enqueue, reload, save]
   );
 
   return <AdlyContext.Provider value={value}>{children}</AdlyContext.Provider>;

@@ -1,81 +1,43 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useRef } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useContent } from "@/components/content/ContentProvider";
-import { createId, slugify } from "@/lib/store";
-import type { Leader } from "@/types";
+import { apiJson } from "@/lib/api-client";
+import type { AuthSession } from "@/types/auth";
 
-/** Resolve (or create) the Leader profile for the signed-in politician */
+/** Resolve the Leader profile for the signed-in politician, creating one on the server when needed. */
 export function usePoliticianProfile() {
-  const { user, users, linkLeaderProfile } = useAuth();
-  const { content, upsertLeader, ready } = useContent();
+  const { user, users, ready: authReady, applySession } = useAuth();
+  const { content, ready: contentReady, reload } = useContent();
+  const pending = useRef<string | null>(null);
 
-  const account = useMemo(
-    () => users.find((u) => u.id === user?.userId),
-    [users, user]
-  );
-
-  const leader = useMemo(() => {
-    if (!account?.leaderId) return undefined;
-    return content.leaders.find((l) => l.id === account.leaderId);
-  }, [account, content.leaders]);
+  const account = users.find((entry) => entry.id === user?.userId);
+  const leader = content.leaders.find((item) => item.id === user?.leaderId);
 
   useEffect(() => {
-    if (!user || !account) return;
+    if (!authReady || !contentReady || !user) return;
     if (user.role !== "leader" && user.role !== "aspirant") return;
-    if (account.leaderId && content.leaders.some((l) => l.id === account.leaderId)) {
-      return;
-    }
-
-    const existingByName = content.leaders.find(
-      (l) => l.name.toLowerCase() === account.fullName.toLowerCase()
-    );
-    if (existingByName) {
-      linkLeaderProfile(account.id, existingByName.id);
-      return;
-    }
-
-    const id = createId("ldr");
-    const profile: Leader = {
-      id,
-      slug: slugify(account.fullName) || id,
-      name: account.fullName,
-      honorific: user.role === "aspirant" ? "H.E." : "Hon.",
-      position:
-        user.role === "aspirant"
-          ? "Political aspirant — profile in progress"
-          : "Elected leader — profile in progress",
-      type: user.role === "aspirant" ? "aspirant" : "elected",
-      county: "Nairobi",
-      photo:
-        "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80",
-      shortBio: "Complete your profile to showcase your development record.",
-      bio: "Welcome to your M-Taji Siasa politician workspace. Update your biography, publish projects with GIS evidence, and engage citizens through Faida.",
-      achievements: [],
-      social: {},
-      projectIds: [],
-      opportunityIds: [],
-      mediaIds: [],
-      pollIds: [],
-      productIds: [],
-      vision:
-        user.role === "aspirant"
-          ? {
-              statement: "Add your vision statement for citizens to discover.",
-              manifesto: [],
-              priorities: [],
-              proposedProjects: [],
-              expectedImpact: [],
-            }
-          : undefined,
+    if (user.leaderId && content.leaders.some((item) => item.id === user.leaderId)) return;
+    if (pending.current === user.userId) return;
+    pending.current = user.userId;
+    let cancel = false;
+    (async () => {
+      const result = await apiJson<{ session?: AuthSession }>("/api/auth/profile", { method: "POST" });
+      if (cancel) return;
+      if (result.ok && result.data.session) {
+        applySession(result.data.session);
+        await reload();
+      }
+      pending.current = null;
+    })();
+    return () => {
+      cancel = true;
     };
-    upsertLeader(profile);
-    linkLeaderProfile(account.id, id);
-  }, [user, account, content.leaders, linkLeaderProfile, upsertLeader]);
+  }, [authReady, contentReady, user, content.leaders, applySession, reload]);
 
   return {
-    ready,
+    ready: authReady && contentReady,
     user,
     account,
     leader,
