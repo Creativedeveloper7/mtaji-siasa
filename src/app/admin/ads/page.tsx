@@ -1,0 +1,101 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { AdminHeader, AdminSelect } from "@/components/admin/AdminUI";
+import { AD_STATUS, AdCampaignCard, type AdCardAction } from "@/components/ads/AdCampaignCard";
+import { useContent } from "@/components/content/ContentProvider";
+import { apiJson } from "@/lib/api-client";
+import type { AdCampaign, AdCampaignStatus } from "@/types";
+
+/** Approve ads before they spend real money, and watch every running campaign. */
+export default function AdminAdsPage() {
+  const { content } = useContent();
+  const [items, setItems] = useState<AdCampaign[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<"all" | AdCampaignStatus>("pending_approval");
+  const [busy, setBusy] = useState<{ id: string; action: AdCardAction } | null>(null);
+
+  const load = useCallback(async () => {
+    const result = await apiJson<{ items?: AdCampaign[]; error?: string }>("/api/ads?scope=all");
+    setLoading(false);
+    if (!result.ok) {
+      setError(result.data.error || "Could not load ads.");
+      return;
+    }
+    setItems(result.data.items ?? []);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const act = async (campaign: AdCampaign, action: AdCardAction) => {
+    let note: string | undefined;
+    if (action === "reject") {
+      const reason = prompt("Reason for not approving (shown to the leader):");
+      if (reason === null) return;
+      note = reason;
+    }
+    if (action === "approve" && !confirm(`Publish "${campaign.name}" on the ad networks? This spends real money.`)) return;
+    setBusy({ id: campaign.id, action });
+    const result = await apiJson<{ item?: AdCampaign; error?: string }>(`/api/ads/${encodeURIComponent(campaign.id)}`, {
+      method: "POST",
+      body: JSON.stringify({ action, note }),
+    });
+    setBusy(null);
+    if (!result.ok || !result.data.item) {
+      alert(result.data.error || "Could not update the ad.");
+      return;
+    }
+    const updated = result.data.item;
+    setItems((current) => current.map((c) => (c.id === updated.id ? updated : c)));
+  };
+
+  const rows = items.filter((item) => filter === "all" || item.status === filter);
+  const pending = items.filter((item) => item.status === "pending_approval").length;
+  const leaderName = (id: string) => {
+    const leader = content.leaders.find((l) => l.id === id);
+    return leader ? `${leader.honorific} ${leader.name}` : id;
+  };
+
+  return (
+    <div>
+      <AdminHeader
+        title="Ads"
+        description={`Paid campaigns on X and Google. ${pending} waiting for approval.`}
+      />
+      <div className="mb-6 max-w-xs">
+        <AdminSelect value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)} aria-label="Filter by status">
+          <option value="all">All campaigns ({items.length})</option>
+          {(Object.keys(AD_STATUS) as AdCampaignStatus[]).map((status) => (
+            <option key={status} value={status}>
+              {AD_STATUS[status].label} ({items.filter((i) => i.status === status).length})
+            </option>
+          ))}
+        </AdminSelect>
+      </div>
+      {error && <p className="mb-4 rounded-md border border-error/30 bg-error-muted px-3 py-2 text-small text-error">{error}</p>}
+      {loading ? (
+        <p className="text-small text-ink-muted">Loading ads…</p>
+      ) : rows.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-small text-ink-muted">
+          Nothing here.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {rows.map((campaign) => (
+            <AdCampaignCard
+              key={campaign.id}
+              campaign={campaign}
+              admin
+              owner={leaderName(campaign.leaderId)}
+              busy={busy?.id === campaign.id ? busy.action : null}
+              onAction={(action) => void act(campaign, action)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

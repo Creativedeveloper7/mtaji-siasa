@@ -44,6 +44,7 @@ import type {
   MediaItem,
   Opportunity,
   OpportunityApplication,
+  AdCampaign,
   Poll,
   Product,
   Project,
@@ -66,6 +67,8 @@ type MovementRow = {
   kind: WalletMovement["kind"];
   amount: number | string;
   source: WalletMovement["source"] | null;
+  note?: string | null;
+  reference?: string | null;
   created_at: string;
 };
 
@@ -147,6 +150,8 @@ function groupWallets(
       createdAt: row.created_at,
     };
     if (row.source) movement.source = row.source;
+    if (row.note) movement.note = row.note;
+    if (row.reference) movement.reference = row.reference;
     (byLeader[row.leader_id] ??= []).push(movement);
   }
   const wallets: Record<string, WalletRecord> = {};
@@ -352,6 +357,8 @@ function saveWallet(record: WalletRecord): WalletRecord {
           kind: movement.kind,
           amount: movement.amount,
           source: movement.source ?? null,
+          note: movement.note ?? null,
+          reference: movement.reference ?? null,
           status: "recorded",
           created_at: movement.createdAt,
         })),
@@ -742,6 +749,30 @@ function createRepositories(): AppRepositories {
     },
   };
 
+  const adCampaigns: AppRepositories["adCampaigns"] = {
+    list: () => {
+      try {
+        return rpcSync<AdCampaign[]>("list_ad_campaigns") ?? [];
+      } catch (error) {
+        fail(error);
+      }
+    },
+    find: (id) => {
+      try {
+        return rpcSync<AdCampaign | null>("ad_campaign_document", { p_id: id }) ?? undefined;
+      } catch (error) {
+        fail(error);
+      }
+    },
+    upsert: (item) => {
+      try {
+        return rpcSync<AdCampaign>("upsert_ad_campaign", { doc: item });
+      } catch (error) {
+        fail(error);
+      }
+    },
+  };
+
   /** 0 until sql/migrations/2026-10-12_applications_gallery_project_links.sql has been run. */
   const countApplications = (): number => {
     try {
@@ -787,6 +818,7 @@ function createRepositories(): AppRepositories {
     wallets,
     engagement,
     applications,
+    adCampaigns,
     counts: (): SeedCounts => ({
       users: cache().users.length,
       leaders: cache().content.leaders.length,
@@ -807,6 +839,13 @@ function createRepositories(): AppRepositories {
       savedOpportunityLists: Object.keys(cache().saved).length,
       adlyInterests: cache().leads.length,
       applications: countApplications(),
+      adCampaigns: (() => {
+        try {
+          return adCampaigns.list().length;
+        } catch {
+          return 0;
+        }
+      })(),
     }),
     resetAll: () => {
       const keep = new Set(createSeedUserIds());

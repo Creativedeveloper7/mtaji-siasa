@@ -159,3 +159,69 @@ function asAmount(value: unknown): number | null {
 function asId(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
+
+/**
+ * Take money for an ad campaign. Draws from sources in the same order as a
+ * withdrawal. Returns the updated wallet, or an error when the balance is short.
+ */
+export function chargeWallet(
+  leaderId: string,
+  amount: number,
+  note: string,
+  reference: string
+): { ok: true; wallet: ReturnType<typeof present> } | { ok: false; error: string } {
+  const current = present(getRepositories().wallets.get(leaderId));
+  if (amount > availableBalance(current)) {
+    return {
+      ok: false,
+      error: `Your wallet has KES ${Math.floor(availableBalance(current)).toLocaleString()} available. Top up to run this ad.`,
+    };
+  }
+  let remaining = amount;
+  const sources = { ...current.sources };
+  for (const source of WITHDRAW_ORDER) {
+    if (remaining <= 0) break;
+    const take = Math.min(sources[source], remaining);
+    sources[source] -= take;
+    remaining -= take;
+  }
+  const movement: WalletMovement = {
+    id: createId("mov"),
+    kind: "ad-spend",
+    amount,
+    status: "recorded",
+    note,
+    reference,
+    createdAt: new Date().toISOString(),
+  };
+  const saved = getRepositories().wallets.save({
+    ...current,
+    sources,
+    movements: [movement, ...current.movements],
+  });
+  return { ok: true, wallet: present(saved) };
+}
+
+/** Return unspent ad money to the wallet (credited to transfers). */
+export function refundWallet(leaderId: string, amount: number, note: string, reference: string) {
+  if (amount <= 0) return;
+  const current = present(getRepositories().wallets.get(leaderId));
+  const movement: WalletMovement = {
+    id: createId("mov"),
+    kind: "ad-refund",
+    amount: Math.round(amount * 100) / 100,
+    status: "recorded",
+    note,
+    reference,
+    createdAt: new Date().toISOString(),
+  };
+  getRepositories().wallets.save({
+    ...current,
+    sources: { ...current.sources, transfers: current.sources.transfers + movement.amount },
+    movements: [movement, ...current.movements],
+  });
+}
+
+export function walletBalance(leaderId: string): number {
+  return availableBalance(present(getRepositories().wallets.get(leaderId)));
+}

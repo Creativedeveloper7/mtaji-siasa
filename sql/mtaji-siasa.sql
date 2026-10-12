@@ -566,10 +566,12 @@ CREATE TABLE wallet_movements (
   id text PRIMARY KEY,
   seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
   leader_id text NOT NULL REFERENCES wallets (leader_id) ON DELETE CASCADE,
-  kind text NOT NULL CHECK (kind IN ('top-up', 'withdrawal')),
+  kind text NOT NULL CHECK (kind IN ('top-up', 'withdrawal', 'ad-spend', 'ad-refund')),
   amount numeric(14, 2) NOT NULL CHECK (amount > 0),
   source text CHECK (source IS NULL OR source IN ('mpesa', 'bank', 'card', 'crowdfunding', 'merchandise')),
   status text NOT NULL DEFAULT 'recorded' CHECK (status = 'recorded'),
+  note text,
+  reference text,
   created_at text NOT NULL
 );
 
@@ -586,6 +588,25 @@ CREATE TABLE saved_opportunities (
   position integer NOT NULL,
   PRIMARY KEY (user_id, opportunity_id)
 );
+
+-- Paid ad campaigns on X and Google Ads. The full campaign is kept in doc.
+CREATE TABLE ad_campaigns (
+  id text PRIMARY KEY,
+  seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+  leader_id text NOT NULL REFERENCES leaders (id) ON DELETE CASCADE,
+  project_id text REFERENCES projects (id) ON DELETE SET NULL,
+  status text NOT NULL CHECK (status IN (
+    'pending_approval', 'launching', 'active', 'paused', 'completed', 'failed', 'rejected', 'stopped'
+  )),
+  budget_kes numeric(14, 2) NOT NULL CHECK (budget_kes > 0),
+  refunded_kes numeric(14, 2) NOT NULL DEFAULT 0 CHECK (refunded_kes >= 0),
+  created_at text NOT NULL,
+  updated_at text NOT NULL,
+  doc jsonb NOT NULL
+);
+
+CREATE INDEX ad_campaigns_leader ON ad_campaigns (leader_id, seq DESC);
+CREATE INDEX ad_campaigns_status ON ad_campaigns (status);
 
 CREATE TABLE adly_interest_leads (
   id text PRIMARY KEY,
@@ -2819,6 +2840,64 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Ad campaigns
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION ad_campaign_document(p_id text)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = mtaji, public
+AS $$
+  SELECT doc FROM ad_campaigns WHERE id = p_id;
+$$;
+
+CREATE FUNCTION list_ad_campaigns()
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = mtaji, public
+AS $$
+  SELECT COALESCE(jsonb_agg(doc ORDER BY seq DESC), '[]'::jsonb) FROM ad_campaigns;
+$$;
+
+CREATE FUNCTION upsert_ad_campaign(doc jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = mtaji, public
+AS $$
+DECLARE
+  cid text := require_id(doc);
+BEGIN
+  IF NULLIF(doc->>'leaderId', '') IS NULL THEN
+    RAISE EXCEPTION 'Ad campaign leaderId is required.';
+  END IF;
+  INSERT INTO ad_campaigns (
+    id, leader_id, project_id, status, budget_kes, refunded_kes, created_at, updated_at, doc
+  )
+  VALUES (
+    cid,
+    doc->>'leaderId',
+    NULLIF(doc->>'projectId', ''),
+    doc->>'status',
+    (doc->>'budgetKes')::numeric,
+    COALESCE((doc->>'refundedKes')::numeric, 0),
+    doc->>'createdAt',
+    doc->>'updatedAt',
+    doc
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    project_id = EXCLUDED.project_id,
+    status = EXCLUDED.status,
+    budget_kes = EXCLUDED.budget_kes,
+    refunded_kes = EXCLUDED.refunded_kes,
+    updated_at = EXCLUDED.updated_at,
+    doc = EXCLUDED.doc;
+  RETURN ad_campaign_document(cid);
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Counts and runtime cleanup. This does not restore the TypeScript seed.
 -- ---------------------------------------------------------------------------
 
@@ -2847,7 +2926,8 @@ AS $$
     'wallets', (SELECT count(*) FROM wallets),
     'savedOpportunityLists', (SELECT count(*) FROM saved_opportunity_lists),
     'adlyInterests', (SELECT count(*) FROM adly_interest_leads),
-    'applications', (SELECT count(*) FROM opportunity_applications)
+    'applications', (SELECT count(*) FROM opportunity_applications),
+    'adCampaigns', (SELECT count(*) FROM ad_campaigns)
   );
 $$;
 
@@ -2857,6 +2937,7 @@ LANGUAGE plpgsql
 SET search_path = mtaji, public
 AS $$
 BEGIN
+  DELETE FROM ad_campaigns;
   DELETE FROM opportunity_applications;
   DELETE FROM wallet_movements;
   DELETE FROM wallets;

@@ -40,11 +40,27 @@ const TOP_UP_SOURCES = [
   { value: "merchandise", label: "Merchandise sales" },
 ] as const;
 
+interface WalletMovement {
+  id: string;
+  kind: "top-up" | "withdrawal" | "ad-spend" | "ad-refund";
+  amount: number;
+  note?: string;
+  createdAt: string;
+}
+
 interface WalletState {
   sources: Record<FundSourceId, number>;
   lastTopUpAt?: string;
   lastWithdrawalAt?: string;
+  movements?: WalletMovement[];
 }
+
+const MOVEMENT_LABELS: Record<WalletMovement["kind"], string> = {
+  "top-up": "Top-up",
+  withdrawal: "Withdrawal",
+  "ad-spend": "Ad payment",
+  "ad-refund": "Ad refund",
+};
 
 const DEFAULT_SOURCES: Record<FundSourceId, number> = {
   crowdfunding: 185000,
@@ -303,6 +319,32 @@ export default function PoliticianWalletPage() {
           </div>
         </div>
       </section>
+
+      {(wallet?.movements?.length ?? 0) > 0 && (
+        <section className="mt-10">
+          <h2 className="text-h3 text-ink">Recent activity</h2>
+          <ul className="mt-4 divide-y divide-border rounded-lg border border-border bg-surface">
+            {wallet?.movements?.slice(0, 15).map((m) => {
+              const incoming = m.kind === "top-up" || m.kind === "ad-refund";
+              return (
+                <li key={m.id} className="flex items-start justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-small text-ink">{MOVEMENT_LABELS[m.kind]}</p>
+                    <p className="truncate text-caption text-ink-subtle">
+                      {m.note ? `${m.note} · ` : ""}
+                      {new Date(m.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <span className={`shrink-0 font-mono text-small ${incoming ? "text-success" : "text-ink"}`}>
+                    {incoming ? "+" : "−"}
+                    {formatCurrency(m.amount)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

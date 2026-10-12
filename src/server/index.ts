@@ -2,7 +2,7 @@ import { createMemoryRepositories } from "@/server/memory/database";
 import type { AppRepositories } from "@/server/repositories";
 import { getSupabaseRepositories } from "@/server/supabase/database";
 
-const MEMORY_ADAPTER_VERSION = 5;
+const MEMORY_ADAPTER_VERSION = 6;
 
 type ServerSlot = {
   version: number;

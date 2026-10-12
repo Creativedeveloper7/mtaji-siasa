@@ -29,11 +29,16 @@ export type TopUpSource = "mpesa" | "bank" | "card" | "crowdfunding" | "merchand
 
 export interface WalletMovement {
   id: string;
-  kind: "top-up" | "withdrawal";
+  /** ad-spend: paid for an ad campaign; ad-refund: money returned from one */
+  kind: "top-up" | "withdrawal" | "ad-spend" | "ad-refund";
   amount: number;
   /** Channel label for a top-up. Not a completed payment. */
   source?: TopUpSource;
   status: "recorded";
+  /** What the movement was for, e.g. the ad campaign name */
+  note?: string;
+  /** Linked record id, e.g. the ad campaign id */
+  reference?: string;
   createdAt: string;
 }
 
@@ -92,4 +97,5 @@ export interface SeedCounts {
   savedOpportunityLists: number;
   adlyInterests: number;
   applications: number;
+  adCampaigns: number;
 }

@@ -3,6 +3,7 @@ import type {
   MediaItem,
   Opportunity,
   OpportunityApplication,
+  AdCampaign,
   Poll,
   Product,
   Project,
@@ -148,6 +149,13 @@ export interface ApplicationRepository {
   delete(id: string): boolean;
 }
 
+/** Paid ad campaigns. Read straight from the store, like applications. */
+export interface AdCampaignRepository {
+  list(): AdCampaign[];
+  find(id: string): AdCampaign | undefined;
+  upsert(item: AdCampaign): AdCampaign;
+}
+
 export interface AppRepositories {
   users: UserRepository;
   content: ContentRepository;
@@ -155,6 +163,7 @@ export interface AppRepositories {
   wallets: WalletRepository;
   engagement: EngagementRepository;
   applications: ApplicationRepository;
+  adCampaigns: AdCampaignRepository;
   counts(): SeedCounts;
   /** Restore seed content and drop wallets, saves, and leads. */
   resetAll(): void;

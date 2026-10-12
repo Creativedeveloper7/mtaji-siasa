@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Inbox,
+  Rocket,
   Briefcase,
   FolderKanban,
   LayoutDashboard,
@@ -30,6 +31,7 @@ const links = [
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/opportunities", label: "Opportunities", icon: Briefcase },
   { href: "/admin/applications", label: "Applications", icon: Inbox },
+  { href: "/admin/ads", label: "Ads", icon: Rocket },
   { href: "/admin/media", label: "Media", icon: Newspaper },
   { href: "/admin/polls", label: "Polls", icon: Vote },
   { href: "/admin/products", label: "Merchandise", icon: Package },

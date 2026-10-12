@@ -3,6 +3,7 @@ import type {
   MediaItem,
   Opportunity,
   OpportunityApplication,
+  AdCampaign,
   Poll,
   Product,
   Project,
@@ -59,6 +60,7 @@ interface MemoryState {
   savedOpportunities: Record<string, string[]>;
   adlyInterests: AdlyInterestLead[];
   applications: OpportunityApplication[];
+  adCampaigns: AdCampaign[];
 }
 
 function clone<T>(value: T): T {
@@ -95,6 +97,7 @@ function createSeedState(): MemoryState {
     savedOpportunities: {},
     adlyInterests: [],
     applications: [],
+    adCampaigns: [],
   };
 }
 
@@ -393,6 +396,15 @@ export function createMemoryRepositories(): AppRepositories {
     },
   };
 
+  const adCampaigns: AppRepositories["adCampaigns"] = {
+    list: () => clone(state.adCampaigns),
+    find: (id) => byId(state.adCampaigns, id),
+    upsert: (item) => {
+      state.adCampaigns = upsertIn(state.adCampaigns, item);
+      return byId(state.adCampaigns, item.id) as AdCampaign;
+    },
+  };
+
   function counts(): SeedCounts {
     return {
       users: state.users.length,
@@ -414,6 +426,7 @@ export function createMemoryRepositories(): AppRepositories {
       savedOpportunityLists: Object.keys(state.savedOpportunities).length,
       adlyInterests: state.adlyInterests.length,
       applications: state.applications.length,
+      adCampaigns: state.adCampaigns.length,
     };
   }
 
@@ -424,6 +437,7 @@ export function createMemoryRepositories(): AppRepositories {
     wallets,
     engagement,
     applications,
+    adCampaigns,
     counts,
     resetAll: () => {
       const seed = createSeedState();
@@ -434,6 +448,7 @@ export function createMemoryRepositories(): AppRepositories {
       state.savedOpportunities = seed.savedOpportunities;
       state.adlyInterests = seed.adlyInterests;
       state.applications = seed.applications;
+      state.adCampaigns = seed.adCampaigns;
     },
   };
 

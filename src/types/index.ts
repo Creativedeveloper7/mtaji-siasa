@@ -237,3 +237,59 @@ export type ApplicationView = OpportunityApplication & {
     leaderId?: string;
   };
 };
+
+export type AdPlatform = "x" | "google";
+
+export type AdCampaignStatus =
+  | "pending_approval"
+  | "launching"
+  | "active"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "rejected"
+  | "stopped";
+
+/** What happened on one ad network for a campaign. */
+export interface AdPlatformRun {
+  platform: AdPlatform;
+  /** Share of the budget for this network, KES */
+  budgetKes: number;
+  status: "pending" | "live" | "paused" | "failed" | "ended";
+  /** Network ids, kept so the campaign can be paused, resumed and measured */
+  externalIds?: Record<string, string>;
+  error?: string;
+  impressions?: number;
+  clicks?: number;
+  /** Spend reported by the network, converted to KES */
+  spentKes?: number;
+  syncedAt?: string;
+}
+
+export interface AdCampaign {
+  id: string;
+  leaderId: string;
+  /** Account that created it */
+  createdBy: string;
+  projectId: string;
+  name: string;
+  headline: string;
+  body: string;
+  imageUrl: string;
+  landingUrl: string;
+  keywords: string[];
+  platforms: AdPlatformRun[];
+  budgetKes: number;
+  durationDays: number;
+  /** Estimated people reached, from AD_REACH_PER_KES */
+  estimatedReach: number;
+  /** KES per USD used to convert the budget for the networks */
+  kesPerUsd: number;
+  status: AdCampaignStatus;
+  statusNote?: string;
+  startDate?: string;
+  endDate?: string;
+  refundedKes: number;
+  createdAt: string;
+  updatedAt: string;
+}

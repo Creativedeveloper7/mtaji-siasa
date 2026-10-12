@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   LogOut,
   Megaphone,
+  Rocket,
   Menu,
   Newspaper,
   Package,
@@ -39,6 +40,7 @@ const baseLinks = [
   { href: "/dashboard/media", label: "Media", icon: Newspaper },
   { href: "/dashboard/polls", label: "Polls", icon: Vote },
   { href: "/dashboard/merchandise", label: "Merchandise", icon: Package },
+  { href: "/dashboard/ads", label: "Ads", icon: Rocket },
   { href: "/dashboard/wallet", label: "Wallet", icon: Wallet },
   { href: "/adly/workspace", label: "Adly", icon: Megaphone },
 ];
