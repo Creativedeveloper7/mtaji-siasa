@@ -43,6 +43,7 @@ const MILESTONE_STATUSES = ["completed", "current", "upcoming"] as const;
 const OPPORTUNITY_CATEGORIES = ["jobs", "tenders", "training", "funding", "youth", "business", "other"] as const;
 const MEDIA_CATEGORIES = ["news", "project-updates", "leader-updates", "videos", "stories"] as const;
 const MEDIA_TYPES = ["image", "video", "article"] as const;
+export const MAX_GALLERY_IMAGES = 12;
 
 function social(value: unknown, existing?: SocialLinks): SocialLinks {
   const source = isRecord(value) ? value : {};
@@ -180,6 +181,10 @@ export function parseProject(body: unknown, existing?: Project): Project | strin
     milestoneIds: "milestoneIds" in body ? stringList(body.milestoneIds) : existing?.milestoneIds ?? [],
     opportunityIds: "opportunityIds" in body ? stringList(body.opportunityIds) : existing?.opportunityIds ?? [],
     mediaIds: "mediaIds" in body ? stringList(body.mediaIds) : existing?.mediaIds ?? [],
+    requiresOpportunities:
+      "requiresOpportunities" in body
+        ? body.requiresOpportunities === true
+        : existing?.requiresOpportunities ?? false,
   };
 }
 
@@ -254,6 +259,7 @@ export function parseMedia(body: unknown, existing?: MediaItem): MediaItem | str
       ? oneOf<MediaType>(body.type, MEDIA_TYPES, "article")
       : existing?.type ?? "article"),
     image: ("image" in body ? asString(body.image) : existing?.image) ?? "",
+    gallery: "gallery" in body ? stringList(body.gallery).slice(0, MAX_GALLERY_IMAGES) : existing?.gallery,
     date: ("date" in body ? asString(body.date) : existing?.date) ?? new Date().toISOString().slice(0, 10),
     excerpt: ("excerpt" in body ? asString(body.excerpt) : existing?.excerpt) ?? "",
     body: "body" in body ? asString(body.body) : existing?.body,

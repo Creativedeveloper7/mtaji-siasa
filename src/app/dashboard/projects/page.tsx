@@ -17,7 +17,7 @@ import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfil
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Project, ProjectCategory, ProjectStatus } from "@/types";
-import { COUNTIES, PROJECT_STATUS_LABELS } from "@/lib/constants";
+import { COUNTIES, OPPORTUNITY_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants";
 
 function emptyProject(leaderId: string): Project {
   return {
@@ -40,6 +40,7 @@ function emptyProject(leaderId: string): Project {
     milestoneIds: [],
     opportunityIds: [],
     mediaIds: [],
+    requiresOpportunities: false,
   };
 }
 
@@ -53,8 +54,16 @@ export default function PoliticianProjectsPage() {
     upsertMilestone,
     deleteMilestone,
     getMilestonesByProject,
+    content,
   } = useContent();
   const [editing, setEditing] = useState<Project | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const open = (project: Project) => {
+    setError("");
+    setEditing(project);
+  };
 
   const projects = useMemo(
     () => (leader ? getProjectsByIds(leader.projectIds) : []),
@@ -70,15 +79,26 @@ export default function PoliticianProjectsPage() {
     upsertLeader({ ...leader, projectIds: ids });
   };
 
-  const save = (seedMilestones = false) => {
+  const save = async (seedMilestones = false) => {
     if (!editing) return;
+    if (!editing.name.trim()) {
+      setError("Give the project a name.");
+      return;
+    }
     const saved = {
       ...editing,
       slug: editing.slug || slugify(editing.name),
       progress: Math.max(0, Math.min(100, Number(editing.progress) || 0)),
       leaderIds: Array.from(new Set([...editing.leaderIds, leader.id])),
     };
-    upsertProject(saved);
+    setSaving(true);
+    setError("");
+    const result = await upsertProject(saved);
+    setSaving(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
     linkProject(saved);
 
     if (seedMilestones && !saved.milestoneIds.length) {
@@ -116,23 +136,36 @@ export default function PoliticianProjectsPage() {
         action={
           <Button
             type="button"
-            onClick={() => setEditing(emptyProject(leader.id))}
+            onClick={() => open(emptyProject(leader.id))}
           >
             Add project
           </Button>
         }
       />
 
-      <AdminTable headers={["Name", "Status", "Progress", "Location", ""]}>
+      <AdminTable headers={["Name", "Status", "Progress", "Milestones", "Opportunities", ""]}>
         {projects.map((p) => (
           <tr key={p.id}>
-            <td className="px-4 py-3 text-ink max-w-[220px] truncate">{p.name}</td>
+            <td className="px-4 py-3 max-w-[220px]">
+              <p className="truncate text-ink">{p.name}</p>
+              <p className="truncate text-caption text-ink-subtle">{p.location}</p>
+            </td>
             <td className="px-4 py-3 text-ink-muted">
               {PROJECT_STATUS_LABELS[p.status]}
             </td>
             <td className="px-4 py-3 font-mono text-accent">{p.progress}%</td>
-            <td className="px-4 py-3 text-ink-muted max-w-[180px] truncate">
-              {p.location}
+            <td className="px-4 py-3">
+              <Button href={`/dashboard/milestones?project=${encodeURIComponent(p.id)}`} size="sm" variant="ghost">
+                {getMilestonesByProject(p.id).length} · Manage
+              </Button>
+            </td>
+            <td className="px-4 py-3 text-ink-muted whitespace-nowrap">
+              <span className="font-mono">{p.opportunityIds.length}</span>
+              {p.requiresOpportunities && (
+                <span className="ml-2 rounded-sm border border-accent/30 bg-accent-soft px-1.5 py-0.5 text-[10px] font-bold uppercase text-accent">
+                  Hiring
+                </span>
+              )}
             </td>
             <td className="px-4 py-3 text-right whitespace-nowrap">
               <Button
@@ -146,7 +179,7 @@ export default function PoliticianProjectsPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setEditing(structuredClone(p))}
+                onClick={() => open(structuredClone(p))}
               >
                 Edit
               </Button>
@@ -157,7 +190,7 @@ export default function PoliticianProjectsPage() {
                 onClick={() => {
                   if (!confirm(`Delete ${p.name}?`)) return;
                   getMilestonesByProject(p.id).forEach((m) =>
-                    deleteMilestone(m.id)
+                    void deleteMilestone(m.id)
                   );
                   deleteProject(p.id);
                   upsertLeader({
@@ -185,12 +218,19 @@ export default function PoliticianProjectsPage() {
         onClose={() => setEditing(null)}
         footer={
           <div className="flex flex-col gap-2">
-            <Button type="button" variant="outline" fullWidth onClick={() => save(true)}>
-              Save + seed milestones
-            </Button>
+            {error && (
+              <p className="rounded-md border border-error/30 bg-error-muted px-3 py-2 text-small text-error">
+                {error}
+              </p>
+            )}
+            {editing && !editing.milestoneIds.length && (
+              <Button type="button" variant="outline" fullWidth disabled={saving} onClick={() => void save(true)}>
+                Save + add standard milestones
+              </Button>
+            )}
             <div className="flex gap-2">
-              <Button type="button" fullWidth onClick={() => save(false)}>
-                Save
+              <Button type="button" fullWidth disabled={saving} onClick={() => void save(false)}>
+                {saving ? "Saving…" : "Save"}
               </Button>
               <Button
                 type="button"
@@ -356,6 +396,73 @@ export default function PoliticianProjectsPage() {
                 }
               />
             </AdminField>
+
+            <section className="space-y-3 rounded-lg border border-border bg-surface p-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 accent-[rgb(var(--color-accent))]"
+                  checked={Boolean(editing.requiresOpportunities)}
+                  onChange={(e) =>
+                    setEditing({ ...editing, requiresOpportunities: e.target.checked })
+                  }
+                />
+                <span>
+                  <span className="block text-small font-medium text-ink">
+                    This project requires opportunities
+                  </span>
+                  <span className="block text-caption text-ink-muted">
+                    Workers, suppliers, contractors, trainees or partners. Linked opportunities
+                    appear on the project page, and citizens can apply for them.
+                  </span>
+                </span>
+              </label>
+              {(() => {
+                const linked = content.opportunities.filter((o) => o.projectId === editing.id);
+                const isSaved = leader.projectIds.includes(editing.id);
+                if (!editing.requiresOpportunities && linked.length === 0) return null;
+                return (
+                  <div className="space-y-2 border-t border-border pt-3">
+                    <p className="meta-label">Linked opportunities ({linked.length})</p>
+                    {linked.length > 0 && (
+                      <ul className="space-y-1.5">
+                        {linked.map((o) => (
+                          <li key={o.id} className="flex items-center justify-between gap-2 text-small">
+                            <span className="truncate text-ink">{o.title}</span>
+                            <span className="shrink-0 text-caption text-ink-subtle">
+                              {OPPORTUNITY_CATEGORY_LABELS[o.category]}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {isSaved ? (
+                      <Button
+                        href={`/dashboard/opportunities?project=${encodeURIComponent(editing.id)}`}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Add opportunity for this project
+                      </Button>
+                    ) : (
+                      <p className="text-caption text-ink-subtle">
+                        Save the project first, then add its opportunities.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+            </section>
+
+            {leader.projectIds.includes(editing.id) && (
+              <Button
+                href={`/dashboard/milestones?project=${encodeURIComponent(editing.id)}`}
+                size="sm"
+                variant="ghost"
+              >
+                Manage milestones ({getMilestonesByProject(editing.id).length})
+              </Button>
+            )}
           </div>
         )}
       </AdminDrawer>

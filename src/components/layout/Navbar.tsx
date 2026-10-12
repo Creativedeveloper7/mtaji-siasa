@@ -170,15 +170,19 @@ export function Navbar() {
           {authDesktop}
         </div>
 
-        <div className="flex items-center gap-1 lg:hidden">
-          <ThemeToggle />
+        {/* Small screens: theme, dashboard and admin also live in the menu sheet,
+            so they drop out of the bar first to keep search + menu on screen. */}
+        <div className="flex shrink-0 items-center gap-1 lg:hidden">
+          <span className="hidden sm:flex">
+            <ThemeToggle />
+          </span>
           {dashboard && (
-            <Button href={dashboard} size="sm">
+            <Button href={dashboard} size="sm" className="hidden min-[360px]:inline-flex">
               Dashboard
             </Button>
           )}
           {user?.role === "admin" && (
-            <Button href="/admin" size="sm" variant="outline">
+            <Button href="/admin" size="sm" variant="outline" className="hidden sm:inline-flex">
               Admin
             </Button>
           )}

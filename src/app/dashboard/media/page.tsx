@@ -11,7 +11,7 @@ import {
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
-import { ImageField } from "@/components/ui/ImageField";
+import { MultiImageField } from "@/components/ui/MultiImageField";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
@@ -20,8 +20,17 @@ import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
 
 export default function PoliticianMediaPage() {
   const { leader } = usePoliticianProfile();
-  const { getMediaByIds, upsertMedia, deleteMedia, upsertLeader } = useContent();
+  const { getMediaByIds, getProjectsByIds, upsertMedia, deleteMedia, upsertLeader } = useContent();
   const [editing, setEditing] = useState<MediaItem | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const open = (item: MediaItem) => {
+    setError("");
+    setEditing(item);
+  };
+
+  const photos = editing ? [editing.image, ...(editing.gallery ?? [])].filter(Boolean) : [];
 
   const rows = useMemo(
     () => (leader ? getMediaByIds(leader.mediaIds) : []),
@@ -29,6 +38,30 @@ export default function PoliticianMediaPage() {
   );
 
   if (!leader) return null;
+
+  const projects = getProjectsByIds(leader.projectIds);
+
+  const save = async () => {
+    if (!editing) return;
+    if (!editing.title.trim()) {
+      setError("Add a title before saving.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    const saved = {
+      ...editing,
+      slug: editing.slug || slugify(editing.title),
+      leaderId: leader.id,
+    };
+    const result = await upsertMedia(saved);
+    setSaving(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setEditing(null);
+  };
 
   return (
     <div>
@@ -39,14 +72,14 @@ export default function PoliticianMediaPage() {
           <Button
             type="button"
             onClick={() =>
-              setEditing({
+              open({
                 id: createId("med"),
                 slug: "",
                 title: "",
                 category: "leader-updates",
-                type: "article",
-                image:
-                  "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?w=1200&q=80",
+                type: "image",
+                image: "",
+                gallery: [],
                 date: new Date().toISOString().slice(0, 10),
                 excerpt: "",
                 leaderId: leader.id,
@@ -58,7 +91,7 @@ export default function PoliticianMediaPage() {
         }
       />
 
-      <AdminTable headers={["Title", "Category", "Type", "Date", ""]}>
+      <AdminTable headers={["Title", "Category", "Type", "Photos", "Date", ""]}>
         {rows.map((m) => (
           <tr key={m.id}>
             <td className="px-4 py-3 text-ink max-w-[240px] truncate">{m.title}</td>
@@ -66,13 +99,16 @@ export default function PoliticianMediaPage() {
               {MEDIA_CATEGORY_LABELS[m.category]}
             </td>
             <td className="px-4 py-3 capitalize text-ink-muted">{m.type}</td>
+            <td className="px-4 py-3 font-mono text-ink-muted">
+              {(m.image ? 1 : 0) + (m.gallery?.length ?? 0)}
+            </td>
             <td className="px-4 py-3 text-ink-muted">{m.date}</td>
             <td className="px-4 py-3 text-right whitespace-nowrap">
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setEditing(structuredClone(m))}
+                onClick={() => open(structuredClone(m))}
               >
                 Edit
               </Button>
@@ -105,24 +141,10 @@ export default function PoliticianMediaPage() {
             <Button
               type="button"
               fullWidth
-              onClick={() => {
-                if (!editing) return;
-                const saved = {
-                  ...editing,
-                  slug: editing.slug || slugify(editing.title),
-                  leaderId: leader.id,
-                };
-                upsertMedia(saved);
-                if (!leader.mediaIds.includes(saved.id)) {
-                  upsertLeader({
-                    ...leader,
-                    mediaIds: [...leader.mediaIds, saved.id],
-                  });
-                }
-                setEditing(null);
-              }}
+              disabled={saving}
+              onClick={() => void save()}
             >
-              Save
+              {saving ? "Saving…" : "Save"}
             </Button>
             <Button
               type="button"
@@ -188,12 +210,29 @@ export default function PoliticianMediaPage() {
                 }
               />
             </AdminField>
-            <ImageField
-              label="Cover image"
-              value={editing.image}
-              onChange={(image) => setEditing({ ...editing, image })}
-              hint="Thumbnail / cover for this media item. Paste a URL or upload from this device."
+            <MultiImageField
+              label="Photos"
+              value={photos}
+              onChange={(next) =>
+                setEditing({ ...editing, image: next[0] ?? "", gallery: next.slice(1) })
+              }
+              hint="Select several photos at once. The first one is the cover; the rest appear as a gallery on the story page."
             />
+            <AdminField label="Linked project (optional)">
+              <AdminSelect
+                value={editing.projectId ?? ""}
+                onChange={(e) =>
+                  setEditing({ ...editing, projectId: e.target.value || undefined })
+                }
+              >
+                <option value="">Not linked to a project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </AdminSelect>
+            </AdminField>
             <AdminField label="Excerpt">
               <AdminTextarea
                 value={editing.excerpt}
@@ -202,6 +241,18 @@ export default function PoliticianMediaPage() {
                 }
               />
             </AdminField>
+            <AdminField label="Full story (optional)" hint="Separate paragraphs with a blank line.">
+              <AdminTextarea
+                className="min-h-[160px]"
+                value={editing.body ?? ""}
+                onChange={(e) => setEditing({ ...editing, body: e.target.value })}
+              />
+            </AdminField>
+            {error && (
+              <p className="rounded-md border border-error/30 bg-error-muted px-3 py-2 text-small text-error">
+                {error}
+              </p>
+            )}
           </div>
         )}
       </AdminDrawer>

@@ -256,9 +256,19 @@ function saveOwned(actor: ContentActor, body: unknown, kind: OwnedKind): Content
   if (typeof parsed === "string") return fail(400, parsed);
   if (!isAdmin(actor)) parsed.leaderId = actor.leaderId;
   if (kind === "product" && !parsed.leaderId) return fail(400, "Product leaderId is required.");
+  const projectId = projectLinkOf(kind, parsed);
+  if (projectId) {
+    if (!content().findProject(projectId)) return fail(400, "Linked project was not found.");
+    if (!ownsProjectId(actor, projectId)) {
+      return fail(403, "You can only link records to your own projects.");
+    }
+  }
   parsed.slug = uniqueSlug(parsed.slug || slugify(labelOf(parsed)) || parsed.id, parsed.id, (slug) => slugOwner(kind, slug));
   const saved = writeOwned(kind, parsed);
   relinkLeaders(linkKey(kind), saved.id, saved.leaderId ? [saved.leaderId] : []);
+  if (kind === "opportunity" || kind === "media") {
+    relinkProjects(kind === "opportunity" ? "opportunityIds" : "mediaIds", saved.id, projectLinkOf(kind, saved));
+  }
   return ok({ ok: true, item: saved }, existing ? 200 : 201);
 }
 
@@ -308,6 +318,8 @@ function deleteOwned(actor: ContentActor, id: string, kind: OwnedKind): ContentR
     return fail(403, "You can only delete records linked to your profile.");
   }
   relinkLeaders(linkKey(kind), id, []);
+  if (kind === "opportunity") relinkProjects("opportunityIds", id, undefined);
+  if (kind === "media") relinkProjects("mediaIds", id, undefined);
   const store = content();
   if (kind === "opportunity") store.deleteOpportunity(id);
   else if (kind === "media") store.deleteMedia(id);
@@ -387,6 +399,25 @@ function relinkLeaders(key: LeaderLinkKey, itemId: string, leaderIds: string[]) 
     store.upsertLeader({
       ...leader,
       [key]: should ? [...leader[key], itemId] : leader[key].filter((id) => id !== itemId),
+    });
+  }
+}
+
+function projectLinkOf(kind: OwnedKind, item: OwnedRecord): string | undefined {
+  if (kind !== "opportunity" && kind !== "media") return undefined;
+  return (item as Opportunity | MediaItem).projectId || undefined;
+}
+
+/** Keep project.opportunityIds / project.mediaIds in step with the child's projectId. */
+function relinkProjects(key: "opportunityIds" | "mediaIds", itemId: string, projectId: string | undefined) {
+  const store = content();
+  for (const project of store.listProjects()) {
+    const has = project[key].includes(itemId);
+    const should = project.id === projectId;
+    if (has === should) continue;
+    store.upsertProject({
+      ...project,
+      [key]: should ? [...project[key], itemId] : project[key].filter((id) => id !== itemId),
     });
   }
 }

@@ -2,6 +2,7 @@ import type {
   Leader,
   MediaItem,
   Opportunity,
+  OpportunityApplication,
   Poll,
   Product,
   Project,
@@ -136,12 +137,24 @@ export interface EngagementRepository {
   ): AdlyInterestLead;
 }
 
+/**
+ * Applications are read straight from the store on every call (no shared cache),
+ * so an owner always sees applications submitted through any server instance.
+ */
+export interface ApplicationRepository {
+  list(): OpportunityApplication[];
+  find(id: string): OpportunityApplication | undefined;
+  upsert(item: OpportunityApplication): OpportunityApplication;
+  delete(id: string): boolean;
+}
+
 export interface AppRepositories {
   users: UserRepository;
   content: ContentRepository;
   adly: AdlyRepository;
   wallets: WalletRepository;
   engagement: EngagementRepository;
+  applications: ApplicationRepository;
   counts(): SeedCounts;
   /** Restore seed content and drop wallets, saves, and leads. */
   resetAll(): void;

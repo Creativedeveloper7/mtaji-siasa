@@ -19,6 +19,9 @@
 --   deleting a project is refused while a timelapse still points at it.
 --   deleting a creative is refused while a campaign still lists it.
 --   deleting a campaign also deletes its policy reviews.
+--
+-- Upgrading an existing database? Run the files in sql/migrations/ instead of
+-- this one; this file is for an empty database.
 
 BEGIN;
 
@@ -89,7 +92,8 @@ CREATE TABLE projects (
   expected_completion text NOT NULL DEFAULT '',
   center_lat numeric NOT NULL,
   center_lng numeric NOT NULL,
-  boundary jsonb
+  boundary jsonb,
+  requires_opportunities boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE milestones (
@@ -287,6 +291,38 @@ CREATE TABLE media_related_media (
   PRIMARY KEY (media_id, related_media_id),
   CHECK (media_id <> related_media_id)
 );
+
+-- Gallery photos for a media item. The cover stays in media_items.image.
+CREATE TABLE media_images (
+  media_id text NOT NULL REFERENCES media_items (id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  url text NOT NULL,
+  PRIMARY KEY (media_id, position)
+);
+
+-- Applications for opportunities. One per user per opportunity.
+
+CREATE TABLE opportunity_applications (
+  id text PRIMARY KEY,
+  seq bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+  opportunity_id text NOT NULL REFERENCES opportunities (id) ON DELETE CASCADE,
+  applicant_id text NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  full_name text NOT NULL,
+  email text NOT NULL,
+  phone text NOT NULL DEFAULT '',
+  county text,
+  message text NOT NULL DEFAULT '',
+  attachment_url text,
+  status text NOT NULL DEFAULT 'submitted'
+    CHECK (status IN ('submitted', 'reviewing', 'shortlisted', 'accepted', 'rejected')),
+  review_note text,
+  created_at text NOT NULL,
+  updated_at text NOT NULL,
+  CONSTRAINT applications_one_per_user UNIQUE (opportunity_id, applicant_id)
+);
+
+CREATE INDEX applications_opportunity ON opportunity_applications (opportunity_id, seq DESC);
+CREATE INDEX applications_applicant ON opportunity_applications (applicant_id, seq DESC);
 
 ALTER TABLE opportunities
   ADD CONSTRAINT opportunities_leader_fk
@@ -832,7 +868,8 @@ BEGIN
       FROM milestones WHERE project_id = p_id
     ),
     'opportunityIds', linked_ids('project_opportunities', 'project_id', p_id, 'opportunity_id', 'position'),
-    'mediaIds', linked_ids('project_media', 'project_id', p_id, 'media_id', 'position')
+    'mediaIds', linked_ids('project_media', 'project_id', p_id, 'media_id', 'position'),
+    'requiresOpportunities', row.requires_opportunities
   );
 END;
 $$;
@@ -915,6 +952,10 @@ BEGIN
     'category', row.category,
     'type', row.type,
     'image', row.image,
+    'gallery', (
+      SELECT COALESCE(jsonb_agg(url ORDER BY position), '[]'::jsonb)
+      FROM media_images WHERE media_id = p_id
+    ),
     'date', row.date,
     'excerpt', row.excerpt,
     'body', row.body,
@@ -1539,7 +1580,8 @@ BEGIN
   END IF;
   INSERT INTO projects (
     id, slug, name, category, subcategory, location, county, status, progress, image,
-    description, start_date, expected_completion, center_lat, center_lng, boundary
+    description, start_date, expected_completion, center_lat, center_lng, boundary,
+    requires_opportunities
   )
   VALUES (
     pid,
@@ -1557,7 +1599,8 @@ BEGIN
     COALESCE(doc->>'expectedCompletion', ''),
     (center->>'lat')::numeric,
     (center->>'lng')::numeric,
-    geo->'boundary'
+    geo->'boundary',
+    COALESCE((doc->>'requiresOpportunities')::boolean, false)
   )
   ON CONFLICT (id) DO UPDATE SET
     slug = EXCLUDED.slug,
@@ -1574,7 +1617,11 @@ BEGIN
     expected_completion = EXCLUDED.expected_completion,
     center_lat = EXCLUDED.center_lat,
     center_lng = EXCLUDED.center_lng,
-    boundary = EXCLUDED.boundary;
+    boundary = EXCLUDED.boundary,
+    requires_opportunities = CASE
+      WHEN doc ? 'requiresOpportunities' THEN EXCLUDED.requires_opportunities
+      ELSE projects.requires_opportunities
+    END;
 
   IF doc ? 'leaderIds' THEN
     PERFORM sync_project_leaders(pid, doc->'leaderIds');
@@ -1765,6 +1812,13 @@ BEGIN
     project_id = EXCLUDED.project_id,
     updated_at = EXCLUDED.updated_at,
     author = EXCLUDED.author;
+  IF doc ? 'gallery' THEN
+    DELETE FROM media_images WHERE media_id = mid;
+    INSERT INTO media_images (media_id, position, url)
+    SELECT mid, ordinality::integer, value
+    FROM jsonb_array_elements_text(COALESCE(doc->'gallery', '[]'::jsonb)) WITH ORDINALITY
+    WHERE value <> '';
+  END IF;
   IF doc ? 'relatedOpportunityIds' THEN
     PERFORM sync_ordered_link('media_related_opportunities', 'media_id', mid, 'opportunity_id', 'position', doc->'relatedOpportunityIds');
   END IF;
@@ -2676,6 +2730,95 @@ AS $$
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Opportunity applications
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION application_document(p_id text)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = mtaji, public
+AS $$
+  SELECT jsonb_strip_nulls(jsonb_build_object(
+    'id', id,
+    'opportunityId', opportunity_id,
+    'applicantId', applicant_id,
+    'fullName', full_name,
+    'email', email,
+    'phone', phone,
+    'county', county,
+    'message', message,
+    'attachmentUrl', attachment_url,
+    'status', status,
+    'reviewNote', review_note,
+    'createdAt', created_at,
+    'updatedAt', updated_at
+  ))
+  FROM opportunity_applications
+  WHERE id = p_id;
+$$;
+
+CREATE FUNCTION list_applications()
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = mtaji, public
+AS $$
+  SELECT COALESCE(jsonb_agg(application_document(id) ORDER BY seq DESC), '[]'::jsonb)
+  FROM opportunity_applications;
+$$;
+
+CREATE FUNCTION upsert_application(doc jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = mtaji, public
+AS $$
+DECLARE
+  aid text := require_id(doc);
+  now_text text := to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+BEGIN
+  IF NULLIF(doc->>'opportunityId', '') IS NULL OR NULLIF(doc->>'applicantId', '') IS NULL THEN
+    RAISE EXCEPTION 'Application opportunityId and applicantId are required.';
+  END IF;
+  INSERT INTO opportunity_applications (
+    id, opportunity_id, applicant_id, full_name, email, phone, county, message,
+    attachment_url, status, review_note, created_at, updated_at
+  )
+  VALUES (
+    aid,
+    doc->>'opportunityId',
+    doc->>'applicantId',
+    COALESCE(doc->>'fullName', ''),
+    lower(COALESCE(doc->>'email', '')),
+    COALESCE(doc->>'phone', ''),
+    NULLIF(doc->>'county', ''),
+    COALESCE(doc->>'message', ''),
+    NULLIF(doc->>'attachmentUrl', ''),
+    COALESCE(NULLIF(doc->>'status', ''), 'submitted'),
+    NULLIF(doc->>'reviewNote', ''),
+    COALESCE(NULLIF(doc->>'createdAt', ''), now_text),
+    COALESCE(NULLIF(doc->>'updatedAt', ''), now_text)
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    status = EXCLUDED.status,
+    review_note = EXCLUDED.review_note,
+    updated_at = EXCLUDED.updated_at;
+  RETURN application_document(aid);
+END;
+$$;
+
+CREATE FUNCTION delete_application(p_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+SET search_path = mtaji, public
+AS $$
+BEGIN
+  DELETE FROM opportunity_applications WHERE id = p_id;
+  RETURN FOUND;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Counts and runtime cleanup. This does not restore the TypeScript seed.
 -- ---------------------------------------------------------------------------
 
@@ -2703,7 +2846,8 @@ AS $$
     'insights', (SELECT count(*) FROM insights),
     'wallets', (SELECT count(*) FROM wallets),
     'savedOpportunityLists', (SELECT count(*) FROM saved_opportunity_lists),
-    'adlyInterests', (SELECT count(*) FROM adly_interest_leads)
+    'adlyInterests', (SELECT count(*) FROM adly_interest_leads),
+    'applications', (SELECT count(*) FROM opportunity_applications)
   );
 $$;
 
@@ -2713,6 +2857,7 @@ LANGUAGE plpgsql
 SET search_path = mtaji, public
 AS $$
 BEGIN
+  DELETE FROM opportunity_applications;
   DELETE FROM wallet_movements;
   DELETE FROM wallets;
   DELETE FROM saved_opportunities;
@@ -2722,7 +2867,52 @@ BEGIN
 END;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- API access. The app talks to this schema only with the service-role key
+--    (src/server/supabase/rpc.ts). The public anon key must not be able to read
+--    password hashes or call the write functions, so lock the schema to service_role.
+-- ---------------------------------------------------------------------------
+
+GRANT USAGE ON SCHEMA mtaji TO service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA mtaji TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA mtaji TO service_role;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA mtaji TO service_role;
+
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA mtaji FROM PUBLIC;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA mtaji FROM anon';
+    EXECUTE 'REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA mtaji FROM anon';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA mtaji FROM authenticated';
+    EXECUTE 'REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA mtaji FROM authenticated';
+  END IF;
+END;
+$$;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA mtaji GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA mtaji GRANT EXECUTE ON FUNCTIONS TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA mtaji REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+-- Row level security with no policies: anon/authenticated see nothing,
+-- service_role bypasses RLS as before.
+DO $$
+DECLARE
+  t record;
+BEGIN
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'mtaji'
+  LOOP
+    EXECUTE format('ALTER TABLE mtaji.%I ENABLE ROW LEVEL SECURITY', t.tablename);
+  END LOOP;
+END;
+$$;
+
 COMMENT ON SCHEMA mtaji IS
   'M-Taji Siasa store. Documents returned by *_document() match the TypeScript entities. Role checks stay in src/server.';
 
 COMMIT;
+
+-- Tell the Supabase REST API (PostgREST) to pick up the new functions now.
+NOTIFY pgrst, 'reload schema';

@@ -44,6 +44,11 @@ export function MediaCard({ item, featured }: MediaCardProps) {
           <span className="image-label absolute bottom-3 left-3">
             {isVideo ? "Video" : featured ? "Featured story" : "Story"}
           </span>
+          {Boolean(item.gallery?.length) && (
+            <span className="image-label absolute bottom-3 right-3">
+              {(item.gallery?.length ?? 0) + 1} photos
+            </span>
+          )}
         </div>
         <div
           className={cn(

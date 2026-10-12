@@ -1,6 +1,16 @@
 "use client";
 
-import { type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import {
+  Children,
+  Fragment,
+  cloneElement,
+  isValidElement,
+  type InputHTMLAttributes,
+  type ReactElement,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from "react";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +79,31 @@ export function AdminTextarea(
   );
 }
 
+/** Flatten fragments/arrays so every <tr> can be reached. */
+function rowsOf(children: ReactNode): ReactNode[] {
+  return Children.toArray(children).flatMap((child) =>
+    isValidElement<{ children?: ReactNode }>(child) && child.type === Fragment
+      ? rowsOf(child.props.children)
+      : [child]
+  );
+}
+
+/** Give each <td> its column heading as data-label, used by the stacked phone layout. */
+function labelRow(row: ReactNode, headers: string[]): ReactNode {
+  if (!isValidElement<{ children?: ReactNode }>(row) || row.type !== "tr") return row;
+  let column = 0;
+  const cells = Children.toArray(row.props.children).map((cell) => {
+    if (!isValidElement<Record<string, unknown>>(cell) || cell.type !== "td") return cell;
+    const label = headers[column++] ?? "";
+    return cloneElement(cell as ReactElement<Record<string, unknown>>, { "data-label": label });
+  });
+  return cloneElement(row, {}, ...cells);
+}
+
+/**
+ * Data table. From md up it is a normal table; on phones each row becomes a
+ * card with "Heading: value" lines (see .admin-table in globals.css).
+ */
 export function AdminTable({
   headers,
   children,
@@ -77,7 +112,7 @@ export function AdminTable({
   children: ReactNode;
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="admin-table overflow-x-auto rounded-lg border border-border">
       <table className="min-w-full text-left text-small">
         <thead className="border-b border-border bg-surface">
           <tr>
@@ -91,7 +126,9 @@ export function AdminTable({
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-border">{children}</tbody>
+        <tbody className="divide-y divide-border">
+          {rowsOf(children).map((row) => labelRow(row, headers))}
+        </tbody>
       </table>
     </div>
   );

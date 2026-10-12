@@ -196,12 +196,16 @@ export default function ProjectDetailPage({
             <div className="max-w-2xl">
               <h2 className="text-h2 text-ink">Opportunities</h2>
               <p className="mt-3 text-body text-ink-muted">
-                Economic and skills windows connected to this development.
+                {project.requiresOpportunities
+                  ? "This project is looking for people, suppliers and partners. Open a listing to apply."
+                  : "Economic and skills windows connected to this development."}
               </p>
             </div>
             {opps.length === 0 ? (
               <p className="text-small text-ink-muted">
-                No opportunities linked yet.
+                {project.requiresOpportunities
+                  ? "Openings for this project will be posted here soon."
+                  : "No opportunities linked yet."}
               </p>
             ) : (
               <CardCarousel label="Project opportunities">

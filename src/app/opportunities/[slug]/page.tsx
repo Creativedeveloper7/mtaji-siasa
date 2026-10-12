@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useMemo, useState, type ReactNode } from "react";
+import { use, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Calendar, MapPin, Building2 } from "lucide-react";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
@@ -14,7 +14,13 @@ import { ProjectCard } from "@/components/cards/ProjectCard";
 import { FaidaBanner } from "@/components/faida/FaidaCTA";
 import { CardCarousel } from "@/components/ui/CardCarousel";
 import { useContent } from "@/components/content/ContentProvider";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { ApplyModal } from "@/components/opportunities/ApplyModal";
+import { useApplications } from "@/components/opportunities/useApplications";
+import { apiJson } from "@/lib/api-client";
 import {
+  APPLICATION_STATUS_LABELS,
+  APPLICATION_STATUS_TONES,
   OPPORTUNITY_CATEGORY_LABELS,
   OPPORTUNITY_STATUS_LABELS,
 } from "@/lib/constants";
@@ -61,6 +67,10 @@ export default function OpportunityDetailPage({
 }) {
   const { slug } = use(params);
   const { ready, content, getOpportunityBySlug } = useContent();
+  const { user } = useAuth();
+  const mine = useApplications("mine");
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
 
   const raw = getOpportunityBySlug(slug);
   const opportunity = raw ? opportunityDetailDefaults(raw) : undefined;
@@ -110,6 +120,18 @@ export default function OpportunityDetailPage({
     [pool, opportunity]
   );
 
+  // /opportunities/<slug>?apply=1 (from a card, or after signing in) opens the form.
+  const opportunityId = opportunity?.id;
+  useEffect(() => {
+    if (!opportunityId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("apply") !== "1") return;
+    setApplyOpen(true);
+    params.delete("apply");
+    const query = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
+  }, [opportunityId]);
+
   if (!ready) return <LoadingState label="Loading opportunity…" />;
   if (!opportunity) {
     return (
@@ -134,9 +156,66 @@ export default function OpportunityDetailPage({
       : status === "closing-soon"
         ? "warning"
         : "error";
-  const primaryLabel = opportunity.applicationUrl
-    ? "Apply / Learn More"
-    : "Get More Information";
+  const myApplication = mine.items.find((item) => item.opportunityId === opportunity.id);
+  const isPublisher = Boolean(
+    user && (user.role === "admin" || (user.leaderId && user.leaderId === opportunity.leaderId))
+  );
+
+  const withdraw = async () => {
+    if (!myApplication || !confirm("Withdraw your application?")) return;
+    setWithdrawing(true);
+    const result = await apiJson<{ error?: string }>(
+      `/api/applications/${encodeURIComponent(myApplication.id)}`,
+      { method: "DELETE" }
+    );
+    setWithdrawing(false);
+    if (!result.ok) {
+      alert(result.data.error || "Could not withdraw the application.");
+      return;
+    }
+    mine.setItems(mine.items.filter((item) => item.id !== myApplication.id));
+  };
+
+  let applyAction: ReactNode;
+  if (isPublisher) {
+    applyAction = (
+      <Button
+        href={`/${user?.role === "admin" ? "admin" : "dashboard"}/applications?opportunity=${encodeURIComponent(opportunity.id)}`}
+        size="lg"
+      >
+        View applications
+      </Button>
+    );
+  } else if (myApplication) {
+    applyAction = (
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="inline-flex h-12 items-center gap-2 rounded-md border border-border bg-surface px-4 text-small text-ink">
+          Applied {formatDate(myApplication.createdAt)}
+          <StatusBadge
+            status={APPLICATION_STATUS_LABELS[myApplication.status]}
+            tone={APPLICATION_STATUS_TONES[myApplication.status]}
+          />
+        </span>
+        {myApplication.status === "submitted" && (
+          <Button type="button" variant="ghost" size="lg" disabled={withdrawing} onClick={() => void withdraw()}>
+            {withdrawing ? "Withdrawing…" : "Withdraw"}
+          </Button>
+        )}
+      </div>
+    );
+  } else if (status === "closed") {
+    applyAction = (
+      <Button type="button" size="lg" disabled>
+        Applications closed
+      </Button>
+    );
+  } else {
+    applyAction = (
+      <Button type="button" size="lg" onClick={() => setApplyOpen(true)}>
+        Apply now
+      </Button>
+    );
+  }
 
   return (
     <>
@@ -182,26 +261,21 @@ export default function OpportunityDetailPage({
               </span>
             )}
           </div>
-          <div className="mt-8 flex flex-wrap gap-3">
-            {opportunity.applicationUrl ? (
-              <Button href={opportunity.applicationUrl} size="lg">
-                {primaryLabel}
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="lg"
-                onClick={() => {
-                  document.getElementById("how-to-apply")?.scrollIntoView({
-                    behavior: "smooth",
-                  });
-                }}
-              >
-                {primaryLabel}
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            {applyAction}
+            {opportunity.applicationUrl && (
+              <Button href={opportunity.applicationUrl} size="lg" variant="outline">
+                Official website
               </Button>
             )}
             <ShareButton title={opportunity.title} />
           </div>
+          {myApplication?.reviewNote && (
+            <p className="mt-4 max-w-2xl rounded-md border border-border bg-surface px-4 py-3 text-small text-ink-muted">
+              <span className="font-medium text-ink">Note from the organiser: </span>
+              {myApplication.reviewNote}
+            </p>
+          )}
         </div>
       </section>
 
@@ -308,6 +382,11 @@ export default function OpportunityDetailPage({
                 </dd>
               </div>
             </dl>
+            {!isPublisher && !myApplication && status !== "closed" && (
+              <Button type="button" fullWidth className="mt-6" onClick={() => setApplyOpen(true)}>
+                Apply now
+              </Button>
+            )}
           </aside>
         </div>
       </section>
@@ -359,6 +438,13 @@ export default function OpportunityDetailPage({
           </div>
         </section>
       )}
+
+      <ApplyModal
+        opportunity={opportunity}
+        open={applyOpen}
+        onClose={() => setApplyOpen(false)}
+        onApplied={(item) => mine.setItems([item, ...mine.items])}
+      />
 
       <section className="container-wide section-y-sm">
         <FaidaBanner

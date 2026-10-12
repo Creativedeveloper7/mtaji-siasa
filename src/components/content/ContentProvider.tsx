@@ -22,25 +22,28 @@ import type {
 import { apiJson } from "@/lib/api-client";
 import { createSeedContent, type PlatformContent } from "@/lib/store";
 
+/** Outcome of a save or delete. Callers that do not care can ignore it. */
+export type SaveResult = { ok: true } | { ok: false; error: string };
+
 interface ContentContextValue {
   ready: boolean;
   content: PlatformContent;
   reload: () => Promise<void>;
   resetToSeed: () => void;
-  upsertLeader: (item: Leader) => void;
-  deleteLeader: (id: string) => void;
-  upsertProject: (item: Project) => void;
-  deleteProject: (id: string) => void;
-  upsertMilestone: (item: ProjectMilestone) => void;
-  deleteMilestone: (id: string) => void;
-  upsertOpportunity: (item: Opportunity) => void;
-  deleteOpportunity: (id: string) => void;
-  upsertMedia: (item: MediaItem) => void;
-  deleteMedia: (id: string) => void;
-  upsertPoll: (item: Poll) => void;
-  deletePoll: (id: string) => void;
-  upsertProduct: (item: Product) => void;
-  deleteProduct: (id: string) => void;
+  upsertLeader: (item: Leader) => Promise<SaveResult>;
+  deleteLeader: (id: string) => Promise<SaveResult>;
+  upsertProject: (item: Project) => Promise<SaveResult>;
+  deleteProject: (id: string) => Promise<SaveResult>;
+  upsertMilestone: (item: ProjectMilestone) => Promise<SaveResult>;
+  deleteMilestone: (id: string) => Promise<SaveResult>;
+  upsertOpportunity: (item: Opportunity) => Promise<SaveResult>;
+  deleteOpportunity: (id: string) => Promise<SaveResult>;
+  upsertMedia: (item: MediaItem) => Promise<SaveResult>;
+  deleteMedia: (id: string) => Promise<SaveResult>;
+  upsertPoll: (item: Poll) => Promise<SaveResult>;
+  deletePoll: (id: string) => Promise<SaveResult>;
+  upsertProduct: (item: Product) => Promise<SaveResult>;
+  deleteProduct: (id: string) => Promise<SaveResult>;
   getLeaderBySlug: (slug: string) => Leader | undefined;
   getProjectBySlug: (slug: string) => Project | undefined;
   getOpportunityBySlug: (slug: string) => Opportunity | undefined;
@@ -94,29 +97,44 @@ export function ContentProvider({ children }: { children: ReactNode }) {
     return run;
   }, []);
 
-  const save = useCallback(
-    (collection: string, item: unknown) => {
-      void enqueue(async () => {
-        const result = await apiJson(`/api/content/${collection}`, {
-          method: "PUT",
-          body: JSON.stringify(item),
-        });
-        if (result.ok) await reload();
-      });
+  const settle = useCallback(
+    (request: () => Promise<{ ok: boolean; data: { error?: string } }>) => {
+      let outcome: SaveResult = { ok: false, error: "Could not save. Try again." };
+      return enqueue(async () => {
+        const result = await request();
+        if (result.ok) {
+          outcome = { ok: true };
+          await reload();
+        } else {
+          outcome = { ok: false, error: result.data.error || "Could not save. Try again." };
+        }
+      }).then(
+        () => outcome,
+        () => outcome
+      );
     },
     [enqueue, reload]
   );
 
+  const save = useCallback(
+    (collection: string, item: unknown) =>
+      settle(() =>
+        apiJson<{ error?: string }>(`/api/content/${collection}`, {
+          method: "PUT",
+          body: JSON.stringify(item),
+        })
+      ),
+    [settle]
+  );
+
   const remove = useCallback(
-    (collection: string, id: string) => {
-      void enqueue(async () => {
-        const result = await apiJson(`/api/content/${collection}?id=${encodeURIComponent(id)}`, {
+    (collection: string, id: string) =>
+      settle(() =>
+        apiJson<{ error?: string }>(`/api/content/${collection}?id=${encodeURIComponent(id)}`, {
           method: "DELETE",
-        });
-        if (result.ok) await reload();
-      });
-    },
-    [enqueue, reload]
+        })
+      ),
+    [settle]
   );
 
   const resetToSeed = useCallback(() => {

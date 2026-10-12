@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
-import { ImageField } from "@/components/ui/ImageField";
+import { MultiImageField } from "@/components/ui/MultiImageField";
 import {
   AdminDrawer,
   AdminField,
@@ -164,10 +164,12 @@ export default function AdminMediaPage() {
                 onChange={(e) => setEditing({ ...editing, date: e.target.value })}
               />
             </AdminField>
-            <ImageField
-              label="Cover image"
-              value={editing.image}
-              onChange={(image) => setEditing({ ...editing, image })}
+            <MultiImageField
+              label="Photos"
+              value={[editing.image, ...(editing.gallery ?? [])].filter(Boolean)}
+              onChange={(next) =>
+                setEditing({ ...editing, image: next[0] ?? "", gallery: next.slice(1) })
+              }
             />
             <AdminField label="Excerpt">
               <AdminTextarea

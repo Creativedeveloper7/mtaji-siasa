@@ -43,6 +43,7 @@ import type {
   Leader,
   MediaItem,
   Opportunity,
+  OpportunityApplication,
   Poll,
   Product,
   Project,
@@ -76,6 +77,8 @@ type SavedRow = {
 
 type Cache = {
   ready: true;
+  /** Date.now() when this copy was read from Supabase. */
+  loadedAt: number;
   users: PublicUser[];
   content: PlatformContent;
   adly: AdlyContent;
@@ -87,6 +90,12 @@ type Cache = {
 const globalStore = globalThis as typeof globalThis & {
   __mtajiSupabase?: Cache;
 };
+
+/**
+ * Each server instance (and each serverless function on Vercel) keeps its own copy.
+ * Re-read it after this long so rows written by another instance show up.
+ */
+const CACHE_TTL_MS = 10_000;
 
 function copy<T>(value: T): T {
   return structuredClone(value);
@@ -200,6 +209,7 @@ function pack(
 ): Cache {
   return remember({
     ready: true,
+    loadedAt: Date.now(),
     users: users ?? [],
     content: asContent(content),
     adly: asAdly(adly),
@@ -252,7 +262,25 @@ function readCacheSync(): Cache {
 }
 
 function cache(): Cache {
-  return globalStore.__mtajiSupabase ?? readCacheSync();
+  const current = globalStore.__mtajiSupabase;
+  if (current && Date.now() - current.loadedAt < CACHE_TTL_MS) return current;
+  return readCacheSync();
+}
+
+/** Re-read accounts only. Used when a lookup misses, e.g. an account created on another instance. */
+function refreshUsers(): PublicUser[] {
+  try {
+    const users = rpcSync<PublicUser[]>("list_users") ?? [];
+    cache().users = users;
+    return users;
+  } catch (error) {
+    fail(error);
+  }
+}
+
+function findUser(match: (account: PublicUser) => boolean): PublicUser | undefined {
+  const found = cache().users.find(match) ?? refreshUsers().find(match);
+  return found ? copy(found) : undefined;
 }
 
 function reloadContent(): void {
@@ -349,16 +377,15 @@ function createRepositories(): AppRepositories {
   const users: AppRepositories["users"] = {
     count: () => cache().users.length,
     listPublic: () => copy(cache().users),
-    findById: (id) => byId(cache().users, id),
+    findById: (id) => findUser((account) => account.id === id),
     findByEmail: (email) => {
       const normalized = email.trim().toLowerCase();
-      const found = cache().users.find((account) => account.email.toLowerCase() === normalized);
-      return found ? copy(found) : undefined;
+      return findUser((account) => account.email.toLowerCase() === normalized);
     },
     verifyPassword: (email, password) => {
       let hash: string | null = null;
       try {
-        hash = rpcSync<string | null>("user_password_hash", { p_email: email });
+        hash = rpcSync<string | null>("user_password_hash", { p_email: email.trim() });
       } catch (error) {
         fail(error);
       }
@@ -390,7 +417,7 @@ function createRepositories(): AppRepositories {
       }
     },
     update: (user) => {
-      if (!cache().users.some((account) => account.id === user.id)) return undefined;
+      if (!findUser((account) => account.id === user.id)) return undefined;
       const email = user.email.trim().toLowerCase();
       if (
         cache().users.some((account) => account.email.toLowerCase() === email && account.id !== user.id)
@@ -409,7 +436,7 @@ function createRepositories(): AppRepositories {
       }
     },
     setPassword: (id, password) => {
-      if (!cache().users.some((account) => account.id === id)) return false;
+      if (!findUser((account) => account.id === id)) return false;
       try {
         return rpcSync<boolean>("set_user_password", {
           p_id: id,
@@ -715,12 +742,51 @@ function createRepositories(): AppRepositories {
     },
   };
 
+  /** 0 until sql/migrations/2026-10-12_applications_gallery_project_links.sql has been run. */
+  const countApplications = (): number => {
+    try {
+      return applications.list().length;
+    } catch {
+      return 0;
+    }
+  };
+
+  const applications: AppRepositories["applications"] = {
+    list: () => {
+      try {
+        return rpcSync<OpportunityApplication[]>("list_applications") ?? [];
+      } catch (error) {
+        fail(error);
+      }
+    },
+    find: (id) => applications.list().find((item) => item.id === id),
+    upsert: (item) => {
+      try {
+        return rpcSync<OpportunityApplication>("upsert_application", { doc: item });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (message.includes("applications_one_per_user")) {
+          throw new Error("You have already applied for this opportunity.");
+        }
+        fail(error);
+      }
+    },
+    delete: (id) => {
+      try {
+        return rpcSync<boolean>("delete_application", { p_id: id });
+      } catch (error) {
+        fail(error);
+      }
+    },
+  };
+
   return {
     users,
     content,
     adly,
     wallets,
     engagement,
+    applications,
     counts: (): SeedCounts => ({
       users: cache().users.length,
       leaders: cache().content.leaders.length,
@@ -740,6 +806,7 @@ function createRepositories(): AppRepositories {
       wallets: Object.keys(cache().wallets).length,
       savedOpportunityLists: Object.keys(cache().saved).length,
       adlyInterests: cache().leads.length,
+      applications: countApplications(),
     }),
     resetAll: () => {
       const keep = new Set(createSeedUserIds());

@@ -112,6 +112,8 @@ export interface Project {
   milestoneIds: string[];
   opportunityIds: string[];
   mediaIds: string[];
+  /** The project is looking for people, suppliers or partners through linked opportunities */
+  requiresOpportunities?: boolean;
 }
 
 export interface ProjectMilestone {
@@ -158,6 +160,8 @@ export interface MediaItem {
   category: MediaCategory;
   type: MediaType;
   image: string;
+  /** Extra photos shown as a gallery on the story page. The cover stays in `image`. */
+  gallery?: string[];
   date: string;
   excerpt: string;
   body?: string;
@@ -199,3 +203,37 @@ export interface Product {
   stock: number;
   leaderId: string;
 }
+
+export type ApplicationStatus =
+  | "submitted"
+  | "reviewing"
+  | "shortlisted"
+  | "accepted"
+  | "rejected";
+
+export interface OpportunityApplication {
+  id: string;
+  opportunityId: string;
+  /** Account that applied */
+  applicantId: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  county?: string;
+  message: string;
+  /** Optional link to a CV, portfolio or company profile */
+  attachmentUrl?: string;
+  status: ApplicationStatus;
+  /** Note from the opportunity owner, visible to the applicant */
+  reviewNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** An application plus the opportunity fields the dashboards show next to it. */
+export type ApplicationView = OpportunityApplication & {
+  opportunity: Pick<Opportunity, "id" | "slug" | "title" | "category" | "deadline"> & {
+    projectId?: string;
+    leaderId?: string;
+  };
+};

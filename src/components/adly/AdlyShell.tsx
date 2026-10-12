@@ -253,7 +253,7 @@ export function AdlyShell({ children }: { children: ReactNode }) {
                 aria-label="Close menu"
                 onClick={() => setOpen(false)}
               />
-              <aside className="absolute inset-y-0 left-0 flex w-[280px] flex-col bg-bg-elevated shadow-raised">
+              <aside className="absolute inset-y-0 left-0 flex w-[280px] max-w-[85vw] flex-col bg-bg-elevated shadow-raised">
                 <div className="flex items-center justify-between border-b border-border px-4 py-4">
                   <Logo />
                   <button
@@ -265,8 +265,8 @@ export function AdlyShell({ children }: { children: ReactNode }) {
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                {nav}
-                <div className="space-y-2 border-t border-border p-3">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{nav}</div>
+                <div className="space-y-2 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
                   <Button href={backHref} variant="outline" size="sm" fullWidth>
                     <ArrowLeft className="h-4 w-4" />
                     {backLabel}

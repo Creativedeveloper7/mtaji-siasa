@@ -175,7 +175,7 @@ export default function AdlyTimelapsePage() {
         )}
       </AdlyStep>
 
-      <div className="grid gap-8 xl:grid-cols-2">
+      <div className="grid gap-8 [&>*]:min-w-0 xl:grid-cols-2">
         <div className="space-y-6">
           <AdlyStep n={2} title="Timeline media">
             <div className="mb-4 flex gap-2 overflow-x-auto pb-2">

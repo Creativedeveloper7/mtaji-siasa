@@ -2,7 +2,7 @@ import { createMemoryRepositories } from "@/server/memory/database";
 import type { AppRepositories } from "@/server/repositories";
 import { getSupabaseRepositories } from "@/server/supabase/database";
 
-const MEMORY_ADAPTER_VERSION = 4;
+const MEMORY_ADAPTER_VERSION = 5;
 
 type ServerSlot = {
   version: number;
@@ -13,7 +13,9 @@ const globalStore = globalThis as typeof globalThis & {
   __mtajiServer?: ServerSlot;
 };
 
-function usesSupabase(): boolean {
+/** MTAJI_STORE=memory forces the in-memory store, e.g. to try changes without touching Supabase. */
+export function usesSupabase(): boolean {
+  if (process.env.MTAJI_STORE === "memory") return false;
   return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 

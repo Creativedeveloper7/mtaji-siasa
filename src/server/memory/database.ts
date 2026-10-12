@@ -2,6 +2,7 @@ import type {
   Leader,
   MediaItem,
   Opportunity,
+  OpportunityApplication,
   Poll,
   Product,
   Project,
@@ -57,6 +58,7 @@ interface MemoryState {
   wallets: Record<string, WalletRecord>;
   savedOpportunities: Record<string, string[]>;
   adlyInterests: AdlyInterestLead[];
+  applications: OpportunityApplication[];
 }
 
 function clone<T>(value: T): T {
@@ -92,6 +94,7 @@ function createSeedState(): MemoryState {
     wallets: {},
     savedOpportunities: {},
     adlyInterests: [],
+    applications: [],
   };
 }
 
@@ -376,6 +379,20 @@ export function createMemoryRepositories(): AppRepositories {
     },
   };
 
+  const applications: AppRepositories["applications"] = {
+    list: () => clone(state.applications),
+    find: (id) => byId(state.applications, id),
+    upsert: (item) => {
+      state.applications = upsertIn(state.applications, item);
+      return byId(state.applications, item.id) as OpportunityApplication;
+    },
+    delete: (id) => {
+      const before = state.applications.length;
+      state.applications = state.applications.filter((item) => item.id !== id);
+      return state.applications.length !== before;
+    },
+  };
+
   function counts(): SeedCounts {
     return {
       users: state.users.length,
@@ -396,6 +413,7 @@ export function createMemoryRepositories(): AppRepositories {
       wallets: Object.keys(state.wallets).length,
       savedOpportunityLists: Object.keys(state.savedOpportunities).length,
       adlyInterests: state.adlyInterests.length,
+      applications: state.applications.length,
     };
   }
 
@@ -405,6 +423,7 @@ export function createMemoryRepositories(): AppRepositories {
     adly,
     wallets,
     engagement,
+    applications,
     counts,
     resetAll: () => {
       const seed = createSeedState();
@@ -414,6 +433,7 @@ export function createMemoryRepositories(): AppRepositories {
       state.wallets = seed.wallets;
       state.savedOpportunities = seed.savedOpportunities;
       state.adlyInterests = seed.adlyInterests;
+      state.applications = seed.applications;
     },
   };
 

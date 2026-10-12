@@ -273,6 +273,83 @@ html.light {
     touch-action: pan-x pan-y;
   }
 
+  /* AdminTable on phones: rows become stacked cards with labelled values. */
+  @media (max-width: 767px) {
+    .admin-table {
+      overflow: visible;
+      border: 0;
+      border-radius: 0;
+    }
+    .admin-table table,
+    .admin-table tbody,
+    .admin-table tr,
+    .admin-table td {
+      display: block;
+      width: 100%;
+    }
+    .admin-table thead {
+      display: none;
+    }
+    .admin-table tbody {
+      display: grid;
+      gap: 0.75rem;
+      border: 0;
+    }
+    .admin-table tbody > tr {
+      border: 1px solid rgb(var(--color-border) / var(--border-opacity));
+      border-radius: var(--radius-lg);
+      background: rgb(var(--color-surface));
+      padding: 0.5rem 0;
+    }
+    .admin-table td {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      max-width: none !important;
+      padding: 0.4rem 1rem !important;
+      text-align: right;
+      white-space: normal !important;
+      overflow-wrap: anywhere;
+    }
+    .admin-table td > * {
+      min-width: 0;
+    }
+    .admin-table td::before {
+      content: attr(data-label);
+      flex-shrink: 0;
+      color: rgb(var(--color-text-subtle));
+      font-size: 0.6875rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      text-align: left;
+    }
+    /* First column is the record's name: full width, no label. */
+    .admin-table td:first-child {
+      display: block;
+      text-align: left;
+      font-weight: 500;
+    }
+    .admin-table td:first-child::before {
+      content: none;
+    }
+    .admin-table td:first-child .truncate {
+      white-space: normal;
+    }
+    /* Columns without a heading hold the row actions. */
+    .admin-table td[data-label=""] {
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+      border-top: 1px solid rgb(var(--color-border) / var(--border-opacity));
+      margin-top: 0.35rem;
+      padding-top: 0.6rem !important;
+    }
+    .admin-table td[data-label=""]::before {
+      content: none;
+    }
+  }
+
   .card-carousel::-webkit-scrollbar {
     display: none;
   }

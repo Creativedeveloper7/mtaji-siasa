@@ -38,11 +38,12 @@ export function signIn(email: unknown, password: unknown): AuthResult {
   if (typeof email !== "string" || typeof password !== "string") {
     return { ok: false, error: "Invalid email or password.", status: 401 };
   }
+  const normalized = email.trim().toLowerCase();
   const users = getRepositories().users;
-  if (!users.verifyPassword(email, password)) {
+  if (!users.verifyPassword(normalized, password)) {
     return { ok: false, error: "Invalid email or password.", status: 401 };
   }
-  const account = users.findByEmail(email);
+  const account = users.findByEmail(normalized);
   if (!account) {
     return { ok: false, error: "Invalid email or password.", status: 401 };
   }

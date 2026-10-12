@@ -5,6 +5,7 @@ import type {
   OpportunityStatus,
   MediaCategory,
   LeaderType,
+  ApplicationStatus,
 } from "@/types";
 
 export const COUNTIES = [
@@ -47,6 +48,25 @@ export const OPPORTUNITY_STATUS_LABELS: Record<OpportunityStatus, string> = {
   open: "Open",
   "closing-soon": "Closing soon",
   closed: "Closed",
+};
+
+export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
+  submitted: "Submitted",
+  reviewing: "Under review",
+  shortlisted: "Shortlisted",
+  accepted: "Accepted",
+  rejected: "Not selected",
+};
+
+export const APPLICATION_STATUS_TONES: Record<
+  ApplicationStatus,
+  "neutral" | "success" | "warning" | "accent" | "error"
+> = {
+  submitted: "neutral",
+  reviewing: "accent",
+  shortlisted: "warning",
+  accepted: "success",
+  rejected: "error",
 };
 
 export const MEDIA_CATEGORY_LABELS: Record<MediaCategory, string> = {

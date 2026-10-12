@@ -8,7 +8,13 @@ import { Button } from "@/components/ui/Button";
 import { FaidaCTA } from "@/components/faida/FaidaCTA";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { StatusBadge, statusToneForProject } from "@/components/ui/StatusBadge";
-import { PROJECT_STATUS_LABELS } from "@/lib/constants";
+import {
+  APPLICATION_STATUS_LABELS,
+  APPLICATION_STATUS_TONES,
+  PROJECT_STATUS_LABELS,
+} from "@/lib/constants";
+import { useApplications } from "@/components/opportunities/useApplications";
+import { formatDate } from "@/lib/utils";
 
 export default function PoliticianOverviewPage() {
   const { leader, isAspirant } = usePoliticianProfile();
@@ -18,7 +24,9 @@ export default function PoliticianOverviewPage() {
     getMediaByIds,
     getPollsByIds,
     getProductsByLeader,
+    content,
   } = useContent();
+  const received = useApplications("received");
 
   if (!leader) return null;
 
@@ -27,9 +35,19 @@ export default function PoliticianOverviewPage() {
   const media = getMediaByIds(leader.mediaIds);
   const polls = getPollsByIds(leader.pollIds);
   const products = getProductsByLeader(leader.id);
+  const milestoneCount = content.milestones.filter((m) =>
+    leader.projectIds.includes(m.projectId)
+  ).length;
+  const newApplications = received.items.filter((item) => item.status === "submitted").length;
 
   const cards = [
     { label: "Projects", value: projects.length, href: "/dashboard/projects" },
+    { label: "Milestones", value: milestoneCount, href: "/dashboard/milestones" },
+    {
+      label: newApplications ? `Applications · ${newApplications} new` : "Applications",
+      value: received.items.length,
+      href: "/dashboard/applications",
+    },
     {
       label: "Opportunities",
       value: opportunities.length,
@@ -82,7 +100,7 @@ export default function PoliticianOverviewPage() {
         </div>
       </section>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => (
           <Link
             key={card.label}
@@ -132,6 +150,42 @@ export default function PoliticianOverviewPage() {
                 <div className="mt-4 max-w-sm">
                   <ProgressBar value={p.progress} size="sm" />
                 </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <div className="mb-4 flex items-end justify-between gap-3">
+          <h3 className="text-h3 text-ink">Latest applications</h3>
+          <Link
+            href="/dashboard/applications"
+            className="text-small text-accent hover:text-accent-hover"
+          >
+            Review all
+          </Link>
+        </div>
+        {received.items.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border px-4 py-8 text-small text-ink-muted">
+            {received.loading
+              ? "Loading applications…"
+              : "No applications yet. Publish an opportunity and applicants will appear here."}
+          </p>
+        ) : (
+          <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
+            {received.items.slice(0, 5).map((item) => (
+              <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-small font-medium text-ink">{item.fullName}</p>
+                  <p className="truncate text-caption text-ink-subtle">
+                    {item.opportunity.title} · {formatDate(item.createdAt)}
+                  </p>
+                </div>
+                <StatusBadge
+                  status={APPLICATION_STATUS_LABELS[item.status]}
+                  tone={APPLICATION_STATUS_TONES[item.status]}
+                />
               </li>
             ))}
           </ul>

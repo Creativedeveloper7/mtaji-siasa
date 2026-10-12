@@ -12,6 +12,7 @@ import { ProjectCard } from "@/components/cards/ProjectCard";
 import { FaidaBanner } from "@/components/faida/FaidaCTA";
 import { CardCarousel } from "@/components/ui/CardCarousel";
 import { SafeImage } from "@/components/ui/SafeImage";
+import { MediaGallery } from "@/components/media/MediaGallery";
 import { useContent } from "@/components/content/ContentProvider";
 import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
@@ -113,6 +114,7 @@ export default function MediaDetailPage({
   }
 
   const paragraphs = articleParagraphs(item);
+  const gallery = item.gallery?.length ? [item.image, ...item.gallery].filter(Boolean) : [];
 
   return (
     <>
@@ -203,6 +205,20 @@ export default function MediaDetailPage({
           )}
         </div>
       </article>
+
+      {gallery.length > 0 && (
+        <section className="border-t border-border">
+          <div className="container-wide section-y-sm">
+            <h2 className="text-h2 text-ink">Photo gallery</h2>
+            <p className="mt-2 text-small text-ink-muted">
+              {gallery.length} photos. Tap a photo to view it full size.
+            </p>
+            <div className="mt-6">
+              <MediaGallery title={item.title} photos={gallery} />
+            </div>
+          </div>
+        </section>
+      )}
 
       {relatedProject && (
         <section className="border-t border-border bg-bg-elevated">

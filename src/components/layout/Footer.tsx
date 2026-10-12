@@ -16,12 +16,12 @@ export function Footer() {
       <div className="container-wide flex flex-col gap-8 md:flex-row md:items-center md:justify-between">
         <Logo />
 
-        <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-3">
+        <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-1">
           {links.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="text-caption text-ink transition-colors hover:text-brand-green"
+              className="inline-flex min-h-[40px] items-center text-caption text-ink transition-colors hover:text-brand-green md:min-h-0"
             >
               {link.label}
             </Link>

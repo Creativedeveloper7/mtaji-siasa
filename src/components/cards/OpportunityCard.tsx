@@ -74,25 +74,36 @@ export function OpportunityCard({
           href={href}
           className="inline-flex items-center gap-2 text-caption font-bold text-ink transition-colors hover:text-accent"
         >
-          View opportunity
+          View
           <ArrowUpRight className="h-4 w-4" aria-hidden />
         </Link>
-        {onToggleSave && (
-          <button
-            type="button"
-            onClick={() => onToggleSave(opportunity.id)}
-            aria-pressed={saved}
-            aria-label={`${saved ? "Unsave" : "Save"} ${opportunity.title}`}
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-md border transition-colors",
-              saved
-                ? "border-accent/50 bg-accent-soft text-accent"
-                : "border-border-strong text-ink-muted hover:border-accent/50 hover:text-accent"
-            )}
-          >
-            <Bookmark className={cn("h-4 w-4", saved && "fill-current")} aria-hidden />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {status !== "closed" && (
+            <Link
+              href={`${href}?apply=1`}
+              className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-caption font-bold text-ink-inverse transition-colors hover:bg-accent-hover"
+              aria-label={`Apply for ${opportunity.title}`}
+            >
+              Apply
+            </Link>
+          )}
+          {onToggleSave && (
+            <button
+              type="button"
+              onClick={() => onToggleSave(opportunity.id)}
+              aria-pressed={saved}
+              aria-label={`${saved ? "Unsave" : "Save"} ${opportunity.title}`}
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-md border transition-colors",
+                saved
+                  ? "border-accent/50 bg-accent-soft text-accent"
+                  : "border-border-strong text-ink-muted hover:border-accent/50 hover:text-accent"
+              )}
+            >
+              <Bookmark className={cn("h-4 w-4", saved && "fill-current")} aria-hidden />
+            </button>
+          )}
+        </div>
       </div>
     </article>
   );

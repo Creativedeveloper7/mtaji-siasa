@@ -91,4 +91,5 @@ export interface SeedCounts {
   wallets: number;
   savedOpportunityLists: number;
   adlyInterests: number;
+  applications: number;
 }

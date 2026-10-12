@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Inbox,
   Briefcase,
   FolderKanban,
   LayoutDashboard,
@@ -28,6 +29,7 @@ const links = [
   { href: "/admin/leaders", label: "Leaders", icon: Users },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban },
   { href: "/admin/opportunities", label: "Opportunities", icon: Briefcase },
+  { href: "/admin/applications", label: "Applications", icon: Inbox },
   { href: "/admin/media", label: "Media", icon: Newspaper },
   { href: "/admin/polls", label: "Polls", icon: Vote },
   { href: "/admin/products", label: "Merchandise", icon: Package },
@@ -128,19 +130,28 @@ export function AdminShell({ children }: { children: ReactNode }) {
               aria-label="Close menu"
               onClick={() => setOpen(false)}
             />
-            <aside className="absolute inset-y-0 left-0 flex w-[280px] flex-col bg-bg-elevated shadow-raised">
+            <aside className="absolute inset-y-0 left-0 flex w-[280px] max-w-[85vw] flex-col bg-bg-elevated shadow-raised">
               <div className="flex items-center justify-between border-b border-border px-4 py-4">
                 <Logo />
                 <button
                   type="button"
-                  className="flex h-9 w-9 items-center justify-center rounded-md text-ink-muted"
+                  className="flex h-10 w-10 items-center justify-center rounded-md text-ink-muted"
                   onClick={() => setOpen(false)}
                   aria-label="Close"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              {nav}
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{nav}</div>
+              <div className="space-y-2 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                <Button href="/" variant="ghost" size="sm" fullWidth>
+                  View site
+                </Button>
+                <Button type="button" variant="secondary" size="sm" fullWidth onClick={() => signOut()}>
+                  <LogOut className="h-4 w-4" />
+                  Sign out
+                </Button>
+              </div>
             </aside>
           </div>
         )}
