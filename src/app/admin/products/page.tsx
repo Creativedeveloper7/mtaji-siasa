@@ -9,10 +9,12 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Product } from "@/types";
@@ -36,6 +38,12 @@ export default function AdminProductsPage() {
   const { content, ready, upsertProduct, deleteProduct } = useContent();
   const [editing, setEditing] = useState<Product | null>(null);
   const [query, setQuery] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (item: Product) => {
+    setError("");
+    setEditing(item);
+  };
 
   const rows = useMemo(() => {
     const q = query.toLowerCase();
@@ -46,6 +54,23 @@ export default function AdminProductsPage() {
 
   if (!ready) return <LoadingState />;
 
+  const save = async () => {
+    if (!editing) return;
+    if (!editing.name.trim()) {
+      setError("Add a name before saving.");
+      return;
+    }
+    const result = await run(() =>
+      upsertProduct({
+        ...editing,
+        slug: editing.slug || slugify(editing.name),
+        price: Number(editing.price) || 0,
+        stock: Math.max(0, Math.floor(Number(editing.stock) || 0)),
+      })
+    );
+    if (result?.ok) setEditing(null);
+  };
+
   return (
     <div>
       <AdminHeader
@@ -55,13 +80,21 @@ export default function AdminProductsPage() {
           <Button
             type="button"
             onClick={() =>
-              setEditing(emptyProduct(content.leaders[0]?.id || ""))
+              open(emptyProduct(content.leaders[0]?.id || ""))
             }
           >
             Add product
           </Button>
         }
       />
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
       <div className="mb-4 max-w-sm">
         <AdminInput placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
@@ -100,7 +133,7 @@ export default function AdminProductsPage() {
                   size="sm"
                   variant="ghost"
                   onClick={() =>
-                    setEditing(
+                    open(
                       structuredClone({
                         ...p,
                         stock: Number(p.stock) || 0,
@@ -114,8 +147,9 @@ export default function AdminProductsPage() {
                   type="button"
                   size="sm"
                   variant="ghost"
+                  disabled={saving}
                   onClick={() => {
-                    if (confirm("Delete this product?")) deleteProduct(p.id);
+                    if (confirm("Delete this product?")) void remove(() => deleteProduct(p.id));
                   }}
                 >
                   Delete
@@ -129,26 +163,15 @@ export default function AdminProductsPage() {
       <AdminDrawer
         open={!!editing}
         title="Product"
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
-            <Button
-              type="button"
-              fullWidth
-              onClick={() => {
-                if (!editing) return;
-                upsertProduct({
-                  ...editing,
-                  slug: editing.slug || slugify(editing.name),
-                  price: Number(editing.price) || 0,
-                  stock: Math.max(0, Math.floor(Number(editing.stock) || 0)),
-                });
-                setEditing(null);
-              }}
-            >
-              Save
+            <Button type="button" fullWidth disabled={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Save"}
             </Button>
-            <Button type="button" variant="secondary" fullWidth onClick={() => setEditing(null)}>
+            <Button type="button" variant="secondary" fullWidth disabled={saving} onClick={() => setEditing(null)}>
               Cancel
             </Button>
           </div>
@@ -215,6 +238,7 @@ export default function AdminProductsPage() {
                 }
               />
             </AdminField>
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

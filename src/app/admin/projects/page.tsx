@@ -11,11 +11,13 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
-import { useContent } from "@/components/content/ContentProvider";
+import { useSaveAction } from "@/components/admin/useSaveAction";
+import { useContent, type SaveResult } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Project, ProjectCategory, ProjectStatus } from "@/types";
 import { LoadingState } from "@/components/ui/EmptyState";
@@ -54,6 +56,12 @@ export default function AdminProjectsPage() {
   } = useContent();
   const [editing, setEditing] = useState<Project | null>(null);
   const [query, setQuery] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (project: Project) => {
+    setError("");
+    setEditing(project);
+  };
 
   const rows = useMemo(() => {
     const q = query.toLowerCase();
@@ -67,27 +75,36 @@ export default function AdminProjectsPage() {
 
   if (!ready) return <LoadingState />;
 
-  /** Saves the project; returns its stored id (a new Tracker project gets a new uuid), or null on error. */
-  const persist = async (project: Project): Promise<string | null> => {
-    const result = await upsertProject({
-      ...project,
-      slug: project.slug || slugify(project.name),
-      progress: Math.max(0, Math.min(100, Number(project.progress) || 0)),
-    });
-    if (!result.ok) {
-      alert(result.error);
-      return null;
-    }
-    if (result.warnings?.length) alert(result.warnings.join("\n"));
-    return result.item?.id ?? project.id;
-  };
-
-  const save = async () => {
+  /**
+   * Saves the project (one save at a time: a new project's client id is not a
+   * Tracker uuid, so a second PUT would create a second project) and, when asked,
+   * seeds its standard milestones under the id the server stored.
+   * Closes the drawer only on success; a failure stays in the drawer.
+   */
+  const save = async (seedMilestones = false) => {
     if (!editing) return;
-    if ((await persist(editing)) !== null) setEditing(null);
+    if (!editing.name.trim()) {
+      setError("Give the project a name.");
+      return;
+    }
+    const project = editing;
+    const result = await run(async () => {
+      const saved = await upsertProject({
+        ...project,
+        slug: project.slug || slugify(project.name),
+        progress: Math.max(0, Math.min(100, Number(project.progress) || 0)),
+      });
+      if (!saved.ok || !seedMilestones || project.milestoneIds.length) return saved;
+      const failures = await addDefaultMilestones({ ...project, id: saved.item?.id ?? project.id });
+      return failures.length
+        ? { ...saved, warnings: [...(saved.warnings ?? []), ...failures] }
+        : saved;
+    });
+    if (result?.ok) setEditing(null);
   };
 
-  const addDefaultMilestones = (project: Project) => {
+  /** Seeds the five standard milestones; returns a message per milestone that failed. */
+  const addDefaultMilestones = async (project: Project): Promise<string[]> => {
     const titles = [
       "Planning",
       "Funding",
@@ -95,21 +112,33 @@ export default function AdminProjectsPage() {
       "Implementation",
       "Completion",
     ];
-    const ids: string[] = [];
-    titles.forEach((title, i) => {
-      const id = createId("ms");
-      ids.push(id);
-      upsertMilestone({
-        id,
-        projectId: project.id,
-        number: i + 1,
-        date: project.startDate,
-        title,
-        description: `${title} stage for ${project.name}`,
-        status: i === 0 ? "current" : "upcoming",
-      });
-    });
+    const results = await Promise.all(
+      titles.map((title, i) =>
+        upsertMilestone({
+          id: createId("ms"),
+          projectId: project.id,
+          number: i + 1,
+          date: project.startDate,
+          title,
+          description: `${title} stage for ${project.name}`,
+          status: i === 0 ? "current" : "upcoming",
+        })
+      )
+    );
+    return results.flatMap((r, i) =>
+      r.ok ? [] : [`Milestone "${titles[i]}" was not added: ${r.error}`]
+    );
   };
+
+  const removeProject = (project: Project) =>
+    remove(async (): Promise<SaveResult> => {
+      const milestoneResults = await Promise.all(
+        getMilestonesByProject(project.id).map((m) => deleteMilestone(m.id))
+      );
+      const failed = milestoneResults.find((r) => !r.ok);
+      if (failed && !failed.ok) return failed;
+      return deleteProject(project.id);
+    });
 
   return (
     <div>
@@ -117,11 +146,20 @@ export default function AdminProjectsPage() {
         title="Projects"
         description="Manage development projects, GIS coordinates, status and progress."
         action={
-          <Button type="button" onClick={() => setEditing(emptyProject())}>
+          <Button type="button" onClick={() => open(emptyProject())}>
             Add project
           </Button>
         }
       />
+
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
 
       <div className="mb-4 max-w-sm">
         <AdminInput
@@ -150,7 +188,7 @@ export default function AdminProjectsPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setEditing(structuredClone(p))}
+                onClick={() => open(structuredClone(p))}
               >
                 Edit
               </Button>
@@ -158,13 +196,9 @@ export default function AdminProjectsPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
-                  if (confirm(`Delete ${p.name}?`)) {
-                    getMilestonesByProject(p.id).forEach((m) =>
-                      deleteMilestone(m.id)
-                    );
-                    deleteProject(p.id);
-                  }
+                  if (confirm(`Delete ${p.name}?`)) void removeProject(p);
                 }}
               >
                 Delete
@@ -177,7 +211,9 @@ export default function AdminProjectsPage() {
       <AdminDrawer
         open={!!editing}
         title={editing?.name ? `Edit project` : "New project"}
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex flex-col gap-2">
             {editing && (
@@ -185,24 +221,21 @@ export default function AdminProjectsPage() {
                 type="button"
                 variant="outline"
                 fullWidth
-                onClick={async () => {
-                  const id = await persist(editing);
-                  if (id === null) return;
-                  if (!editing.milestoneIds.length) addDefaultMilestones({ ...editing, id });
-                  setEditing(null);
-                }}
+                disabled={saving}
+                onClick={() => void save(true)}
               >
                 Save + seed milestones
               </Button>
             )}
             <div className="flex gap-2">
-              <Button type="button" fullWidth onClick={save}>
-                Save project
+              <Button type="button" fullWidth disabled={saving} onClick={() => void save(false)}>
+                {saving ? "Saving…" : "Save project"}
               </Button>
               <Button
                 type="button"
                 variant="secondary"
                 fullWidth
+                disabled={saving}
                 onClick={() => setEditing(null)}
               >
                 Cancel
@@ -407,6 +440,7 @@ export default function AdminProjectsPage() {
               Milestones linked: {editing.milestoneIds.length}. Use “Save + seed
               milestones” for a horizontal Planning→Completion track.
             </p>
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

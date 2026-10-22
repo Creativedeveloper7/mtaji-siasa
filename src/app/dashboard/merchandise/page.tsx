@@ -7,12 +7,14 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
 import { ImageField } from "@/components/ui/ImageField";
 import { SafeImage } from "@/components/ui/SafeImage";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Product } from "@/types";
@@ -26,6 +28,12 @@ export default function PoliticianMerchandisePage() {
     deleteProduct,
   } = useContent();
   const [editing, setEditing] = useState<Product | null>(null);
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (item: Product) => {
+    setError("");
+    setEditing(item);
+  };
 
   const rows = useMemo(
     () => (leader ? getProductsByLeader(leader.id) : []),
@@ -33,6 +41,24 @@ export default function PoliticianMerchandisePage() {
   );
 
   if (!leader) return null;
+
+  const save = async () => {
+    if (!editing) return;
+    if (!editing.name.trim()) {
+      setError("Add a name before saving.");
+      return;
+    }
+    const result = await run(() =>
+      upsertProduct({
+        ...editing,
+        slug: editing.slug || slugify(editing.name),
+        price: Number(editing.price) || 0,
+        stock: Math.max(0, Math.floor(Number(editing.stock) || 0)),
+        leaderId: leader.id,
+      })
+    );
+    if (result?.ok) setEditing(null);
+  };
 
   return (
     <div>
@@ -43,7 +69,7 @@ export default function PoliticianMerchandisePage() {
           <Button
             type="button"
             onClick={() =>
-              setEditing({
+              open({
                 id: createId("prd"),
                 slug: "",
                 name: "",
@@ -62,6 +88,14 @@ export default function PoliticianMerchandisePage() {
         }
       />
 
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
       {rows.length === 0 ? (
         <EmptyState
           title="No merchandise yet"
@@ -101,7 +135,7 @@ export default function PoliticianMerchandisePage() {
                       size="sm"
                       variant="ghost"
                       onClick={() =>
-                        setEditing(
+                        open(
                           structuredClone({
                             ...p,
                             stock: Number(p.stock) || 0,
@@ -115,9 +149,10 @@ export default function PoliticianMerchandisePage() {
                       type="button"
                       size="sm"
                       variant="ghost"
+                      disabled={saving}
                       onClick={() => {
                         if (!confirm("Delete this product?")) return;
-                        deleteProduct(p.id);
+                        void remove(() => deleteProduct(p.id));
                       }}
                     >
                       Delete
@@ -133,31 +168,19 @@ export default function PoliticianMerchandisePage() {
       <AdminDrawer
         open={!!editing}
         title="Product"
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
-            <Button
-              type="button"
-              fullWidth
-              onClick={() => {
-                if (!editing) return;
-                const saved = {
-                  ...editing,
-                  slug: editing.slug || slugify(editing.name),
-                  price: Number(editing.price) || 0,
-                  stock: Math.max(0, Math.floor(Number(editing.stock) || 0)),
-                  leaderId: leader.id,
-                };
-                upsertProduct(saved);
-                setEditing(null);
-              }}
-            >
-              Save
+            <Button type="button" fullWidth disabled={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Save"}
             </Button>
             <Button
               type="button"
               variant="secondary"
               fullWidth
+              disabled={saving}
               onClick={() => setEditing(null)}
             >
               Cancel
@@ -209,6 +232,7 @@ export default function PoliticianMerchandisePage() {
                 }
               />
             </AdminField>
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

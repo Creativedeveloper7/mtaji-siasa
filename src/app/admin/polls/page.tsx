@@ -7,9 +7,12 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
+import { PollOptionsEditor } from "@/components/admin/PollOptionsEditor";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Poll } from "@/types";
@@ -31,6 +34,12 @@ export default function AdminPollsPage() {
   const { content, ready, upsertPoll, deletePoll } = useContent();
   const [editing, setEditing] = useState<Poll | null>(null);
   const [query, setQuery] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (poll: Poll) => {
+    setError("");
+    setEditing(poll);
+  };
 
   const rows = useMemo(() => {
     const q = query.toLowerCase();
@@ -39,17 +48,51 @@ export default function AdminPollsPage() {
 
   if (!ready) return <LoadingState />;
 
+  const save = async () => {
+    if (!editing) return;
+    const options = editing.options
+      .map((o) => ({ ...o, id: o.id || createId("opt"), label: o.label.trim() }))
+      .filter((o) => o.label);
+    if (!editing.question.trim()) {
+      setError("Add a question before saving.");
+      return;
+    }
+    if (!options.length) {
+      setError("Add at least one option.");
+      return;
+    }
+    const result = await run(() =>
+      upsertPoll({
+        ...editing,
+        slug: editing.slug || slugify(editing.question),
+        options,
+        participationCount:
+          Number(editing.participationCount) ||
+          options.reduce((s, o) => s + o.votes, 0),
+      })
+    );
+    if (result?.ok) setEditing(null);
+  };
+
   return (
     <div>
       <AdminHeader
         title="Polls"
         description="Community polls shown on the public polls page and leader profiles."
         action={
-          <Button type="button" onClick={() => setEditing(emptyPoll())}>
+          <Button type="button" onClick={() => open(emptyPoll())}>
             Add poll
           </Button>
         }
       />
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
       <div className="mb-4 max-w-sm">
         <AdminInput placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
@@ -63,15 +106,16 @@ export default function AdminPollsPage() {
             </td>
             <td className="px-4 py-3 text-ink-muted">{p.closingDate || "Open"}</td>
             <td className="px-4 py-3 text-right whitespace-nowrap">
-              <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(structuredClone(p))}>
+              <Button type="button" size="sm" variant="ghost" onClick={() => open(structuredClone(p))}>
                 Edit
               </Button>
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
-                  if (confirm("Delete this poll?")) deletePoll(p.id);
+                  if (confirm("Delete this poll?")) void remove(() => deletePoll(p.id));
                 }}
               >
                 Delete
@@ -84,31 +128,15 @@ export default function AdminPollsPage() {
       <AdminDrawer
         open={!!editing}
         title="Poll"
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
-            <Button
-              type="button"
-              fullWidth
-              onClick={() => {
-                if (!editing) return;
-                const options = editing.options
-                  .map((o) => ({ ...o, id: o.id || createId("opt"), label: o.label.trim() }))
-                  .filter((o) => o.label);
-                upsertPoll({
-                  ...editing,
-                  slug: editing.slug || slugify(editing.question),
-                  options,
-                  participationCount:
-                    Number(editing.participationCount) ||
-                    options.reduce((s, o) => s + o.votes, 0),
-                });
-                setEditing(null);
-              }}
-            >
-              Save
+            <Button type="button" fullWidth disabled={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Save"}
             </Button>
-            <Button type="button" variant="secondary" fullWidth onClick={() => setEditing(null)}>
+            <Button type="button" variant="secondary" fullWidth disabled={saving} onClick={() => setEditing(null)}>
               Cancel
             </Button>
           </div>
@@ -143,24 +171,12 @@ export default function AdminPollsPage() {
                 }
               />
             </AdminField>
-            <AdminField
-              label="Options (one per line)"
-              hint="Citizens vote on the public polls page. Renaming an option keeps its votes."
-            >
-              <AdminTextarea
-                value={editing.options.map((o) => o.label).join("\n")}
-                onChange={(e) =>
-                  setEditing({
-                    ...editing,
-                    options: e.target.value.split("\n").map((label, i) => ({
-                      id: editing.options[i]?.id || createId("opt"),
-                      label,
-                      votes: editing.options[i]?.votes ?? 0,
-                    })),
-                  })
-                }
-              />
-            </AdminField>
+            <PollOptionsEditor
+              options={editing.options}
+              disabled={saving}
+              onChange={(options) => setEditing({ ...editing, options })}
+            />
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

@@ -79,6 +79,56 @@ export function AdminTextarea(
   );
 }
 
+/**
+ * Inline message box. Errors are announced immediately (role="alert");
+ * warnings politely (role="status").
+ */
+export function AdminNotice({
+  tone = "error",
+  messages,
+  onDismiss,
+  className,
+}: {
+  tone?: "error" | "warning";
+  messages: string | string[];
+  onDismiss?: () => void;
+  className?: string;
+}) {
+  const list = (Array.isArray(messages) ? messages : [messages]).filter(Boolean);
+  if (!list.length) return null;
+  return (
+    <div
+      role={tone === "error" ? "alert" : "status"}
+      className={cn(
+        "flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-small",
+        tone === "error"
+          ? "border-error/30 bg-error-muted text-error"
+          : "border-warning/30 bg-warning-muted text-warning",
+        className
+      )}
+    >
+      {list.length === 1 ? (
+        <p>{list[0]}</p>
+      ) : (
+        <ul className="list-disc space-y-1 pl-4">
+          {list.map((m, i) => (
+            <li key={i}>{m}</li>
+          ))}
+        </ul>
+      )}
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 text-caption underline underline-offset-2 opacity-80 hover:opacity-100"
+        >
+          Dismiss
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Flatten fragments/arrays so every <tr> can be reached. */
 function rowsOf(children: ReactNode): ReactNode[] {
   return Children.toArray(children).flatMap((child) =>
