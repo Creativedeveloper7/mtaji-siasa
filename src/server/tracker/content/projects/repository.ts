@@ -317,7 +317,8 @@ export function createProjectRepository(): ProjectRepository {
   return {
     async listProjects() {
       const client = await readClient();
-      return mapRows(client, await initiativeRows(client));
+      const rows = await initiativeRows(client);
+      return mapRows(client, rows, assignSlugs(rows, (row) => row.title, "full-id"));
     },
 
     async findProject(id) {
