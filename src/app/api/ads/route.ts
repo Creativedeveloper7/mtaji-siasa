@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   const session = await readRequestSession();
   if (!session) return NextResponse.json({ ok: false, error: "Sign in required." }, { status: 401 });
   const scope = new URL(request.url).searchParams.get("scope") === "all" ? "all" : "mine";
-  return send(listAdCampaigns(session, scope));
+  return send(await listAdCampaigns(session, scope));
 }
 
 export async function POST(request: Request) {

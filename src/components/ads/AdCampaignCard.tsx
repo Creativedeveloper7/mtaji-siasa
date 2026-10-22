@@ -25,7 +25,16 @@ const RUN_LABEL: Record<AdPlatformRun["status"], string> = {
   ended: "Ended",
 };
 
-export type AdCardAction = "approve" | "reject" | "pause" | "resume" | "stop" | "sync";
+export type AdCardAction = "approve" | "reject" | "publish" | "pause" | "resume" | "stop" | "sync";
+
+/** What this backend can do to a running ad. The Tracker backend has no pause/stop yet. */
+export interface AdCardControls {
+  pause: boolean;
+  resume: boolean;
+  stop: boolean;
+}
+
+const ALL_CONTROLS: AdCardControls = { pause: true, resume: true, stop: true };
 
 const number = (n?: number) => (n ?? 0).toLocaleString();
 
@@ -34,6 +43,8 @@ export function AdCampaignCard({
   busy,
   admin = false,
   owner,
+  controls = ALL_CONTROLS,
+  approvalPublishes = true,
   onAction,
 }: {
   campaign: AdCampaign;
@@ -41,6 +52,9 @@ export function AdCampaignCard({
   admin?: boolean;
   /** Shown to admins: who the ad is for */
   owner?: string;
+  controls?: AdCardControls;
+  /** Legacy store: approving publishes. Tracker: approving lets the owner publish. */
+  approvalPublishes?: boolean;
   onAction: (action: AdCardAction) => void;
 }) {
   const status = AD_STATUS[campaign.status];
@@ -119,17 +133,27 @@ export function AdCampaignCard({
         {campaign.status === "pending_approval" && admin && (
           <>
             <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("reject")}>
-              {busy === "reject" ? "Rejecting…" : "Reject & refund"}
+              {busy === "reject" ? "Rejecting…" : approvalPublishes ? "Reject & refund" : "Reject"}
             </Button>
             <Button type="button" size="sm" disabled={!!busy} onClick={() => onAction("approve")}>
-              {busy === "approve" ? "Publishing…" : "Approve & publish"}
+              {busy === "approve" ? (approvalPublishes ? "Publishing…" : "Approving…") : approvalPublishes ? "Approve & publish" : "Approve"}
             </Button>
           </>
         )}
         {campaign.status === "pending_approval" && !admin && (
           <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("reject")}>
-            {busy === "reject" ? "Cancelling…" : "Cancel & refund"}
+            {busy === "reject" ? "Cancelling…" : approvalPublishes ? "Cancel & refund" : "Cancel"}
           </Button>
+        )}
+        {campaign.status === "launching" && !admin && !approvalPublishes && (
+          <>
+            <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("reject")}>
+              {busy === "reject" ? "Cancelling…" : "Cancel"}
+            </Button>
+            <Button type="button" size="sm" disabled={!!busy} onClick={() => onAction("publish")}>
+              {busy === "publish" ? "Publishing…" : "Publish now"}
+            </Button>
+          </>
         )}
         {running && (
           <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("sync")}>
@@ -137,17 +161,17 @@ export function AdCampaignCard({
             Refresh results
           </Button>
         )}
-        {campaign.status === "active" && (
+        {campaign.status === "active" && controls.pause && (
           <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => onAction("pause")}>
             {busy === "pause" ? "Pausing…" : "Pause"}
           </Button>
         )}
-        {campaign.status === "paused" && (
+        {campaign.status === "paused" && controls.resume && (
           <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => onAction("resume")}>
             {busy === "resume" ? "Resuming…" : "Resume"}
           </Button>
         )}
-        {running && (
+        {running && controls.stop && (
           <Button type="button" size="sm" variant="danger" disabled={!!busy} onClick={() => onAction("stop")}>
             {busy === "stop" ? "Stopping…" : "Stop & refund unspent"}
           </Button>

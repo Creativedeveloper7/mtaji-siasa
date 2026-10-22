@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const editor = await editorActor();
   if (editor.response) return editor.response;
-  const result = readWorkspace(editor.actor);
+  const result = await readWorkspace(editor.actor);
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
   }

@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   const editor = await editorActor();
   if (editor.response) return editor.response;
   const leaderId = new URL(request.url).searchParams.get("leaderId")?.trim();
-  return send(readWallet(editor.actor, leaderId));
+  return send(await readWallet(editor.actor, leaderId));
 }
 
 async function editorActor(): Promise<

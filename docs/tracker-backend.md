@@ -77,6 +77,48 @@ own `profiles` row, so any user could set it.
 
 `AuthSession.leaderId` is the user's `political_figures.id`, when they have one.
 
+The mapping lives in `src/server/tracker/roles.ts` (`siasaRoleFor`,
+`signUpMetadata`), with tests beside it.
+
+#### Leaders and aspirants without a `political_figures` row
+
+The Tracker's own sign-up inserts a `political_figures` row for a politician,
+but that row needs `position`, `term_start` and `term_end`, which Siasa's
+sign-up form does not ask for. Siasa does not make those up. So:
+
+- Sign-up creates no `political_figures` row. It stores the person's choice in
+  `user_metadata.siasa_role` (`citizen`, `leader`, `aspirant` or
+  `organization`) next to `full_name`, `phone` and `user_type`.
+- When a row exists, its `status` decides: `'aspirant'` is an aspirant,
+  anything else is a leader. The newest row wins if there are several.
+- With no row, a `political_figure` is an aspirant when `siasa_role` is
+  `'aspirant'`, otherwise a leader. `siasa_role` is user-editable, so it only
+  ever chooses between those two and never grants admin.
+- When the `user_profiles` row is missing, `user_metadata.user_type` stands in,
+  normalised the way the `handle_new_user` trigger does.
+
+Phase 1 only: until leaders move to `political_figures` (Phase 2), the
+politician workspace (`POST /api/auth/profile`) creates the leader profile in
+the memory content store, with id = the user's `political_figures.id`, or their
+Supabase user id when they have none. A session with no `political_figures` row
+picks up that profile as its `leaderId`. A citizen or organization who opens
+the workspace is switched to `user_type = 'political_figure'` (their own
+`user_profiles` row and `user_metadata`), as the old flow did.
+
+#### Admin user directory
+
+`/api/auth/users` lists, creates, edits and deletes Supabase Auth users with
+`serviceClient().auth.admin.*` and the `profiles` / `user_profiles` rows.
+Granting admin sets `app_metadata.role = 'admin'`; any other role clears it
+and sets `user_type` (and `siasa_role`). `leaderId` is not editable there: it is
+the `political_figures.id`. Without `SUPABASE_SERVICE_ROLE_KEY` these endpoints
+answer 503.
+
+#### Memory mode
+
+Accounts exist only in Supabase Auth. In memory mode the public pages work on
+sample data, but sign-in and sign-up answer 503 and there is no session.
+
 ## Money
 
 The Tracker's wallet is real money. Siasa never writes wallet balances itself.

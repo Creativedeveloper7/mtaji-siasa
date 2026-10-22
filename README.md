@@ -14,10 +14,20 @@ Production-quality civic-tech prototype for leader, project and citizen visibili
 
 ```bash
 npm install
+cp .env.example .env.local   # fill in the Tracker Supabase keys
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+Siasa runs on the M-Taji Tracker Supabase backend: accounts are Supabase Auth
+users (see `docs/tracker-backend.md`). Without the Supabase keys, or with
+`MTAJI_STORE=memory`, it runs on in-memory sample data with sign-in turned off.
+
+```bash
+npm test          # unit tests (Vitest)
+npx tsc --noEmit  # type check
+```
 
 ## Routes
 

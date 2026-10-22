@@ -50,12 +50,15 @@ function canManage(session: AuthSession, campaign: AdCampaign): boolean {
   return session.role === "admin" || (Boolean(session.leaderId) && session.leaderId === campaign.leaderId);
 }
 
-function save(campaign: AdCampaign): AdCampaign {
+function save(campaign: AdCampaign): Promise<AdCampaign> {
   return repo().upsert({ ...campaign, updatedAt: new Date().toISOString() });
 }
 
-export function listAdCampaigns(session: AuthSession, scope: "mine" | "all"): ContentResult {
-  const all = repo().list();
+export async function listAdCampaigns(
+  session: AuthSession,
+  scope: "mine" | "all"
+): Promise<ContentResult> {
+  const all = await repo().list();
   if (scope === "all") {
     if (session.role !== "admin") return fail(403, "Only an admin can see every campaign.");
     return ok({ ok: true, items: all, quote: adQuote() });
@@ -65,7 +68,7 @@ export function listAdCampaigns(session: AuthSession, scope: "mine" | "all"): Co
     ok: true,
     items: all.filter((item) => item.leaderId === session.leaderId),
     quote: adQuote(),
-    walletBalance: walletBalance(session.leaderId),
+    walletBalance: await walletBalance(session.leaderId),
   });
 }
 
@@ -103,7 +106,7 @@ export async function createAdCampaign(
   if (!isRecord(body)) return fail(400, "Campaign body must be an object.");
   const settings = adSettings();
 
-  const project = getRepositories().content.findProject(asString(body.projectId) ?? "");
+  const project = await getRepositories().content.findProject(asString(body.projectId) ?? "");
   if (!project || !project.leaderIds.includes(session.leaderId)) {
     return fail(400, "Choose one of your own projects to promote.");
   }
@@ -189,19 +192,19 @@ export async function createAdCampaign(
     updatedAt: now,
   };
 
-  const charge = chargeWallet(session.leaderId, budgetKes, `Ad: ${campaign.name}`, campaign.id);
+  const charge = await chargeWallet(session.leaderId, budgetKes, `Ad: ${campaign.name}`, campaign.id);
   if (!charge.ok) return fail(402, charge.error);
 
-  let saved = save(campaign);
+  let saved = await save(campaign);
   if (!settings.requireApproval) saved = await launch(saved);
-  return ok({ ok: true, item: saved, walletBalance: walletBalance(session.leaderId) }, 201);
+  return ok({ ok: true, item: saved, walletBalance: await walletBalance(session.leaderId) }, 201);
 }
 
 /** Publish on each chosen network. Failed networks are refunded; if all fail the campaign fails. */
 async function launch(campaign: AdCampaign): Promise<AdCampaign> {
-  let current = save({ ...campaign, status: "launching", statusNote: "Publishing to the ad networks…" });
-  const project = getRepositories().content.findProject(current.projectId);
-  const leader = getRepositories().content.findLeader(current.leaderId);
+  let current = await save({ ...campaign, status: "launching", statusNote: "Publishing to the ad networks…" });
+  const project = await getRepositories().content.findProject(current.projectId);
+  const leader = await getRepositories().content.findLeader(current.leaderId);
   const start = new Date(Date.now() + 10 * 60_000);
   const end = new Date(start.getTime() + current.durationDays * 86_400_000);
 
@@ -258,7 +261,7 @@ async function launch(campaign: AdCampaign): Promise<AdCampaign> {
   const failed = runs.filter((r) => r.status === "failed");
   const refund = failed.reduce((sum, r) => sum + r.budgetKes, 0);
   if (refund > 0) {
-    refundWallet(
+    await refundWallet(
       current.leaderId,
       refund,
       `Refund: ${failed.map((r) => (r.platform === "x" ? "X" : "Google")).join(" and ")} could not run "${current.name}"`,
@@ -266,7 +269,7 @@ async function launch(campaign: AdCampaign): Promise<AdCampaign> {
     );
   }
   const live = runs.some((r) => r.status === "live");
-  current = save({
+  current = await save({
     ...current,
     platforms: runs,
     status: live ? "active" : "failed",
@@ -329,17 +332,21 @@ async function sync(campaign: AdCampaign): Promise<AdCampaign> {
   }
   let next: AdCampaign = { ...campaign, platforms: runs };
   if (next.status === "active" && next.endDate && Date.parse(next.endDate) < Date.now()) {
-    next = finish(next, "completed", "Finished. Any unspent budget was returned to your wallet.");
+    next = await finish(next, "completed", "Finished. Any unspent budget was returned to your wallet.");
   }
   return next;
 }
 
 /** End the campaign and refund what the networks did not spend. */
-function finish(campaign: AdCampaign, status: "completed" | "stopped", note: string): AdCampaign {
+async function finish(
+  campaign: AdCampaign,
+  status: "completed" | "stopped",
+  note: string
+): Promise<AdCampaign> {
   const spent = campaign.platforms.reduce((sum, r) => sum + (r.status === "failed" ? 0 : r.spentKes ?? 0), 0);
   const paidToNetworks = campaign.platforms.reduce((sum, r) => sum + (r.status === "failed" ? 0 : r.budgetKes), 0);
   const unspent = round2(Math.max(0, paidToNetworks - spent));
-  if (unspent > 0) refundWallet(campaign.leaderId, unspent, `Unspent budget: "${campaign.name}"`, campaign.id);
+  if (unspent > 0) await refundWallet(campaign.leaderId, unspent, `Unspent budget: "${campaign.name}"`, campaign.id);
   return {
     ...campaign,
     status,
@@ -357,7 +364,7 @@ export async function actOnAdCampaign(
   action: AdAction,
   note?: string
 ): Promise<ContentResult> {
-  const campaign = repo().find(id);
+  const campaign = await repo().find(id);
   if (!campaign) return fail(404, "Campaign not found.");
   if (!canManage(session, campaign)) return fail(403, "You can only manage your own campaigns.");
 
@@ -371,8 +378,8 @@ export async function actOnAdCampaign(
     case "reject":
       if (campaign.status !== "pending_approval") return fail(400, "Only ads waiting for approval can be rejected or cancelled.");
       if (session.role !== "admin" && campaign.leaderId !== session.leaderId) return fail(403, "Not allowed.");
-      refundWallet(campaign.leaderId, campaign.budgetKes, `Refund: "${campaign.name}" was not published`, campaign.id);
-      next = save({
+      await refundWallet(campaign.leaderId, campaign.budgetKes, `Refund: "${campaign.name}" was not published`, campaign.id);
+      next = await save({
         ...campaign,
         status: "rejected",
         statusNote:
@@ -396,7 +403,7 @@ export async function actOnAdCampaign(
       if (campaign.status !== "active" && campaign.status !== "paused") return fail(400, "This ad is not running.");
       next = await sync(await setStatus(campaign, false));
       if (next.status === "active" || next.status === "paused") {
-        next = finish(next, "stopped", "Stopped early. The unspent budget was returned to your wallet.");
+        next = await finish(next, "stopped", "Stopped early. The unspent budget was returned to your wallet.");
       }
       break;
     case "sync":
@@ -406,8 +413,8 @@ export async function actOnAdCampaign(
     default:
       return fail(400, "Unknown action.");
   }
-  const saved = action === "reject" ? next : save(next);
-  return ok({ ok: true, item: saved, walletBalance: walletBalance(saved.leaderId) });
+  const saved = action === "reject" ? next : await save(next);
+  return ok({ ok: true, item: saved, walletBalance: await walletBalance(saved.leaderId) });
 }
 
 /** Admin check: build a full Google campaign in validate-only mode (nothing is created). */

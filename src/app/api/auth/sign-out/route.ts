@@ -1,8 +1,10 @@
-import { clearSessionCookie } from "@/server/auth/http";
+import { NextResponse } from "next/server";
+import { signOut } from "@/server/auth/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export function POST() {
-  return clearSessionCookie({ ok: true });
+export async function POST() {
+  await signOut();
+  return NextResponse.json({ ok: true });
 }

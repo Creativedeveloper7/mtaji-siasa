@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
   }
-  return send(withdrawWallet(actor, { amount: body.amount, leaderId: body.leaderId }));
+  return send(await withdrawWallet(actor, { amount: body.amount, leaderId: body.leaderId }));
 }
 
 function send(result: ContentResult) {

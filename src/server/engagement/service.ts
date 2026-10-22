@@ -25,24 +25,24 @@ function fail(status: number, error: string): ContentResult {
   return { ok: false, status, error };
 }
 
-export function readSavedOpportunities(session: AuthSession): ContentResult {
-  const ids = getRepositories().engagement.getSavedOpportunityIds(session.userId);
+export async function readSavedOpportunities(session: AuthSession): Promise<ContentResult> {
+  const ids = await getRepositories().engagement.getSavedOpportunityIds(session.userId);
   return { ok: true, status: 200, body: { ok: true, ids } };
 }
 
-export function saveOpportunities(session: AuthSession, body: unknown): ContentResult {
+export async function saveOpportunities(session: AuthSession, body: unknown): Promise<ContentResult> {
   if (!isRecord(body) || !Array.isArray(body.ids)) {
     return fail(400, "ids must be a list of opportunity ids.");
   }
   const ids = body.ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim());
-  const known = new Set(getRepositories().content.listOpportunities().map((item) => item.id));
+  const known = new Set((await getRepositories().content.listOpportunities()).map((item) => item.id));
   const unknown = ids.find((id) => !known.has(id));
   if (unknown) return fail(400, "One or more opportunities were not found.");
-  const saved = getRepositories().engagement.setSavedOpportunityIds(session.userId, ids);
+  const saved = await getRepositories().engagement.setSavedOpportunityIds(session.userId, ids);
   return { ok: true, status: 200, body: { ok: true, ids: saved } };
 }
 
-export function submitAdlyInterest(body: unknown): ContentResult {
+export async function submitAdlyInterest(body: unknown): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Interest body must be an object.");
   const fullName = text(body.fullName);
   const email = text(body.email)?.toLowerCase();
@@ -63,7 +63,7 @@ export function submitAdlyInterest(body: unknown): ContentResult {
   if (interests.some((item) => !INTEREST_TOPICS.includes(item as (typeof INTEREST_TOPICS)[number]))) {
     return fail(400, "Choose interests from the Adly list.");
   }
-  const lead = getRepositories().engagement.addAdlyInterest({
+  const lead = await getRepositories().engagement.addAdlyInterest({
     fullName,
     email,
     phone,
@@ -75,8 +75,8 @@ export function submitAdlyInterest(body: unknown): ContentResult {
   return { ok: true, status: 201, body: { ok: true, lead: publicLead(lead) } };
 }
 
-export function listAdlyInterests(): ContentResult {
-  const leads = getRepositories().engagement.listAdlyInterests().map(publicLead);
+export async function listAdlyInterests(): Promise<ContentResult> {
+  const leads = (await getRepositories().engagement.listAdlyInterests()).map(publicLead);
   return { ok: true, status: 200, body: { ok: true, leads } };
 }
 

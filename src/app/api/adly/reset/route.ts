@@ -10,11 +10,11 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   const gate = await requireRoles(["admin"]);
   if (gate.response || !gate.session) return gate.response;
-  getRepositories().adly.reset();
+  await getRepositories().adly.reset();
   const actor = actorFromSession(gate.session);
   if ("ok" in actor) {
     return NextResponse.json({ ok: false, error: actor.error }, { status: actor.status });
   }
-  const result = readWorkspace(actor);
+  const result = await readWorkspace(actor);
   return NextResponse.json(result.ok ? result.body : { ok: false, error: result.error });
 }

@@ -12,6 +12,7 @@ import {
 } from "@/server/adly/parse";
 import { isRecord } from "@/server/content/parse";
 import type { ContentActor, ContentResult } from "@/server/content/service";
+import type { Leader, Project } from "@/types";
 import type { AdlyContent, AdlyInsight, Campaign, Simulation } from "@/types/adly";
 
 export const ADLY_COLLECTIONS = [
@@ -46,14 +47,33 @@ function civic() {
   return getRepositories().content;
 }
 
-function ownsProject(actor: ContentActor, projectId: string | undefined): boolean {
-  if (!projectId) return true;
-  const project = civic().findProject(projectId);
+function projectOwned(
+  actor: ContentActor,
+  project: Project | undefined,
+  leader: Leader | undefined
+): boolean {
   if (!project) return false;
   if (isAdmin(actor)) return true;
   if (project.leaderIds.includes(actor.leaderId)) return true;
-  const leader = civic().findLeader(actor.leaderId);
-  return Boolean(leader?.projectIds.includes(projectId));
+  return Boolean(leader?.projectIds.includes(project.id));
+}
+
+async function ownsProject(actor: ContentActor, projectId: string | undefined): Promise<boolean> {
+  if (!projectId) return true;
+  const project = await civic().findProject(projectId);
+  if (!project) return false;
+  const leader = isAdmin(actor) ? undefined : await civic().findLeader(actor.leaderId);
+  return projectOwned(actor, project, leader);
+}
+
+/** Ownership check for many projects at once, loading projects and the leader a single time. */
+async function projectScope(actor: ContentActor): Promise<(projectId: string | undefined) => boolean> {
+  const [projects, leader] = await Promise.all([
+    civic().listProjects(),
+    isAdmin(actor) ? undefined : civic().findLeader(actor.leaderId),
+  ]);
+  const byId = new Map(projects.map((project) => [project.id, project]));
+  return (projectId) => !projectId || projectOwned(actor, byId.get(projectId), leader);
 }
 
 function ownsCampaign(actor: ContentActor, campaign: Campaign | undefined): boolean {
@@ -61,30 +81,31 @@ function ownsCampaign(actor: ContentActor, campaign: Campaign | undefined): bool
   return isAdmin(actor) || campaign.leaderId === actor.leaderId;
 }
 
-function creativeCampaigns(creativeId: string): Campaign[] {
-  return adly().listCampaigns().filter((campaign) => campaign.creativeIds.includes(creativeId));
+function creativeCampaigns(campaigns: Campaign[], creativeId: string): Campaign[] {
+  return campaigns.filter((campaign) => campaign.creativeIds.includes(creativeId));
 }
 
-function ownsCreative(actor: ContentActor, creativeId: string): boolean {
+function ownsCreative(actor: ContentActor, campaigns: Campaign[], creativeId: string): boolean {
   if (isAdmin(actor)) return true;
-  return creativeCampaigns(creativeId).every((campaign) => campaign.leaderId === actor.leaderId);
+  return creativeCampaigns(campaigns, creativeId).every((campaign) => campaign.leaderId === actor.leaderId);
 }
 
-function ownsInsight(actor: ContentActor, insight: AdlyInsight): boolean {
+function ownsInsight(actor: ContentActor, campaigns: Campaign[], insight: AdlyInsight): boolean {
   if (isAdmin(actor)) return true;
   if (insight.relatedCampaignId) {
-    return ownsCampaign(actor, adly().findCampaign(insight.relatedCampaignId));
+    return ownsCampaign(actor, campaigns.find((item) => item.id === insight.relatedCampaignId));
   }
   if (insight.relatedCreativeId) {
-    const users = creativeCampaigns(insight.relatedCreativeId);
+    const users = creativeCampaigns(campaigns, insight.relatedCreativeId);
     return users.length > 0 && users.every((campaign) => campaign.leaderId === actor.leaderId);
   }
   return false;
 }
 
-export function visibleAdly(actor: ContentActor): AdlyContent {
-  const all = adly().snapshot();
+export async function visibleAdly(actor: ContentActor): Promise<AdlyContent> {
+  const all = await adly().snapshot();
   if (isAdmin(actor)) return all;
+  const owns = await projectScope(actor);
   const campaigns = all.campaigns.filter((item) => item.leaderId === actor.leaderId);
   const campaignIds = new Set(campaigns.map((item) => item.id));
   const creativeIds = new Set(campaigns.flatMap((item) => item.creativeIds));
@@ -93,27 +114,27 @@ export function visibleAdly(actor: ContentActor): AdlyContent {
     creatives: all.creatives.filter((item) => creativeIds.has(item.id)),
     policyReviews: all.policyReviews.filter((item) => campaignIds.has(item.campaignId)),
     posters: all.posters.filter((item) => item.leaderId === actor.leaderId),
-    timelapses: all.timelapses.filter((item) => ownsProject(actor, item.projectId)),
+    timelapses: all.timelapses.filter((item) => owns(item.projectId)),
     simulations: all.simulations.filter((item) => {
       if (item.leaderId) return item.leaderId === actor.leaderId;
-      return Boolean(item.projectId && ownsProject(actor, item.projectId));
+      return Boolean(item.projectId && owns(item.projectId));
     }),
-    insights: all.insights.filter((item) => ownsInsight(actor, item)),
+    insights: all.insights.filter((item) => ownsInsight(actor, all.campaigns, item)),
   };
 }
 
-export function readWorkspace(actor: ContentActor): ContentResult {
-  const content = visibleAdly(actor);
+export async function readWorkspace(actor: ContentActor): Promise<ContentResult> {
+  const content = await visibleAdly(actor);
   return ok({ ok: true, content, stats: computeAdlyStats(content) });
 }
 
-export function listAdly(
+export async function listAdly(
   actor: ContentActor,
   collection: AdlyCollection,
   params: URLSearchParams
-): ContentResult {
+): Promise<ContentResult> {
   const id = params.get("id")?.trim();
-  const visible = visibleAdly(actor);
+  const visible = await visibleAdly(actor);
   const items = itemsOf(visible, collection);
   if (id) {
     const item = items.find((entry) => entry.id === id);
@@ -130,11 +151,11 @@ export function listAdly(
   return ok({ ok: true, items });
 }
 
-export function saveAdly(
+export async function saveAdly(
   actor: ContentActor,
   collection: AdlyCollection,
   body: unknown
-): ContentResult {
+): Promise<ContentResult> {
   if (collection === "campaigns") return saveCampaign(actor, body);
   if (collection === "creatives") return saveCreative(actor, body);
   if (collection === "policy-reviews") return savePolicyReview(actor, body);
@@ -144,11 +165,11 @@ export function saveAdly(
   return saveInsight(actor, body);
 }
 
-export function deleteAdly(
+export async function deleteAdly(
   actor: ContentActor,
   collection: AdlyCollection,
   id: string
-): ContentResult {
+): Promise<ContentResult> {
   if (!id) return fail(400, "id is required.");
   if (collection === "campaigns") return deleteCampaign(actor, id);
   if (collection === "creatives") return deleteCreative(actor, id);
@@ -159,10 +180,10 @@ export function deleteAdly(
   return deleteInsight(actor, id);
 }
 
-function saveCampaign(actor: ContentActor, body: unknown): ContentResult {
+async function saveCampaign(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = adly();
   const requestedId = recordId(body);
-  const existing = requestedId ? store.findCampaign(requestedId) : undefined;
+  const existing = requestedId ? await store.findCampaign(requestedId) : undefined;
   if (existing && !ownsCampaign(actor, existing)) {
     return fail(403, "You can only edit your own campaigns.");
   }
@@ -170,61 +191,63 @@ function saveCampaign(actor: ContentActor, body: unknown): ContentResult {
   const parsed = parseCampaign(stamped, existing);
   if (typeof parsed === "string") return fail(400, parsed);
   if (!isAdmin(actor)) parsed.leaderId = actor.leaderId;
-  if (parsed.projectId && !ownsProject(actor, parsed.projectId)) {
+  if (parsed.projectId && !(await ownsProject(actor, parsed.projectId))) {
     return fail(403, "That project is not on your profile.");
   }
+  const campaigns = await store.listCampaigns();
   for (const creativeId of parsed.creativeIds) {
-    if (!store.findCreative(creativeId)) return fail(400, "Campaign creative was not found.");
-    if (!ownsCreative(actor, creativeId)) {
+    if (!(await store.findCreative(creativeId))) return fail(400, "Campaign creative was not found.");
+    if (!ownsCreative(actor, campaigns, creativeId)) {
       return fail(403, "You can only attach your own creatives.");
     }
   }
   parsed.slug = uniqueSlug(parsed.slug || slugify(parsed.name), parsed.id, (slug) =>
-    store.listCampaigns().find((item) => item.slug === slug)?.id
+    campaigns.find((item) => item.slug === slug)?.id
   );
-  const saved = store.upsertCampaign(parsed);
+  const saved = await store.upsertCampaign(parsed);
   return ok({ ok: true, item: saved }, existing ? 200 : 201);
 }
 
-function saveCreative(actor: ContentActor, body: unknown): ContentResult {
+async function saveCreative(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = adly();
   const requestedId = recordId(body);
-  const existing = requestedId ? store.findCreative(requestedId) : undefined;
-  if (existing && !ownsCreative(actor, existing.id)) {
+  const existing = requestedId ? await store.findCreative(requestedId) : undefined;
+  const campaigns = await store.listCampaigns();
+  if (existing && !ownsCreative(actor, campaigns, existing.id)) {
     return fail(403, "You can only edit your own creatives.");
   }
   const parsed = parseCreative(body, existing);
   if (typeof parsed === "string") return fail(400, parsed);
-  if (!ownsCreative(actor, parsed.id)) {
+  if (!ownsCreative(actor, campaigns, parsed.id)) {
     return fail(403, "You can only edit your own creatives.");
   }
-  const saved = store.upsertCreative(parsed);
+  const saved = await store.upsertCreative(parsed);
   return ok({ ok: true, item: saved }, existing ? 200 : 201);
 }
 
-function savePolicyReview(actor: ContentActor, body: unknown): ContentResult {
+async function savePolicyReview(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = adly();
   const requestedId = recordId(body);
-  const existing = requestedId ? store.findPolicyReview(requestedId) : undefined;
-  if (existing && !ownsCampaign(actor, store.findCampaign(existing.campaignId))) {
+  const existing = requestedId ? await store.findPolicyReview(requestedId) : undefined;
+  if (existing && !ownsCampaign(actor, await store.findCampaign(existing.campaignId))) {
     return fail(403, "You can only review your own campaigns.");
   }
   const parsed = parsePolicyReview(body, existing);
   if (typeof parsed === "string") return fail(400, parsed);
-  const campaign = store.findCampaign(parsed.campaignId);
+  const campaign = await store.findCampaign(parsed.campaignId);
   if (!campaign) return fail(400, "Policy review campaign was not found.");
   if (!ownsCampaign(actor, campaign)) return fail(403, "You can only review your own campaigns.");
-  const saved = store.upsertPolicyReview(parsed);
+  const saved = await store.upsertPolicyReview(parsed);
   if (campaign.policyReviewId !== saved.id) {
-    store.upsertCampaign({ ...campaign, policyReviewId: saved.id });
+    await store.upsertCampaign({ ...campaign, policyReviewId: saved.id });
   }
   return ok({ ok: true, item: saved }, existing ? 200 : 201);
 }
 
-function savePoster(actor: ContentActor, body: unknown): ContentResult {
+async function savePoster(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = adly();
   const requestedId = recordId(body);
-  const existing = requestedId ? store.findPoster(requestedId) : undefined;
+  const existing = requestedId ? await store.findPoster(requestedId) : undefined;
   if (existing && !isAdmin(actor) && existing.leaderId !== actor.leaderId) {
     return fail(403, "You can only edit your own posters.");
   }
@@ -232,52 +255,55 @@ function savePoster(actor: ContentActor, body: unknown): ContentResult {
   const parsed = parsePoster(stamped, existing);
   if (typeof parsed === "string") return fail(400, parsed);
   if (!isAdmin(actor)) parsed.leaderId = actor.leaderId;
-  if (parsed.projectId && !ownsProject(actor, parsed.projectId)) {
+  if (parsed.projectId && !(await ownsProject(actor, parsed.projectId))) {
     return fail(403, "That project is not on your profile.");
   }
-  const saved = store.upsertPoster(parsed);
+  const saved = await store.upsertPoster(parsed);
   return ok({ ok: true, item: saved }, existing ? 200 : 201);
 }
 
-function saveTimelapse(actor: ContentActor, body: unknown): ContentResult {
+async function saveTimelapse(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = adly();
   const requestedId = recordId(body);
-  const existing = requestedId ? store.findTimelapse(requestedId) : undefined;
-  if (existing && !ownsProject(actor, existing.projectId)) {
+  const existing = requestedId ? await store.findTimelapse(requestedId) : undefined;
+  if (existing && !(await ownsProject(actor, existing.projectId))) {
     return fail(403, "You can only edit timelapses for your projects.");
   }
   const parsed = parseTimelapse(body, existing);
   if (typeof parsed === "string") return fail(400, parsed);
-  if (!ownsProject(actor, parsed.projectId)) {
+  if (!(await ownsProject(actor, parsed.projectId))) {
     return fail(403, "You can only add timelapses to your projects.");
   }
-  const saved = store.upsertTimelapse(parsed);
+  const saved = await store.upsertTimelapse(parsed);
   return ok({ ok: true, item: saved }, existing ? 200 : 201);
 }
 
-function saveSimulation(actor: ContentActor, body: unknown): ContentResult {
+async function saveSimulation(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = adly();
   const requestedId = recordId(body);
-  const existing = requestedId ? store.findSimulation(requestedId) : undefined;
-  if (existing && !ownsSimulation(actor, existing)) {
+  const existing = requestedId ? await store.findSimulation(requestedId) : undefined;
+  if (existing && !(await ownsSimulation(actor, existing))) {
     return fail(403, "You can only edit your own simulations.");
   }
   const stamped = !isAdmin(actor) && isRecord(body) ? { ...body, leaderId: actor.leaderId } : body;
   const parsed = parseSimulation(stamped, existing);
   if (typeof parsed === "string") return fail(400, parsed);
   if (!isAdmin(actor)) parsed.leaderId = actor.leaderId;
-  if (parsed.projectId && !ownsProject(actor, parsed.projectId)) {
+  if (parsed.projectId && !(await ownsProject(actor, parsed.projectId))) {
     return fail(403, "That project is not on your profile.");
   }
-  const saved = store.upsertSimulation(parsed);
+  const saved = await store.upsertSimulation(parsed);
   return ok({ ok: true, item: saved }, existing ? 200 : 201);
 }
 
-function saveInsight(actor: ContentActor, body: unknown): ContentResult {
+async function saveInsight(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = adly();
   const requestedId = recordId(body);
-  const existing = requestedId ? store.listInsights().find((item) => item.id === requestedId) : undefined;
-  if (existing && !ownsInsight(actor, existing)) {
+  const existing = requestedId
+    ? (await store.listInsights()).find((item) => item.id === requestedId)
+    : undefined;
+  const campaigns = await store.listCampaigns();
+  if (existing && !ownsInsight(actor, campaigns, existing)) {
     return fail(403, "You can only edit your own insights.");
   }
   const parsed = parseInsight(body, existing);
@@ -285,34 +311,36 @@ function saveInsight(actor: ContentActor, body: unknown): ContentResult {
   if (!isAdmin(actor) && !parsed.relatedCampaignId && !parsed.relatedCreativeId) {
     return fail(400, "An insight needs a related campaign or creative.");
   }
-  if (!ownsInsight(actor, parsed) && !isAdmin(actor)) {
+  if (!ownsInsight(actor, campaigns, parsed) && !isAdmin(actor)) {
     return fail(403, "You can only add insights to your own campaigns.");
   }
   if (existing) {
-    commit((content) => ({
+    await commit((content) => ({
       ...content,
       insights: content.insights.map((item) => (item.id === parsed.id ? parsed : item)),
     }));
     return ok({ ok: true, item: parsed });
   }
-  store.addInsight(parsed);
+  await store.addInsight(parsed);
   return ok({ ok: true, item: parsed }, 201);
 }
 
-function deleteCampaign(actor: ContentActor, id: string): ContentResult {
+async function deleteCampaign(actor: ContentActor, id: string): Promise<ContentResult> {
   const store = adly();
-  const campaign = store.findCampaign(id);
+  const campaign = await store.findCampaign(id);
   if (!campaign) return fail(404, "Campaign not found.");
   if (!ownsCampaign(actor, campaign)) return fail(403, "You can only delete your own campaigns.");
-  store.deleteCampaign(id);
+  await store.deleteCampaign(id);
   return ok({ ok: true });
 }
 
-function deleteCreative(actor: ContentActor, id: string): ContentResult {
-  const creative = adly().findCreative(id);
+async function deleteCreative(actor: ContentActor, id: string): Promise<ContentResult> {
+  const creative = await adly().findCreative(id);
   if (!creative) return fail(404, "Creative not found.");
-  if (!ownsCreative(actor, id)) return fail(403, "You can only delete your own creatives.");
-  commit((content) => ({
+  if (!ownsCreative(actor, await adly().listCampaigns(), id)) {
+    return fail(403, "You can only delete your own creatives.");
+  }
+  await commit((content) => ({
     ...content,
     creatives: content.creatives.filter((item) => item.id !== id),
     campaigns: content.campaigns.map((campaign) => ({
@@ -323,13 +351,13 @@ function deleteCreative(actor: ContentActor, id: string): ContentResult {
   return ok({ ok: true });
 }
 
-function deletePolicyReview(actor: ContentActor, id: string): ContentResult {
-  const review = adly().findPolicyReview(id);
+async function deletePolicyReview(actor: ContentActor, id: string): Promise<ContentResult> {
+  const review = await adly().findPolicyReview(id);
   if (!review) return fail(404, "Policy review not found.");
-  if (!ownsCampaign(actor, adly().findCampaign(review.campaignId))) {
+  if (!ownsCampaign(actor, await adly().findCampaign(review.campaignId))) {
     return fail(403, "You can only delete reviews on your own campaigns.");
   }
-  commit((content) => ({
+  await commit((content) => ({
     ...content,
     policyReviews: content.policyReviews.filter((item) => item.id !== id),
     campaigns: content.campaigns.map((campaign) =>
@@ -339,65 +367,67 @@ function deletePolicyReview(actor: ContentActor, id: string): ContentResult {
   return ok({ ok: true });
 }
 
-function deletePoster(actor: ContentActor, id: string): ContentResult {
-  const poster = adly().findPoster(id);
+async function deletePoster(actor: ContentActor, id: string): Promise<ContentResult> {
+  const poster = await adly().findPoster(id);
   if (!poster) return fail(404, "Poster not found.");
   if (!isAdmin(actor) && poster.leaderId !== actor.leaderId) {
     return fail(403, "You can only delete your own posters.");
   }
-  commit((content) => ({
+  await commit((content) => ({
     ...content,
     posters: content.posters.filter((item) => item.id !== id),
   }));
   return ok({ ok: true });
 }
 
-function deleteTimelapse(actor: ContentActor, id: string): ContentResult {
-  const timelapse = adly().findTimelapse(id);
+async function deleteTimelapse(actor: ContentActor, id: string): Promise<ContentResult> {
+  const timelapse = await adly().findTimelapse(id);
   if (!timelapse) return fail(404, "Timelapse not found.");
-  if (!ownsProject(actor, timelapse.projectId)) {
+  if (!(await ownsProject(actor, timelapse.projectId))) {
     return fail(403, "You can only delete timelapses for your projects.");
   }
-  commit((content) => ({
+  await commit((content) => ({
     ...content,
     timelapses: content.timelapses.filter((item) => item.id !== id),
   }));
   return ok({ ok: true });
 }
 
-function deleteSimulation(actor: ContentActor, id: string): ContentResult {
-  const simulation = adly().findSimulation(id);
+async function deleteSimulation(actor: ContentActor, id: string): Promise<ContentResult> {
+  const simulation = await adly().findSimulation(id);
   if (!simulation) return fail(404, "Simulation not found.");
-  if (!ownsSimulation(actor, simulation)) {
+  if (!(await ownsSimulation(actor, simulation))) {
     return fail(403, "You can only delete your own simulations.");
   }
-  commit((content) => ({
+  await commit((content) => ({
     ...content,
     simulations: content.simulations.filter((item) => item.id !== id),
   }));
   return ok({ ok: true });
 }
 
-function deleteInsight(actor: ContentActor, id: string): ContentResult {
-  const insight = adly().listInsights().find((item) => item.id === id);
+async function deleteInsight(actor: ContentActor, id: string): Promise<ContentResult> {
+  const insight = (await adly().listInsights()).find((item) => item.id === id);
   if (!insight) return fail(404, "Insight not found.");
-  if (!ownsInsight(actor, insight)) return fail(403, "You can only delete your own insights.");
-  commit((content) => ({
+  if (!ownsInsight(actor, await adly().listCampaigns(), insight)) {
+    return fail(403, "You can only delete your own insights.");
+  }
+  await commit((content) => ({
     ...content,
     insights: content.insights.filter((item) => item.id !== id),
   }));
   return ok({ ok: true });
 }
 
-function commit(change: (content: AdlyContent) => AdlyContent) {
+async function commit(change: (content: AdlyContent) => AdlyContent) {
   const store = adly();
-  store.replace(change(store.snapshot()));
+  await store.replace(change(await store.snapshot()));
 }
 
-function ownsSimulation(actor: ContentActor, simulation: Simulation): boolean {
+async function ownsSimulation(actor: ContentActor, simulation: Simulation): Promise<boolean> {
   if (isAdmin(actor)) return true;
   if (simulation.leaderId) return simulation.leaderId === actor.leaderId;
-  return Boolean(simulation.projectId && ownsProject(actor, simulation.projectId));
+  return Boolean(simulation.projectId && (await ownsProject(actor, simulation.projectId)));
 }
 
 function itemsOf(content: AdlyContent, collection: AdlyCollection): Array<{ id: string }> {

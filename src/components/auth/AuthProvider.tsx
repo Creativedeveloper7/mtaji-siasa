@@ -12,6 +12,14 @@ import {
 import type { AuthSession, UserAccount, UserRole } from "@/types/auth";
 import { apiJson } from "@/lib/api-client";
 
+/** Directory row being edited by an admin. The password is sent once and never read back. */
+export type EditableAccount = UserAccount & { password?: string };
+
+export type SignUpOutcome =
+  | { ok: true; session: AuthSession }
+  | { ok: true; needsConfirmation: true }
+  | { ok: false; error: string };
+
 interface AuthContextValue {
   user: AuthSession | null;
   users: UserAccount[];
@@ -26,10 +34,9 @@ interface AuthContextValue {
     phone: string;
     password: string;
     role: UserRole;
-    leaderId?: string;
-  }) => Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }>;
+  }) => Promise<SignUpOutcome>;
   signOut: () => Promise<void>;
-  updateUser: (user: UserAccount) => Promise<void>;
+  updateUser: (user: EditableAccount) => Promise<void>;
   deleteUser: (id: string) => Promise<void>;
   linkLeaderProfile: (userId: string, leaderId: string) => void;
   applySession: (session: AuthSession | null) => void;
@@ -37,17 +44,12 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function accountFromPublic(user: Omit<UserAccount, "password"> & { password?: string }): UserAccount {
-  return { ...user, password: user.password ?? "" };
-}
-
 function accountFromSession(session: AuthSession): UserAccount {
   return {
     id: session.userId,
     fullName: session.fullName,
     email: session.email,
     phone: "",
-    password: "",
     role: session.role,
     createdAt: "",
     leaderId: session.leaderId,
@@ -64,12 +66,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUsers(session ? [accountFromSession(session)] : []);
       return;
     }
-    const result = await apiJson<{ users?: Array<Omit<UserAccount, "password">> }>("/api/auth/users");
+    const result = await apiJson<{ users?: UserAccount[] }>("/api/auth/users");
     if (!result.ok || !result.data.users) {
       setUsers([accountFromSession(session)]);
       return;
     }
-    setUsers(result.data.users.map((account) => accountFromPublic(account)));
+    setUsers(result.data.users);
   }, []);
 
   const applySession = useCallback(
@@ -117,17 +119,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       phone: string;
       password: string;
       role: UserRole;
-      leaderId?: string;
-    }) => {
-      const result = await apiJson<{ ok: boolean; error?: string; session?: AuthSession }>(
-        "/api/auth/sign-up",
-        { method: "POST", body: JSON.stringify(input) }
-      );
+    }): Promise<SignUpOutcome> => {
+      const result = await apiJson<{
+        ok: boolean;
+        error?: string;
+        session?: AuthSession;
+        needsConfirmation?: boolean;
+      }>("/api/auth/sign-up", { method: "POST", body: JSON.stringify(input) });
+      if (result.ok && result.data.needsConfirmation) {
+        return { ok: true, needsConfirmation: true };
+      }
       if (!result.ok || !result.data.session) {
-        return { ok: false as const, error: result.data.error || "Could not create the account." };
+        return { ok: false, error: result.data.error || "Could not create the account." };
       }
       applySession(result.data.session);
-      return { ok: true as const, session: result.data.session };
+      return { ok: true, session: result.data.session };
     },
     [applySession]
   );
@@ -139,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateUser = useCallback(
-    async (account: UserAccount) => {
+    async (account: EditableAccount) => {
       const payload = account.password ? account : { ...account, password: undefined };
       const result = await apiJson<{ ok: boolean }>("/api/auth/users", {
         method: "PUT",

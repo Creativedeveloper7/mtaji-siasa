@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   const gate = await requireRoles(["admin"]);
   if (gate.response) return gate.response;
-  getRepositories().content.reset();
-  return NextResponse.json({ ok: true, content: getRepositories().content.snapshot() });
+  await getRepositories().content.reset();
+  return NextResponse.json({ ok: true, content: await getRepositories().content.snapshot() });
 }

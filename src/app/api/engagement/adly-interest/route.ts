@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const gate = await requireRoles(["admin"]);
   if (gate.response) return gate.response;
-  return send(listAdlyInterests());
+  return send(await listAdlyInterests());
 }
 
 export async function POST(request: Request) {
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
   }
-  return send(submitAdlyInterest(body));
+  return send(await submitAdlyInterest(body));
 }
 
 function send(result: ContentResult) {

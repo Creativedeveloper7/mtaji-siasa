@@ -10,7 +10,7 @@ export async function POST() {
   if (!session) {
     return NextResponse.json({ ok: false, error: "Sign in required." }, { status: 401 });
   }
-  const result = ensurePoliticianProfile(session.userId);
+  const result = await ensurePoliticianProfile(session);
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
   }

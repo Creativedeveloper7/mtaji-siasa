@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AdminHeader, AdminSelect } from "@/components/admin/AdminUI";
-import { AD_STATUS, AdCampaignCard, type AdCardAction } from "@/components/ads/AdCampaignCard";
+import { AD_STATUS, AdCampaignCard, type AdCardAction, type AdCardControls } from "@/components/ads/AdCampaignCard";
 import { useContent } from "@/components/content/ContentProvider";
 import { apiJson } from "@/lib/api-client";
 import type { AdCampaign, AdCampaignStatus } from "@/types";
@@ -15,15 +15,22 @@ export default function AdminAdsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | AdCampaignStatus>("pending_approval");
   const [busy, setBusy] = useState<{ id: string; action: AdCardAction } | null>(null);
+  // Tracker backend: approving lets the owner publish (the networks need the owner's session).
+  const [backend, setBackend] = useState<{ tracker: boolean; controls?: AdCardControls }>({ tracker: false });
 
   const load = useCallback(async () => {
-    const result = await apiJson<{ items?: AdCampaign[]; error?: string }>("/api/ads?scope=all");
+    const result = await apiJson<{
+      items?: AdCampaign[];
+      quote?: { backend?: "tracker"; controls?: AdCardControls };
+      error?: string;
+    }>("/api/ads/campaigns?scope=all");
     setLoading(false);
     if (!result.ok) {
       setError(result.data.error || "Could not load ads.");
       return;
     }
     setItems(result.data.items ?? []);
+    setBackend({ tracker: result.data.quote?.backend === "tracker", controls: result.data.quote?.controls });
   }, []);
 
   useEffect(() => {
@@ -37,9 +44,17 @@ export default function AdminAdsPage() {
       if (reason === null) return;
       note = reason;
     }
-    if (action === "approve" && !confirm(`Publish "${campaign.name}" on the ad networks? This spends real money.`)) return;
+    if (
+      action === "approve" &&
+      !confirm(
+        backend.tracker
+          ? `Approve "${campaign.name}"? The leader can then publish it; their wallet pays the networks.`
+          : `Publish "${campaign.name}" on the ad networks? This spends real money.`
+      )
+    )
+      return;
     setBusy({ id: campaign.id, action });
-    const result = await apiJson<{ item?: AdCampaign; error?: string }>(`/api/ads/${encodeURIComponent(campaign.id)}`, {
+    const result = await apiJson<{ item?: AdCampaign; error?: string }>(`/api/ads/campaigns/${encodeURIComponent(campaign.id)}`, {
       method: "POST",
       body: JSON.stringify({ action, note }),
     });
@@ -90,6 +105,8 @@ export default function AdminAdsPage() {
               campaign={campaign}
               admin
               owner={leaderName(campaign.leaderId)}
+              controls={backend.controls}
+              approvalPublishes={!backend.tracker}
               busy={busy?.id === campaign.id ? busy.action : null}
               onAction={(action) => void act(campaign, action)}
             />

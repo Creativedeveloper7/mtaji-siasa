@@ -44,9 +44,9 @@ function view(item: OpportunityApplication, opportunity: Opportunity | undefined
   };
 }
 
-function views(items: OpportunityApplication[]): ApplicationView[] {
+async function views(items: OpportunityApplication[]): Promise<ApplicationView[]> {
   const byId = new Map(
-    getRepositories().content.listOpportunities().map((item) => [item.id, item])
+    (await getRepositories().content.listOpportunities()).map((item) => [item.id, item])
   );
   return items
     .map((item) => view(item, byId.get(item.opportunityId)))
@@ -67,12 +67,12 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-export function submitApplication(session: AuthSession, body: unknown): ContentResult {
+export async function submitApplication(session: AuthSession, body: unknown): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Application body must be an object.");
   const opportunityId = asString(body.opportunityId);
   if (!opportunityId) return fail(400, "opportunityId is required.");
   const repos = getRepositories();
-  const opportunity = repos.content.findOpportunity(opportunityId);
+  const opportunity = await repos.content.findOpportunity(opportunityId);
   if (!opportunity) return fail(404, "Opportunity not found.");
   if (resolveOpportunityStatus(opportunity) === "closed") {
     return fail(400, "This opportunity is closed for applications.");
@@ -81,14 +81,12 @@ export function submitApplication(session: AuthSession, body: unknown): ContentR
     return fail(400, "You cannot apply for an opportunity you published.");
   }
   if (
-    repos.applications
-      .list()
-      .some((item) => item.opportunityId === opportunityId && item.applicantId === session.userId)
+    (await repos.applications.list()).some((item) => item.opportunityId === opportunityId && item.applicantId === session.userId)
   ) {
     return fail(409, "You have already applied for this opportunity.");
   }
 
-  const account = repos.users.findById(session.userId);
+  const account = await repos.users.findById(session.userId);
   const fullName = asString(body.fullName) ?? account?.fullName ?? session.fullName;
   const email = (asString(body.email) ?? account?.email ?? session.email).toLowerCase();
   const phone = asString(body.phone) ?? account?.phone ?? "";
@@ -112,7 +110,7 @@ export function submitApplication(session: AuthSession, body: unknown): ContentR
 
   const now = new Date().toISOString();
   try {
-    const saved = repos.applications.upsert({
+    const saved = await repos.applications.upsert({
       id: createId("app"),
       opportunityId,
       applicantId: session.userId,
@@ -133,35 +131,38 @@ export function submitApplication(session: AuthSession, body: unknown): ContentR
 }
 
 /** Applications the signed-in user has sent. */
-export function listMyApplications(session: AuthSession): ContentResult {
-  const items = getRepositories()
-    .applications.list()
-    .filter((item) => item.applicantId === session.userId);
-  return ok({ ok: true, items: views(items) });
+export async function listMyApplications(session: AuthSession): Promise<ContentResult> {
+  const items = (await getRepositories().applications.list()).filter(
+    (item) => item.applicantId === session.userId
+  );
+  return ok({ ok: true, items: await views(items) });
 }
 
 /** Applications received on opportunities the signed-in politician published. Admin sees all. */
-export function listReceivedApplications(session: AuthSession): ContentResult {
+export async function listReceivedApplications(session: AuthSession): Promise<ContentResult> {
   if (session.role !== "admin" && !session.leaderId) {
     return fail(403, "Your account is not linked to a leader profile.");
   }
   const repos = getRepositories();
   const owned = new Set(
-    repos.content
-      .listOpportunities()
+    (await repos.content.listOpportunities())
       .filter((item) => session.role === "admin" || item.leaderId === session.leaderId)
       .map((item) => item.id)
   );
-  const items = repos.applications.list().filter((item) => owned.has(item.opportunityId));
-  return ok({ ok: true, items: views(items) });
+  const items = (await repos.applications.list()).filter((item) => owned.has(item.opportunityId));
+  return ok({ ok: true, items: await views(items) });
 }
 
-export function reviewApplication(session: AuthSession, id: string, body: unknown): ContentResult {
+export async function reviewApplication(
+  session: AuthSession,
+  id: string,
+  body: unknown
+): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Review body must be an object.");
   const repos = getRepositories();
-  const existing = repos.applications.find(id);
+  const existing = await repos.applications.find(id);
   if (!existing) return fail(404, "Application not found.");
-  const opportunity = repos.content.findOpportunity(existing.opportunityId);
+  const opportunity = await repos.content.findOpportunity(existing.opportunityId);
   if (!canReview(session, opportunity)) {
     return fail(403, "Only the publisher of this opportunity can review its applications.");
   }
@@ -171,7 +172,7 @@ export function reviewApplication(session: AuthSession, id: string, body: unknow
       : existing.status;
   if (!status) return fail(400, "Choose a valid application status.");
   const reviewNote = "reviewNote" in body ? asString(body.reviewNote) : existing.reviewNote;
-  const saved = repos.applications.upsert({
+  const saved = await repos.applications.upsert({
     ...existing,
     status,
     reviewNote,
@@ -181,9 +182,9 @@ export function reviewApplication(session: AuthSession, id: string, body: unknow
 }
 
 /** The applicant may withdraw while the application has not been reviewed yet. */
-export function withdrawApplication(session: AuthSession, id: string): ContentResult {
+export async function withdrawApplication(session: AuthSession, id: string): Promise<ContentResult> {
   const repos = getRepositories();
-  const existing = repos.applications.find(id);
+  const existing = await repos.applications.find(id);
   if (!existing) return fail(404, "Application not found.");
   if (existing.applicantId !== session.userId && session.role !== "admin") {
     return fail(403, "You can only withdraw your own application.");
@@ -191,6 +192,6 @@ export function withdrawApplication(session: AuthSession, id: string): ContentRe
   if (existing.status !== "submitted" && session.role !== "admin") {
     return fail(400, "This application is already being reviewed and can no longer be withdrawn.");
   }
-  repos.applications.delete(id);
+  await repos.applications.delete(id);
   return ok({ ok: true });
 }

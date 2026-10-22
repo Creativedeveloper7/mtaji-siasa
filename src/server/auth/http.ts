@@ -1,38 +1,10 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import type { AuthSession, UserRole } from "@/types/auth";
-import { sessionForUserId, sessionHasRole } from "@/server/auth/service";
-import {
-  SESSION_COOKIE,
-  createSessionToken,
-  readSessionUserId,
-  sessionCookieOptions,
-} from "@/server/auth/session";
+import { currentSession, sessionHasRole } from "@/server/auth/service";
 
+/** The signed-in user. Supabase Auth keeps the session in @supabase/ssr cookies. */
 export async function readRequestSession(): Promise<AuthSession | null> {
-  const jar = await cookies();
-  const userId = readSessionUserId(jar.get(SESSION_COOKIE)?.value);
-  if (!userId) return null;
-  return sessionForUserId(userId);
-}
-
-export function withSessionCookie(body: unknown, userId: string, status = 200) {
-  const response = NextResponse.json(body, { status });
-  response.cookies.set(
-    SESSION_COOKIE,
-    createSessionToken(userId),
-    sessionCookieOptions()
-  );
-  return response;
-}
-
-export function clearSessionCookie(body: unknown) {
-  const response = NextResponse.json(body);
-  response.cookies.set(SESSION_COOKIE, "", {
-    ...sessionCookieOptions(),
-    maxAge: 0,
-  });
-  return response;
+  return currentSession();
 }
 
 /** Role gate for later route handlers. Returns a response when access is denied. */

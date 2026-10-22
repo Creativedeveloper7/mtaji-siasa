@@ -12,7 +12,11 @@ export default function SignInClient() {
   const { signIn, ready, user } = useAuth();
   const params = useSearchParams();
   const next = params.get("next") || params.get("redirect") || "/";
-  const [error, setError] = useState("");
+  const [error, setError] = useState(
+    params.get("error") === "confirmation"
+      ? "That confirmation link is invalid or has expired. Sign in, or sign up again for a new link."
+      : ""
+  );
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {

@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { AdminHeader } from "@/components/admin/AdminUI";
 import { AdlyStat, PolicyStatusBadge } from "@/components/adly/AdlyUI";
 import { useAdly } from "@/components/adly/AdlyProvider";
+import { AdlyCampaignLive } from "@/components/adly/AdlyCampaignLive";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SafeImage } from "@/components/ui/SafeImage";
@@ -19,7 +20,7 @@ export default function AdlyCampaignMonitorPage({
   params: Promise<{ campaignId: string }>;
 }) {
   const { campaignId } = use(params);
-  const { ready, content, getCampaign } = useAdly();
+  const { ready, content, getCampaign, reload, backend } = useAdly();
   const campaign = getCampaign(campaignId);
 
   const creatives = useMemo(
@@ -116,7 +117,9 @@ export default function AdlyCampaignMonitorPage({
           ))}
         </div>
         <p className="mt-3 text-caption text-ink-subtle">
-          Illustrative daily spend curve for this prototype — not live ad-network data.
+          {backend === "tracker"
+            ? "Daily curve is illustrative; spend and totals above come from the networks."
+            : "Illustrative daily spend curve for this prototype — not live ad-network data."}
         </p>
       </section>
 
@@ -174,6 +177,10 @@ export default function AdlyCampaignMonitorPage({
         </section>
       )}
 
+      <AdlyCampaignLive
+        campaignId={campaign.id}
+        onChanged={() => void reload()}
+        fallback={
       <section className="rounded-lg border border-border-accent bg-accent-soft p-5 md:p-6">
         <h2 className="text-h3 text-ink">Adly Recommendations</h2>
         <p className="mt-2 text-small text-ink-muted">
@@ -207,6 +214,8 @@ export default function AdlyCampaignMonitorPage({
           </Link>
         </div>
       </section>
+        }
+      />
     </div>
   );
 }

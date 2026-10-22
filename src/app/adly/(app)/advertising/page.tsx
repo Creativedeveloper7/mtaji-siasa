@@ -33,7 +33,7 @@ import type {
 } from "@/types/adly";
 
 export default function AdlyAdvertisingPage() {
-  const { content, upsertCampaign, upsertCreative, upsertPolicyReview } = useAdly();
+  const { content, backend, savePlan } = useAdly();
   const {
     leaders,
     leaderId: ownedLeaderId,
@@ -112,7 +112,6 @@ export default function AdlyAdvertisingPage() {
       image,
       platformIds: selected,
     };
-    await upsertCreative(creative);
 
     const draft: Campaign = {
       id: campaignId,
@@ -147,10 +146,21 @@ export default function AdlyAdvertisingPage() {
     };
 
     const review = await mockPolicyReviewService.review(draft);
-    await upsertCampaign(draft);
-    await upsertPolicyReview(review);
-    const submit = await mockAdsPlatformService.submitForReview(campaignId);
-    setReviewNote(submit.note);
+    // One request: on the Tracker this is one adly_campaigns row (creative + review in its jsonb).
+    const saved = await savePlan({ campaign: draft, creative, policyReview: review });
+    if (!saved.ok) {
+      setReviewNote(saved.error || "Could not save the campaign.");
+      setBusy(false);
+      return;
+    }
+    if (backend === "tracker") {
+      setReviewNote(
+        "Saved to your M-Taji campaigns. Open it below to chat with Adly, refine the plan and publish to Google and X."
+      );
+    } else {
+      const submit = await mockAdsPlatformService.submitForReview(campaignId);
+      setReviewNote(submit.note);
+    }
     setBusy(false);
   };
 

@@ -46,6 +46,7 @@ function SignupForm() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [created, setCreated] = useState<AuthSession | null>(null);
+  const [confirmEmail, setConfirmEmail] = useState("");
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -53,9 +54,10 @@ function SignupForm() {
     setError("");
     setLoading(true);
     const form = new FormData(e.currentTarget);
+    const email = String(form.get("email") || "");
     const result = await signUp({
       fullName: String(form.get("name") || ""),
-      email: String(form.get("email") || ""),
+      email,
       phone: String(form.get("phone") || ""),
       password: String(form.get("password") || ""),
       role,
@@ -65,13 +67,39 @@ function SignupForm() {
       setLoading(false);
       return;
     }
-    setCreated(result.session);
+    if ("needsConfirmation" in result) {
+      setConfirmEmail(email.trim());
+    } else {
+      setCreated(result.session);
+    }
     setLoading(false);
   };
 
   const destination = created
     ? workspaceFor(created.role, next)
     : workspaceFor(role, next);
+
+  if (confirmEmail) {
+    return (
+      <section className="container-narrow py-12 md:py-20">
+        <Logo size={48} />
+        <p className="meta-label mt-8 text-accent">Account</p>
+        <h1 className="mt-3 text-h1 text-ink">Check your email</h1>
+        <p className="mt-3 text-body text-ink-muted">
+          We sent a confirmation link to {confirmEmail}. Open it to finish creating your
+          account, then sign in.
+        </p>
+        <Button
+          href={next.startsWith("/") ? `/signin?next=${encodeURIComponent(next)}` : "/signin"}
+          size="lg"
+          fullWidth
+          className="mt-8"
+        >
+          Go to sign in
+        </Button>
+      </section>
+    );
+  }
 
   if (created) {
     return (

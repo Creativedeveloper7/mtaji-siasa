@@ -1,37 +1,48 @@
 import { createMemoryRepositories } from "@/server/memory/database";
 import type { AppRepositories } from "@/server/repositories";
-import { getSupabaseRepositories } from "@/server/supabase/database";
+import { createTrackerRepositories } from "@/server/tracker/database";
 
-const MEMORY_ADAPTER_VERSION = 6;
+const MEMORY_ADAPTER_VERSION = 7;
 
 type ServerSlot = {
   version: number;
-  repositories: AppRepositories;
+  memory: AppRepositories;
+  tracker?: AppRepositories;
 };
 
 const globalStore = globalThis as typeof globalThis & {
   __mtajiServer?: ServerSlot;
 };
 
-/** MTAJI_STORE=memory forces the in-memory store, e.g. to try changes without touching Supabase. */
-export function usesSupabase(): boolean {
+/**
+ * The Tracker adapter is used when the public Supabase URL and anon key are set.
+ * MTAJI_STORE=memory forces the in-memory store, e.g. to try changes on sample data.
+ */
+export function usesTracker(): boolean {
   if (process.env.MTAJI_STORE === "memory") return false;
-  return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() &&
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim()
+  );
 }
 
-/** Shared process store. Supabase is used when its URL and service role key are set. */
-export function getRepositories(): AppRepositories {
-  if (usesSupabase()) return getSupabaseRepositories();
+function slot(): ServerSlot {
   const current = globalStore.__mtajiServer;
-  if (current?.version === MEMORY_ADAPTER_VERSION) {
-    return current.repositories;
-  }
-  const repositories = createMemoryRepositories();
-  globalStore.__mtajiServer = {
+  if (current?.version === MEMORY_ADAPTER_VERSION) return current;
+  const next: ServerSlot = {
     version: MEMORY_ADAPTER_VERSION,
-    repositories,
+    memory: createMemoryRepositories(),
   };
-  return repositories;
+  globalStore.__mtajiServer = next;
+  return next;
+}
+
+/** Shared process store: the Tracker adapter when configured, else the memory adapter. */
+export function getRepositories(): AppRepositories {
+  const current = slot();
+  if (!usesTracker()) return current.memory;
+  current.tracker ??= createTrackerRepositories(current.memory);
+  return current.tracker;
 }
 
 export type { AppRepositories } from "@/server/repositories";
@@ -42,4 +53,3 @@ export type {
   SeedCounts,
   WalletRecord,
 } from "@/server/domain";
-export { toPublicUser } from "@/server/domain";

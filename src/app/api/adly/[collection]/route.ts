@@ -19,7 +19,7 @@ export async function GET(request: Request, context: Context) {
   if (!collection) return unknownCollection();
   const editor = await editorActor();
   if (editor.response) return editor.response;
-  return send(listAdly(editor.actor, collection, new URL(request.url).searchParams));
+  return send(await listAdly(editor.actor, collection, new URL(request.url).searchParams));
 }
 
 export async function PUT(request: Request, context: Context) {
@@ -33,7 +33,7 @@ export async function PUT(request: Request, context: Context) {
   } catch {
     return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
   }
-  return send(saveAdly(editor.actor, collection, body));
+  return send(await saveAdly(editor.actor, collection, body));
 }
 
 export async function DELETE(request: Request, context: Context) {
@@ -42,7 +42,7 @@ export async function DELETE(request: Request, context: Context) {
   const editor = await editorActor();
   if (editor.response) return editor.response;
   const id = new URL(request.url).searchParams.get("id")?.trim() ?? "";
-  return send(deleteAdly(editor.actor, collection, id));
+  return send(await deleteAdly(editor.actor, collection, id));
 }
 
 async function readCollection(context: Context): Promise<AdlyCollection | null> {

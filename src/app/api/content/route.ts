@@ -4,7 +4,7 @@ import { readSnapshot } from "@/server/content/service";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export function GET() {
-  const result = readSnapshot();
+export async function GET() {
+  const result = await readSnapshot();
   return NextResponse.json(result.body);
 }
