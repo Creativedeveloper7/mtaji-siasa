@@ -605,155 +605,62 @@ Shapes were sampled with personal data removed.
 
 ## 17. Migrations (Tracker repo, `supabase/migrations/`, for review)
 
-All are additive: nullable columns, new policies, new functions, one new table. M2
-and M6's check widening are the only constraint changes, and both only widen.
+Written as files in the Tracker repo (branch `claude/busy-mendel-1fyt4a`), **not yet
+applied**. All are additive: nullable columns or `NOT NULL` with a constant default,
+new policies, new functions, one new table. The only constraint changes widen a
+check (M2, M6) or add a check on a new column. The SQL lives in the files; each
+header says what Siasa needs it for and why the Tracker app is unaffected.
+
+| # | File | What it does |
+|---|---|---|
+| M1 | `20261022140000_siasa_slugs.sql` | `public.slugify_text(text)` (IMMUTABLE) + stored generated `slug` column and btree index on `political_figures`, `initiatives`, `opportunities`, `blogs`, `polls`, `products` |
+| M3 + M5 (vision) | `20261022150000_siasa_leader_profile.sql` | leader profile columns, `vision jsonb`, public read of `aspirant` / `seeking_reelection` |
+| M2 (optional) | `20261022160000_siasa_leader_position_other.sql` | widens `political_figures_position_check` with `'other'`; can be skipped independently |
+| M4 | `20261022170000_siasa_project_progress.sql` | `initiatives.start_date`, `progress_percent` (0–100), `milestones.image_url`, public read of `stalled` initiatives and their milestones |
+| M5b | `20261022180000_siasa_opportunity_and_blog_fields.sql` | `opportunities.county, image_url, benefits, requirements`; `blogs.gallery, video_url` |
+| M6 | `20261022190000_siasa_opportunity_applications.sql` | application columns, `'shortlisted'`, `updated_at` trigger, withdraw-own policy, anti-spoof insert check, one application per user per listing |
+| M7 | `20261022200000_siasa_polls.sql` | public read of `closed` polls/options, RPCs `poll_results(uuid)` and `cast_poll_vote(uuid, uuid)` |
+| M8 | `20261022210000_siasa_saved_opportunities.sql` | `saved_opportunities` table, owner-only RLS |
+| M9 | handled separately (security), not in these files | |
+
+Deviations from the original proposals:
+
+- **M1**: `slugify_text` trims `'^-+|-+$'` (the proposal had `'^-|-$'`; same result
+  after the first replace collapses runs, but now literally the JS regex). It has
+  `SET search_path = ''` and an explicit `GRANT EXECUTE` to anon, authenticated and
+  service_role, because generated columns evaluate it as the inserting role. Before
+  writing, the expression was run as a plain `SELECT` on the live project: it matched
+  `baseSlug` for 24/24 live rows across the six tables and for 13 Unicode/edge-case
+  strings (é, ß, İ, Kelvin sign, ligatures, CJK, emoji, empty). No live base slug
+  collides within a table. Changing the function body later does **not** recompute
+  stored slugs.
+- **M3 / M5**: the `vision` column moved into the leader-profile file (same table).
+  Added `CHECK (jsonb_typeof(...) = 'object')` on the new `social_links` and `vision`
+  columns.
+- **M2**: its own file so the reviewer can skip it. In the Tracker, a row with
+  `'other'` shows as "Other" (`formatPosition`) and uses the default badge branches;
+  `PoliticalPosition` in its TypeScript does not list it (type gap only).
+- **M4**: the progress check is a named constraint (`initiatives_progress_percent_check`).
+- **M6**: trigger named `update_opportunity_applications_updated_at` (Tracker
+  naming). `GRANT DELETE … TO authenticated` restated. The Tracker apply form sends
+  `applicant_id = user?.id || null`, so the anti-spoof check never rejects it; a
+  signed-in user applying twice now gets a duplicate-key error there.
+- **M7**: `poll_results` also requires `poll_votes.poll_id` to match and orders by
+  `sort_order`. `cast_poll_vote` raises stable messages Siasa can map:
+  `not_authenticated` (28000), `poll_not_open` (P0001), `invalid_option` (P0001),
+  `already_voted` (23505). Both functions revoke from `PUBLIC, anon, authenticated`
+  first (this project's default privileges grant EXECUTE to anon and authenticated
+  explicitly, so revoking from PUBLIC alone is not enough), then grant
+  `poll_results` to anon + authenticated and `cast_poll_vote` to authenticated only.
+  The existing `poll_votes_insert_auth` policy is left as is (the Tracker still
+  inserts votes directly); tightening it is a separate change.
+- **M8**: added an index on `opportunity_id`; table privileges narrowed to
+  `SELECT, INSERT, DELETE` for authenticated and none for anon.
+
+M9 (security fixes found during mapping) is handled in separate Tracker migrations,
+not in the files above. The original proposal, kept for reference:
 
 ```sql
--- M1  derived slugs (mirror the JS slugify; stored + indexed, not unique)
-create or replace function public.slugify_text(t text) returns text
-language sql immutable parallel safe as $$
-  select nullif(regexp_replace(regexp_replace(lower(coalesce(t, '')), '[^a-z0-9]+', '-', 'g'), '^-|-$', '', 'g'), '')
-$$;
-alter table public.political_figures add column if not exists slug text
-  generated always as (coalesce(public.slugify_text(name), left(id::text, 8))) stored;
-alter table public.initiatives add column if not exists slug text
-  generated always as (coalesce(public.slugify_text(title), id::text)) stored;
-alter table public.opportunities add column if not exists slug text
-  generated always as (coalesce(public.slugify_text(title), left(id::text, 8))) stored;
-alter table public.blogs add column if not exists slug text
-  generated always as (coalesce(public.slugify_text(title), left(id::text, 8))) stored;
-alter table public.polls add column if not exists slug text
-  generated always as (coalesce(public.slugify_text(title), left(id::text, 8))) stored;
-alter table public.products add column if not exists slug text
-  generated always as (coalesce(public.slugify_text(name), left(id::text, 8))) stored;
-create index if not exists political_figures_slug_idx on public.political_figures (slug);
-create index if not exists initiatives_slug_idx       on public.initiatives (slug);
-create index if not exists opportunities_slug_idx     on public.opportunities (slug);
-create index if not exists blogs_slug_idx             on public.blogs (slug);
-create index if not exists polls_slug_idx             on public.polls (slug);
-create index if not exists products_slug_idx          on public.products (slug);
-
--- M2  (optional) accept free-text offices that match no enum value
-alter table public.political_figures drop constraint political_figures_position_check;
-alter table public.political_figures add constraint political_figures_position_check
-  check (position = any (array['president','deputy_president','governor','deputy_governor',
-                               'senator','mp','woman_representative','mca','other']));
-
--- M3  leader profile fields + public read for aspirants / seeking re-election
-alter table public.political_figures
-  add column if not exists honorific text,
-  add column if not exists office_title text,
-  add column if not exists profile_image_url text,   -- already read by politicianMapper.ts
-  add column if not exists cover_image_url text,
-  add column if not exists short_bio text,
-  add column if not exists bio text,
-  add column if not exists achievements text[] not null default '{}',
-  add column if not exists social_links jsonb not null default '{}'::jsonb;
-create policy political_figures_public_read_candidates on public.political_figures
-  for select to anon, authenticated
-  using (status in ('aspirant', 'seeking_reelection'));
-
--- M4  projects: start date, build progress, public read of stalled projects
-alter table public.initiatives
-  add column if not exists start_date date,
-  add column if not exists progress_percent smallint
-    check (progress_percent is null or progress_percent between 0 and 100);
-create policy initiatives_public_read_stalled on public.initiatives
-  for select to anon, authenticated using (status = 'stalled');
-create policy milestones_public_read_stalled on public.milestones
-  for select to anon, authenticated using (exists (
-    select 1 from public.initiatives i where i.id = milestones.initiative_id and i.status = 'stalled'));
-alter table public.milestones add column if not exists image_url text;
-
--- M5  leader vision (priorities, proposed projects, expected impact)
-alter table public.political_figures add column if not exists vision jsonb;
--- shape: {"priorities": text[], "expectedImpact": text[],
---         "proposedProjects": [{"id","title","description","location","category","simulationImage","expectedImpact"}]}
-
--- M5b opportunities + blogs extra fields
-alter table public.opportunities
-  add column if not exists county text,
-  add column if not exists image_url text,
-  add column if not exists benefits text[] not null default '{}',
-  add column if not exists requirements text[] not null default '{}';
-alter table public.blogs
-  add column if not exists gallery text[] not null default '{}',
-  add column if not exists video_url text;
-
--- M6  applications: extra fields, shortlist, withdraw, anti-spoof, no duplicates
-alter table public.opportunity_applications
-  add column if not exists county text,
-  add column if not exists attachment_url text,
-  add column if not exists review_note text,
-  add column if not exists updated_at timestamptz not null default now();
-alter table public.opportunity_applications drop constraint opportunity_applications_status_check;
-alter table public.opportunity_applications add constraint opportunity_applications_status_check
-  check (status = any (array['pending','reviewed','shortlisted','accepted','rejected']));
-drop trigger if exists opportunity_applications_updated_at on public.opportunity_applications;
-create trigger opportunity_applications_updated_at before update on public.opportunity_applications
-  for each row execute function public.update_updated_at_column();
-create policy opportunity_applications_withdraw_own on public.opportunity_applications
-  for delete to authenticated
-  using (applicant_id = (select auth.uid()) and status = 'pending');
-alter policy opportunity_applications_insert on public.opportunity_applications
-  with check (
-    (applicant_id is null or applicant_id = (select auth.uid()))
-    and exists (select 1 from public.opportunities o
-                where o.id = opportunity_applications.opportunity_id and o.listing_status = 'published'));
-create unique index if not exists opportunity_applications_one_per_user
-  on public.opportunity_applications (opportunity_id, applicant_id) where applicant_id is not null;
-
--- M7  polls: closed polls public, public tallies, safe voting
-create policy polls_public_read_closed on public.polls
-  for select to anon, authenticated using (status = 'closed');
-create policy poll_options_read_closed on public.poll_options
-  for select to anon, authenticated using (exists (
-    select 1 from public.polls p where p.id = poll_options.poll_id and p.status = 'closed'));
-
-create or replace function public.poll_results(p_poll_id uuid)
-returns table(option_id uuid, votes bigint)
-language sql stable security definer set search_path = public as $$
-  select o.id, count(v.id)
-  from public.poll_options o
-  join public.polls p on p.id = o.poll_id and p.status in ('open', 'closed')
-  left join public.poll_votes v on v.option_id = o.id
-  where o.poll_id = p_poll_id
-  group by o.id
-$$;
-revoke all on function public.poll_results(uuid) from public;
-grant execute on function public.poll_results(uuid) to anon, authenticated;
-
-create or replace function public.cast_poll_vote(p_poll_id uuid, p_option_id uuid)
-returns uuid language plpgsql security definer set search_path = public as $$
-declare v_id uuid;
-begin
-  if auth.uid() is null then raise exception 'not authenticated'; end if;
-  if not exists (select 1 from public.polls p where p.id = p_poll_id and p.status = 'open'
-                 and (p.ends_at is null or p.ends_at > now())) then
-    raise exception 'poll closed';
-  end if;
-  if not exists (select 1 from public.poll_options o where o.id = p_option_id and o.poll_id = p_poll_id) then
-    raise exception 'invalid option';
-  end if;
-  insert into public.poll_votes (poll_id, option_id, voter_user_id)
-  values (p_poll_id, p_option_id, auth.uid()) returning id into v_id;
-  return v_id;
-end $$;
-revoke all on function public.cast_poll_vote(uuid, uuid) from public, anon;
-grant execute on function public.cast_poll_vote(uuid, uuid) to authenticated;
-
--- M8  saved opportunities
-create table if not exists public.saved_opportunities (
-  user_id uuid not null references auth.users(id) on delete cascade,
-  opportunity_id uuid not null references public.opportunities(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  primary key (user_id, opportunity_id)
-);
-alter table public.saved_opportunities enable row level security;
-create policy saved_opportunities_own on public.saved_opportunities
-  for all to authenticated
-  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
-
 -- M9  security fixes found during mapping (independent of Siasa; ship first)
 revoke execute on function public.credit_wallet_from_payment(uuid, numeric, text, uuid, text, uuid)
   from public, anon, authenticated;
