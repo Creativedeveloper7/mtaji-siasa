@@ -48,7 +48,7 @@ const baseLinks = [
 export function PoliticianShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { signOut } = useAuth();
-  const { leader, isAspirant, ready } = usePoliticianProfile();
+  const { leader, isAspirant, isDraft, ready } = usePoliticianProfile();
   const [open, setOpen] = useState(false);
 
   const links = isAspirant
@@ -103,7 +103,7 @@ export function PoliticianShell({ children }: { children: ReactNode }) {
           </div>
           {nav}
           <div className="space-y-2 border-t border-border p-3">
-            {leader && (
+            {leader && !isDraft && (
               <Button
                 href={`/leaders/${leader.slug}`}
                 variant="ghost"
@@ -143,13 +143,15 @@ export function PoliticianShell({ children }: { children: ReactNode }) {
               <span className="text-small font-medium text-ink">Dashboard</span>
             </div>
             <div className="hidden text-small text-ink-muted lg:block">
-              {leader
+              {leader && !isDraft
                 ? `${leader.honorific} ${leader.name} · ${leader.position}`
-                : "Setting up your profile…"}
+                : leader
+                  ? `${leader.name} · Complete your profile to publish your leader page`
+                  : "Setting up your profile…"}
             </div>
             <div className="ml-auto flex items-center gap-2">
               <ThemeToggle />
-              {leader && (
+              {leader && !isDraft && (
                 <Button
                   href={`/leaders/${leader.slug}`}
                   variant="outline"
@@ -193,7 +195,7 @@ export function PoliticianShell({ children }: { children: ReactNode }) {
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{nav}</div>
               <div className="space-y-2 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-                {leader && (
+                {leader && !isDraft && (
                   <Button href={`/leaders/${leader.slug}`} variant="ghost" size="sm" fullWidth>
                     Public profile
                   </Button>

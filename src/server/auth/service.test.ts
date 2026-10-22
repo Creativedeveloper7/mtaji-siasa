@@ -16,7 +16,6 @@ vi.mock("@/server/tracker/clients", () => ({
 
 const { currentSession, ensurePoliticianProfile, phase1LeaderId, signIn, signOut, signUp } =
   await import("@/server/auth/service");
-const { getRepositories } = await import("@/server");
 
 const USER_ID = "22222222-2222-4222-8222-222222222222";
 const authUser = {
@@ -62,7 +61,8 @@ describe("currentSession", () => {
       email: "otieno@example.com",
       fullName: "Otieno Ouma",
       role: "leader",
-      leaderId: undefined,
+      // No political_figures row: the Phase 1 leader id, never the bare uid.
+      leaderId: `user-${USER_ID}`,
     });
   });
 
@@ -73,33 +73,23 @@ describe("currentSession", () => {
     expect(await currentSession()).toBeNull();
   });
 
-  it("links the Phase 1 leader profile kept under user-<user id>", async () => {
-    const content = getRepositories().content;
-    const seed = (await content.listLeaders())[0];
-    await content.upsertLeader({ ...seed, id: `user-${USER_ID}`, slug: "otieno-ouma" });
+  it("gives a politician without a figure row the Phase 1 leader id, never the bare uid", async () => {
     clients.current = fakeSupabase(trackerDb(), {
       getUser: async () => ({ data: { user: authUser }, error: null }),
     });
-    try {
-      expect((await currentSession())?.leaderId).toBe(`user-${USER_ID}`);
-    } finally {
-      await content.deleteLeader(`user-${USER_ID}`);
-    }
+    const session = await currentSession();
+    expect(session?.leaderId).toBe(`user-${USER_ID}`);
+    expect(session?.leaderId).not.toBe(USER_ID);
   });
 
-  it("never treats a bare user id as a leader id", async () => {
-    const content = getRepositories().content;
-    const seed = (await content.listLeaders())[0];
-    // A leader profile stored under the raw uid (as before the fix) is not linked.
-    await content.upsertLeader({ ...seed, id: USER_ID, slug: "raw-uid" });
-    clients.current = fakeSupabase(trackerDb(), {
-      getUser: async () => ({ data: { user: authUser }, error: null }),
+  it("gives a citizen no leader id", async () => {
+    const db = trackerDb();
+    db.tables.user_profiles = [{ user_id: USER_ID, user_type: "individual", phone: null }];
+    const citizen = { ...authUser, user_metadata: { full_name: "Otieno O", user_type: "individual", siasa_role: "citizen" } };
+    clients.current = fakeSupabase(db, {
+      getUser: async () => ({ data: { user: citizen }, error: null }),
     });
-    try {
-      expect((await currentSession())?.leaderId).toBeUndefined();
-    } finally {
-      await content.deleteLeader(USER_ID);
-    }
+    expect(await currentSession()).toMatchObject({ role: "citizen", leaderId: undefined });
   });
 
   it("is null (and logs) when the account rows cannot be read", async () => {
@@ -177,7 +167,7 @@ describe("signUp", () => {
         email: "otieno@example.com",
         fullName: "Otieno Ouma",
         role: "aspirant",
-        leaderId: undefined,
+        leaderId: `user-${USER_ID}`,
       },
     });
     expect(db.updates).toEqual([
@@ -280,7 +270,6 @@ describe("leader id collision (a figure row whose id is another user's uid)", ()
   }
 
   it("does not give the attacker the victim's workspace", async () => {
-    const content = getRepositories().content;
     const db = collisionDb();
 
     // The victim (no figure row) opens their politician workspace.
@@ -288,32 +277,26 @@ describe("leader id collision (a figure row whose id is another user's uid)", ()
       getUser: async () => ({ data: { user: authUser }, error: null }),
     });
     const victim = await currentSession();
-    expect(victim?.leaderId).toBeUndefined();
+    expect(victim?.leaderId).toBe(phase1LeaderId(VICTIM_ID));
     const opened = await ensurePoliticianProfile(victim!);
     expect(opened).toMatchObject({ ok: true, leaderId: phase1LeaderId(VICTIM_ID) });
     expect(phase1LeaderId(VICTIM_ID)).toBe(`user-${VICTIM_ID}`);
 
-    try {
-      // The attacker's session carries their own figure id (= victim uid) ...
-      clients.current = fakeSupabase(db, {
-        getUser: async () => ({ data: { user: attacker }, error: null }),
-      });
-      const mallory = await currentSession();
-      expect(mallory?.userId).toBe(ATTACKER_ID);
-      expect(mallory?.leaderId).toBe(VICTIM_ID);
-      // ... which is not the victim's leader id and holds none of their profile.
-      expect(mallory?.leaderId).not.toBe(opened.ok ? opened.leaderId : "");
-      expect(await content.findLeader(VICTIM_ID)).toBeUndefined();
-      expect((await content.findLeader(phase1LeaderId(VICTIM_ID)))?.name).toBe("Otieno Ouma");
+    // The attacker's session carries their own figure id (= victim uid),
+    // which is not the victim's leader id.
+    clients.current = fakeSupabase(db, {
+      getUser: async () => ({ data: { user: attacker }, error: null }),
+    });
+    const mallory = await currentSession();
+    expect(mallory?.userId).toBe(ATTACKER_ID);
+    expect(mallory?.leaderId).toBe(VICTIM_ID);
+    expect(mallory?.leaderId).not.toBe(opened.ok ? opened.leaderId : "");
 
-      // The victim still resolves to their own workspace afterwards.
-      clients.current = fakeSupabase(db, {
-        getUser: async () => ({ data: { user: authUser }, error: null }),
-      });
-      expect((await currentSession())?.leaderId).toBe(phase1LeaderId(VICTIM_ID));
-    } finally {
-      await content.deleteLeader(phase1LeaderId(VICTIM_ID));
-    }
+    // The victim still resolves to their own workspace afterwards.
+    clients.current = fakeSupabase(db, {
+      getUser: async () => ({ data: { user: authUser }, error: null }),
+    });
+    expect((await currentSession())?.leaderId).toBe(phase1LeaderId(VICTIM_ID));
   });
 
   it("keeps the oldest of the user's own figure rows when a newer one is added", async () => {

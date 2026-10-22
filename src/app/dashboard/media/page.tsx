@@ -20,7 +20,7 @@ import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
 
 export default function PoliticianMediaPage() {
   const { leader } = usePoliticianProfile();
-  const { getMediaByIds, getProjectsByIds, upsertMedia, deleteMedia, upsertLeader } = useContent();
+  const { getMediaByIds, getProjectsByIds, upsertMedia, deleteMedia } = useContent();
   const [editing, setEditing] = useState<MediaItem | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -119,10 +119,6 @@ export default function PoliticianMediaPage() {
                 onClick={() => {
                   if (!confirm("Delete this item?")) return;
                   deleteMedia(m.id);
-                  upsertLeader({
-                    ...leader,
-                    mediaIds: leader.mediaIds.filter((id) => id !== m.id),
-                  });
                 }}
               >
                 Delete

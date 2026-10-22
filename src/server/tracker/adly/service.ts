@@ -532,6 +532,12 @@ export async function listTrackerAds(session: AuthSession, scope: "mine" | "all"
 }
 
 /** Composer submit: validate, create the adly_campaigns row, then queue for approval or publish. */
+/** The project's owner (changemakers.user_id) is `userId` (Ownership rule, docs/tracker-backend.md). */
+async function ownsProject(projectId: string, userId: string): Promise<boolean> {
+  const owner = await getRepositories().content.projectOwnerUserId?.(projectId);
+  return Boolean(owner && owner === userId);
+}
+
 export async function createTrackerAd(session: AuthSession, body: unknown, requestOrigin: string): Promise<ContentResult> {
   if (session.role !== "leader" && session.role !== "aspirant") {
     return fail(403, "Only leaders and aspirants can run ads from their dashboard.");
@@ -542,7 +548,10 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   const settings = trackerAdSettings();
 
   const project = await getRepositories().content.findProject(asString(body.projectId) ?? "");
-  if (!project || !project.leaderIds.includes(leaderId)) return fail(400, "Choose one of your own projects to promote.");
+  // Ownership rule: the project's owner auth user id, never a leader id.
+  if (!project || !(await ownsProject(project.id, session.userId))) {
+    return fail(400, "Choose one of your own projects to promote.");
+  }
   if (!project.image) return fail(400, "Add a project image before running an ad.");
 
   const headline = asString(body.headline) ?? "";
@@ -847,7 +856,7 @@ export async function saveTrackerPlan(actor: ContentActor, body: unknown): Promi
     if (parsed.projectId) {
       const project = await getRepositories().content.findProject(parsed.projectId);
       if (!project) return fail(400, "That project was not found.");
-      if (actor.role !== "admin" && !project.leaderIds.includes(actor.leaderId)) {
+      if (actor.role !== "admin" && !(await ownsProject(project.id, actor.userId))) {
         return fail(403, "That project is not on your profile.");
       }
       projectTitle = project.name;

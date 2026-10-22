@@ -98,7 +98,7 @@ export function AdlyCampaignLive({
     if (!confirm("Publish this campaign to the selected networks? Your wallet pays each network that accepts it.")) return;
     setBusy("publish");
     setNotice("");
-    const result = await apiJson<{ summary?: string; error?: string }>(`/api/ads/publish/${encodeURIComponent(campaignId)}`, {
+    const result = await apiJson<{ summary?: string; warnings?: string[]; error?: string }>(`/api/ads/publish/${encodeURIComponent(campaignId)}`, {
       method: "POST",
       body: JSON.stringify({}),
     });
@@ -108,7 +108,8 @@ export function AdlyCampaignLive({
       return;
     }
     setError("");
-    setNotice(result.data.summary || "Sent to the networks.");
+    // Warnings: e.g. a network accepted the ad but the wallet debit failed (unpaid).
+    setNotice([result.data.summary || "Sent to the networks.", ...(result.data.warnings ?? [])].join(" "));
     await load();
     onChanged?.();
   };

@@ -67,7 +67,7 @@ export default function AdminOpportunitiesPage() {
               {OPPORTUNITY_CATEGORY_LABELS[o.category]}
             </td>
             <td className="px-4 py-3 text-ink-muted">{o.county}</td>
-            <td className="px-4 py-3 text-ink-muted">{o.deadline}</td>
+            <td className="px-4 py-3 text-ink-muted">{o.deadline || "Rolling"}</td>
             <td className="px-4 py-3 text-right whitespace-nowrap">
               <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(structuredClone(o))}>
                 Edit

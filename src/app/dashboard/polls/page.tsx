@@ -17,7 +17,7 @@ import type { Poll } from "@/types";
 
 export default function PoliticianPollsPage() {
   const { leader } = usePoliticianProfile();
-  const { getPollsByIds, upsertPoll, deletePoll, upsertLeader } = useContent();
+  const { getPollsByIds, upsertPoll, deletePoll } = useContent();
   const [editing, setEditing] = useState<Poll | null>(null);
 
   const rows = useMemo(
@@ -41,10 +41,10 @@ export default function PoliticianPollsPage() {
                 slug: "",
                 question: "",
                 options: [
-                  { id: "o1", label: "Option A", votes: 0 },
-                  { id: "o2", label: "Option B", votes: 0 },
+                  { id: createId("opt"), label: "Option A", votes: 0 },
+                  { id: createId("opt"), label: "Option B", votes: 0 },
                 ],
-                closingDate: new Date().toISOString().slice(0, 10),
+                closingDate: "",
                 participationCount: 0,
                 leaderId: leader.id,
               })
@@ -83,10 +83,6 @@ export default function PoliticianPollsPage() {
                 onClick={() => {
                   if (!confirm("Delete this poll?")) return;
                   deletePoll(p.id);
-                  upsertLeader({
-                    ...leader,
-                    pollIds: leader.pollIds.filter((id) => id !== p.id),
-                  });
                 }}
               >
                 Delete
@@ -108,11 +104,7 @@ export default function PoliticianPollsPage() {
               onClick={() => {
                 if (!editing) return;
                 const options = editing.options
-                  .map((o, i) => ({
-                    ...o,
-                    id: o.id || `o${i + 1}`,
-                    label: o.label.trim(),
-                  }))
+                  .map((o) => ({ ...o, id: o.id || createId("opt"), label: o.label.trim() }))
                   .filter((o) => o.label);
                 const saved = {
                   ...editing,
@@ -124,12 +116,6 @@ export default function PoliticianPollsPage() {
                     options.reduce((s, o) => s + o.votes, 0),
                 };
                 upsertPoll(saved);
-                if (!leader.pollIds.includes(saved.id)) {
-                  upsertLeader({
-                    ...leader,
-                    pollIds: [...leader.pollIds, saved.id],
-                  });
-                }
                 setEditing(null);
               }}
             >
@@ -156,7 +142,7 @@ export default function PoliticianPollsPage() {
                 }
               />
             </AdminField>
-            <AdminField label="Closing date">
+            <AdminField label="Closing date" hint="Leave empty to keep the poll open until you close it.">
               <AdminInput
                 type="date"
                 value={editing.closingDate}
@@ -165,22 +151,20 @@ export default function PoliticianPollsPage() {
                 }
               />
             </AdminField>
-            <AdminField label="Options (label|votes per line)">
+            <AdminField
+              label="Options (one per line)"
+              hint="Citizens vote on the public polls page. Renaming an option keeps its votes."
+            >
               <AdminTextarea
-                value={editing.options
-                  .map((o) => `${o.label}|${o.votes}`)
-                  .join("\n")}
+                value={editing.options.map((o) => o.label).join("\n")}
                 onChange={(e) =>
                   setEditing({
                     ...editing,
-                    options: e.target.value.split("\n").map((line, i) => {
-                      const [label, votes] = line.split("|");
-                      return {
-                        id: `o${i + 1}`,
-                        label: (label || "").trim(),
-                        votes: Number(votes) || 0,
-                      };
-                    }),
+                    options: e.target.value.split("\n").map((label, i) => ({
+                      id: editing.options[i]?.id || createId("opt"),
+                      label,
+                      votes: editing.options[i]?.votes ?? 0,
+                    })),
                   })
                 }
               />

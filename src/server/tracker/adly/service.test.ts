@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   debitUpdate: vi.fn(),
   callEdge: vi.fn(),
   findProject: vi.fn(),
+  projectOwner: vi.fn(),
 }));
 
 vi.mock("@/server/tracker/clients", () => ({
@@ -43,7 +44,12 @@ vi.mock("@/server/tracker/adly/edge", async (importOriginal) => ({
 }));
 
 vi.mock("@/server", () => ({
-  getRepositories: () => ({ content: { findProject: (id: string) => h.findProject(id) } }),
+  getRepositories: () => ({
+    content: {
+      findProject: (id: string) => h.findProject(id),
+      projectOwnerUserId: (id: string) => h.projectOwner(id),
+    },
+  }),
 }));
 
 vi.mock("@/server/adly/service", () => ({
@@ -134,6 +140,8 @@ beforeEach(() => {
   h.debitUpdate.mockReset().mockResolvedValue({ ok: true, status: 200, data: { transactionId: null, deltaKes: 0 } });
   h.callEdge.mockReset().mockResolvedValue({ status: 200, ok: true, json: {} });
   h.findProject.mockReset().mockResolvedValue({ id: PROJECT, name: "Githurai roads", leaderIds: ["pf-1"], slug: "roads" });
+  // Ownership rule: the project's owner auth user id decides, not leaderIds.
+  h.projectOwner.mockReset().mockResolvedValue(OWNER);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });

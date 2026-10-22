@@ -24,7 +24,6 @@ export default function PoliticianMerchandisePage() {
     getProductsByLeader,
     upsertProduct,
     deleteProduct,
-    upsertLeader,
   } = useContent();
   const [editing, setEditing] = useState<Product | null>(null);
 
@@ -119,12 +118,6 @@ export default function PoliticianMerchandisePage() {
                       onClick={() => {
                         if (!confirm("Delete this product?")) return;
                         deleteProduct(p.id);
-                        upsertLeader({
-                          ...leader,
-                          productIds: leader.productIds.filter(
-                            (id) => id !== p.id
-                          ),
-                        });
                       }}
                     >
                       Delete
@@ -156,12 +149,6 @@ export default function PoliticianMerchandisePage() {
                   leaderId: leader.id,
                 };
                 upsertProduct(saved);
-                if (!leader.productIds.includes(saved.id)) {
-                  upsertLeader({
-                    ...leader,
-                    productIds: [...leader.productIds, saved.id],
-                  });
-                }
                 setEditing(null);
               }}
             >

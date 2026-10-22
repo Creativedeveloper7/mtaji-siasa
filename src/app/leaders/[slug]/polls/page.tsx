@@ -6,6 +6,7 @@ import { ProfileHeader } from "@/components/leader/ProfileHeader";
 import { PollCard } from "@/components/cards/PollCard";
 import { EmptyState, LoadingState } from "@/components/ui/EmptyState";
 import { useContent } from "@/components/content/ContentProvider";
+import { usePollVotes } from "@/components/polls/usePollVotes";
 
 export default function LeaderPollsPage({
   params,
@@ -14,10 +15,11 @@ export default function LeaderPollsPage({
 }) {
   const { slug } = use(params);
   const { ready, getLeaderBySlug, getPollsByIds } = useContent();
+  const leader = ready ? getLeaderBySlug(slug) : undefined;
+  const items = leader ? getPollsByIds(leader.pollIds) : [];
+  const voteFor = usePollVotes(items);
   if (!ready) return <LoadingState />;
-  const leader = getLeaderBySlug(slug);
   if (!leader) notFound();
-  const items = getPollsByIds(leader.pollIds);
 
   return (
     <>
@@ -28,7 +30,7 @@ export default function LeaderPollsPage({
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {items.map((poll) => (
-              <PollCard key={poll.id} poll={poll} />
+              <PollCard key={poll.id} poll={poll} vote={voteFor(poll)} />
             ))}
           </div>
         )}

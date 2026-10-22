@@ -64,7 +64,7 @@ export function OpportunityCard({
           <div className="mt-auto flex items-center justify-between pt-5 text-caption">
             <span className="text-ink-muted">Deadline</span>
             <span className="font-bold text-ink">
-              {formatDate(opportunity.deadline)}
+              {formatDate(opportunity.deadline, "Rolling")}
             </span>
           </div>
         </div>

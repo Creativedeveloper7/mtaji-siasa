@@ -7,9 +7,11 @@ import type {
 import type { AuthSession } from "@/types/auth";
 import { createId } from "@/lib/store";
 import { resolveOpportunityStatus } from "@/lib/related-content";
-import { getRepositories } from "@/server";
+import { getRepositories, usesTracker } from "@/server";
 import { asString, isRecord } from "@/server/content/parse";
 import type { ContentResult } from "@/server/content/service";
+import { failureFromError } from "@/server/http-errors";
+import { ownerUserIdOf } from "@/server/tracker/content/media/shared";
 
 export const APPLICATION_STATUSES: readonly ApplicationStatus[] = [
   "submitted",
@@ -53,9 +55,37 @@ async function views(items: OpportunityApplication[]): Promise<ApplicationView[]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/**
+ * Who published the listing. Tracker: the listing's author (auth user id,
+ * Ownership rule). Memory: the leader profile, as in the demo data.
+ */
+function isPublisher(session: AuthSession, opportunity: Opportunity | undefined): boolean {
+  if (!opportunity) return false;
+  if (usesTracker()) {
+    const author = ownerUserIdOf(opportunity);
+    return Boolean(author && author === session.userId);
+  }
+  return Boolean(opportunity.leaderId && session.leaderId && opportunity.leaderId === session.leaderId);
+}
+
 function canReview(session: AuthSession, opportunity: Opportunity | undefined): boolean {
-  if (session.role === "admin") return true;
-  return Boolean(opportunity?.leaderId && session.leaderId && opportunity.leaderId === session.leaderId);
+  return session.role === "admin" || isPublisher(session, opportunity);
+}
+
+/** Runs a service call; a repository error becomes its HTTP status without database detail. */
+async function guarded(context: string, run: () => Promise<ContentResult>): Promise<ContentResult> {
+  try {
+    return await run();
+  } catch (error) {
+    return failureFromError(error, context);
+  }
+}
+
+/** Applications `userId` sent. Tracker: a filtered query under row-level security. */
+async function sentBy(userId: string): Promise<OpportunityApplication[]> {
+  const repo = getRepositories().applications;
+  if (usesTracker() && repo.listForApplicant) return repo.listForApplicant(userId);
+  return (await repo.list()).filter((item) => item.applicantId === userId);
 }
 
 function isHttpUrl(value: string): boolean {
@@ -68,6 +98,10 @@ function isHttpUrl(value: string): boolean {
 }
 
 export async function submitApplication(session: AuthSession, body: unknown): Promise<ContentResult> {
+  return guarded("submit application", () => submit(session, body));
+}
+
+async function submit(session: AuthSession, body: unknown): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Application body must be an object.");
   const opportunityId = asString(body.opportunityId);
   if (!opportunityId) return fail(400, "opportunityId is required.");
@@ -77,16 +111,15 @@ export async function submitApplication(session: AuthSession, body: unknown): Pr
   if (resolveOpportunityStatus(opportunity) === "closed") {
     return fail(400, "This opportunity is closed for applications.");
   }
-  if (session.leaderId && opportunity.leaderId === session.leaderId) {
+  if (isPublisher(session, opportunity)) {
     return fail(400, "You cannot apply for an opportunity you published.");
   }
-  if (
-    (await repos.applications.list()).some((item) => item.opportunityId === opportunityId && item.applicantId === session.userId)
-  ) {
+  if ((await sentBy(session.userId)).some((item) => item.opportunityId === opportunityId)) {
     return fail(409, "You have already applied for this opportunity.");
   }
 
-  const account = await repos.users.findById(session.userId);
+  // The account only pre-fills contact details; the session has the essentials.
+  const account = await repos.users.findById(session.userId).catch(() => undefined);
   const fullName = asString(body.fullName) ?? account?.fullName ?? session.fullName;
   const email = (asString(body.email) ?? account?.email ?? session.email).toLowerCase();
   const phone = asString(body.phone) ?? account?.phone ?? "";
@@ -109,48 +142,55 @@ export async function submitApplication(session: AuthSession, body: unknown): Pr
   }
 
   const now = new Date().toISOString();
-  try {
-    const saved = await repos.applications.upsert({
-      id: createId("app"),
-      opportunityId,
-      applicantId: session.userId,
-      fullName,
-      email,
-      phone,
-      county: asString(body.county),
-      message,
-      attachmentUrl,
-      status: "submitted",
-      createdAt: now,
-      updatedAt: now,
-    });
-    return ok({ ok: true, item: view(saved, opportunity) }, 201);
-  } catch (error) {
-    return fail(409, error instanceof Error ? error.message : "Could not save the application.");
-  }
+  const saved = await repos.applications.upsert({
+    id: createId("app"),
+    opportunityId,
+    applicantId: session.userId,
+    fullName,
+    email,
+    phone,
+    county: asString(body.county),
+    message,
+    attachmentUrl,
+    status: "submitted",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return ok({ ok: true, item: view(saved, opportunity) }, 201);
 }
 
 /** Applications the signed-in user has sent. */
 export async function listMyApplications(session: AuthSession): Promise<ContentResult> {
-  const items = (await getRepositories().applications.list()).filter(
-    (item) => item.applicantId === session.userId
-  );
-  return ok({ ok: true, items: await views(items) });
+  return guarded("list applications", async () => ok({ ok: true, items: await views(await sentBy(session.userId)) }));
 }
 
-/** Applications received on opportunities the signed-in politician published. Admin sees all. */
+/** Applications received on opportunities the signed-in user published. Admin sees all. */
 export async function listReceivedApplications(session: AuthSession): Promise<ContentResult> {
-  if (session.role !== "admin" && !session.leaderId) {
-    return fail(403, "Your account is not linked to a leader profile.");
-  }
-  const repos = getRepositories();
-  const owned = new Set(
-    (await repos.content.listOpportunities())
-      .filter((item) => session.role === "admin" || item.leaderId === session.leaderId)
-      .map((item) => item.id)
-  );
-  const items = (await repos.applications.list()).filter((item) => owned.has(item.opportunityId));
-  return ok({ ok: true, items: await views(items) });
+  return guarded("list received applications", async () => {
+    const repos = getRepositories();
+    if (usesTracker()) {
+      // Tracker: listings belong to their author's auth user id, so any account
+      // that published one sees its applications. listAll() re-checks admin.
+      const tracker = repos.applications;
+      const items =
+        session.role === "admin" && tracker.listAll
+          ? await tracker.listAll()
+          : tracker.listForAuthor
+            ? await tracker.listForAuthor(session.userId)
+            : [];
+      return ok({ ok: true, items: await views(items) });
+    }
+    if (session.role !== "admin" && !session.leaderId) {
+      return fail(403, "Your account is not linked to a leader profile.");
+    }
+    const owned = new Set(
+      (await repos.content.listOpportunities())
+        .filter((item) => session.role === "admin" || item.leaderId === session.leaderId)
+        .map((item) => item.id)
+    );
+    const items = (await repos.applications.list()).filter((item) => owned.has(item.opportunityId));
+    return ok({ ok: true, items: await views(items) });
+  });
 }
 
 export async function reviewApplication(
@@ -158,6 +198,10 @@ export async function reviewApplication(
   id: string,
   body: unknown
 ): Promise<ContentResult> {
+  return guarded("review application", () => review(session, id, body));
+}
+
+async function review(session: AuthSession, id: string, body: unknown): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Review body must be an object.");
   const repos = getRepositories();
   const existing = await repos.applications.find(id);
@@ -183,6 +227,10 @@ export async function reviewApplication(
 
 /** The applicant may withdraw while the application has not been reviewed yet. */
 export async function withdrawApplication(session: AuthSession, id: string): Promise<ContentResult> {
+  return guarded("withdraw application", () => withdraw(session, id));
+}
+
+async function withdraw(session: AuthSession, id: string): Promise<ContentResult> {
   const repos = getRepositories();
   const existing = await repos.applications.find(id);
   if (!existing) return fail(404, "Application not found.");
@@ -192,6 +240,12 @@ export async function withdrawApplication(session: AuthSession, id: string): Pro
   if (existing.status !== "submitted" && session.role !== "admin") {
     return fail(400, "This application is already being reviewed and can no longer be withdrawn.");
   }
-  await repos.applications.delete(id);
+  if (!(await repos.applications.delete(id))) {
+    // Tracker: opportunity_applications has no DELETE policy until migration
+    // M6 ("applicant may withdraw while pending"), so nothing was removed.
+    return usesTracker()
+      ? fail(501, "Withdrawing an application is not available yet. Contact the publisher instead.")
+      : fail(404, "Application not found.");
+  }
   return ok({ ok: true });
 }

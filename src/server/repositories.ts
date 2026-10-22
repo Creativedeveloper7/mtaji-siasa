@@ -151,6 +151,14 @@ export interface ApplicationRepository {
   find(id: string): Promise<OpportunityApplication | undefined>;
   upsert(item: OpportunityApplication): Promise<OpportunityApplication>;
   delete(id: string): Promise<boolean>;
+  /**
+   * Tracker only (row-level security scopes list() to the session there):
+   * applications the given user sent, applications on listings authored by
+   * the given user, and every application (admin, checked by the store).
+   */
+  listForApplicant?(applicantId: string): Promise<OpportunityApplication[]>;
+  listForAuthor?(authorId: string): Promise<OpportunityApplication[]>;
+  listAll?(): Promise<OpportunityApplication[]>;
 }
 
 /** Paid ad campaigns. Read straight from the store, like applications. */

@@ -20,10 +20,10 @@ const emptyPoll = (): Poll => ({
   slug: "",
   question: "",
   options: [
-    { id: "o1", label: "Option A", votes: 0 },
-    { id: "o2", label: "Option B", votes: 0 },
+    { id: createId("opt"), label: "Option A", votes: 0 },
+    { id: createId("opt"), label: "Option B", votes: 0 },
   ],
-  closingDate: new Date().toISOString().slice(0, 10),
+  closingDate: "",
   participationCount: 0,
 });
 
@@ -61,7 +61,7 @@ export default function AdminPollsPage() {
             <td className="px-4 py-3 font-mono text-ink-muted">
               {p.participationCount}
             </td>
-            <td className="px-4 py-3 text-ink-muted">{p.closingDate}</td>
+            <td className="px-4 py-3 text-ink-muted">{p.closingDate || "Open"}</td>
             <td className="px-4 py-3 text-right whitespace-nowrap">
               <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(structuredClone(p))}>
                 Edit
@@ -93,11 +93,7 @@ export default function AdminPollsPage() {
               onClick={() => {
                 if (!editing) return;
                 const options = editing.options
-                  .map((o, i) => ({
-                    ...o,
-                    id: o.id || `o${i + 1}`,
-                    label: o.label.trim(),
-                  }))
+                  .map((o) => ({ ...o, id: o.id || createId("opt"), label: o.label.trim() }))
                   .filter((o) => o.label);
                 upsertPoll({
                   ...editing,
@@ -132,7 +128,7 @@ export default function AdminPollsPage() {
                 }
               />
             </AdminField>
-            <AdminField label="Closing date">
+            <AdminField label="Closing date" hint="Leave empty to keep the poll open until you close it.">
               <AdminInput
                 type="date"
                 value={editing.closingDate}
@@ -147,22 +143,20 @@ export default function AdminPollsPage() {
                 }
               />
             </AdminField>
-            <AdminField label="Options (label|votes per line)">
+            <AdminField
+              label="Options (one per line)"
+              hint="Citizens vote on the public polls page. Renaming an option keeps its votes."
+            >
               <AdminTextarea
-                value={editing.options
-                  .map((o) => `${o.label}|${o.votes}`)
-                  .join("\n")}
+                value={editing.options.map((o) => o.label).join("\n")}
                 onChange={(e) =>
                   setEditing({
                     ...editing,
-                    options: e.target.value.split("\n").map((line, i) => {
-                      const [label, votes] = line.split("|");
-                      return {
-                        id: `o${i + 1}`,
-                        label: (label || "").trim(),
-                        votes: Number(votes) || 0,
-                      };
-                    }),
+                    options: e.target.value.split("\n").map((label, i) => ({
+                      id: editing.options[i]?.id || createId("opt"),
+                      label,
+                      votes: editing.options[i]?.votes ?? 0,
+                    })),
                   })
                 }
               />

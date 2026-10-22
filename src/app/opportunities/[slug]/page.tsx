@@ -252,7 +252,7 @@ export default function OpportunityDetailPage({
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Calendar className="h-3.5 w-3.5" aria-hidden />
-              Deadline {formatDate(opportunity.deadline)}
+              Deadline {formatDate(opportunity.deadline, "Rolling")}
             </span>
             {opportunity.organization && (
               <span className="inline-flex items-center gap-1.5">
@@ -316,13 +316,13 @@ export default function OpportunityDetailPage({
                 <div>
                   <dt className="meta-label">Opening date</dt>
                   <dd className="mt-1 text-ink">
-                    {formatDate(opportunity.openingDate || opportunity.deadline)}
+                    {formatDate(opportunity.openingDate || opportunity.deadline, "Open now")}
                   </dd>
                 </div>
                 <div>
                   <dt className="meta-label">Closing date</dt>
                   <dd className="mt-1 text-ink">
-                    {formatDate(opportunity.deadline)}
+                    {formatDate(opportunity.deadline, "Rolling")}
                   </dd>
                 </div>
               </dl>
@@ -359,7 +359,7 @@ export default function OpportunityDetailPage({
               <div>
                 <dt className="text-ink-subtle">Deadline</dt>
                 <dd className="mt-1 text-ink">
-                  {formatDate(opportunity.deadline)}
+                  {formatDate(opportunity.deadline, "Rolling")}
                 </dd>
               </div>
               <div>

@@ -123,13 +123,18 @@ sign-up form does not ask for. Siasa does not make those up. So:
 - When the `user_profiles` row is missing, `user_metadata.user_type` stands in,
   normalised the way the `handle_new_user` trigger does.
 
-Phase 1 only: until leaders move to `political_figures` (Phase 2), the
-politician workspace (`POST /api/auth/profile`) creates the leader profile in
-the memory content store, with id = the user's `political_figures.id`, or
-`user-<Supabase user id>` when they have none (never the bare uid). A session with no `political_figures` row
-picks up that profile as its `leaderId`. A citizen or organization who opens
-the workspace is switched to `user_type = 'political_figure'` (their own
-`user_profiles` row and `user_metadata`), as the old flow did.
+Until the person has a `political_figures` row, their session's `leaderId` is
+the Phase 1 id `user-<Supabase user id>` (never the bare uid). The content
+adapters show records owned by such an account under the same id
+(`leaderIdForOwner`, and `Project.leaderIds` / `Opportunity.leaderId` for an
+owner without a figure), so the politician workspace lists their records.
+`POST /api/auth/profile` only switches a citizen or organization to
+`user_type = 'political_figure'` (their own `user_profiles` row and
+`user_metadata`); it creates nothing. The person creates their figure row
+from the profile page (`PUT /api/content/leaders`): the store sets `user_id`
+to the caller, refuses a second row (409), and needs an office it can map to
+a Tracker `position` (400 otherwise). The next session read picks up the new
+`political_figures.id`.
 
 #### Admin user directory
 
@@ -149,6 +154,107 @@ answer 503.
 Accounts exist only in Supabase Auth. In memory mode the public pages work on
 sample data, but sign-in and sign-up answer 503 and there is no session.
 
+## Content
+
+`createTrackerContentRepository()` in `src/server/tracker/database.ts` composes
+the content slices (field mapping: `docs/content-mapping.md`):
+
+| Siasa | Tracker | Slice |
+|---|---|---|
+| leaders | `political_figures` | `src/server/tracker/content/leaders` |
+| projects, milestones | `initiatives` (+ `changemakers`), `milestones` | `.../content/projects` |
+| opportunities | `opportunities` | `.../content/opportunities` |
+| applications | `opportunity_applications` | `.../opportunities/applications.ts` |
+| saved opportunities | `saved_opportunities` (M8) | `.../opportunities/engagement.ts` |
+| Adly interest leads | `contact_submissions` | `.../opportunities/engagement.ts` |
+| media | `blogs` | `.../content/media` |
+| polls | `polls`, `poll_options`, `poll_votes` | `.../content/polls` |
+| products | `products` | `.../content/products` |
+| photos | Storage bucket `initiative-images` | `src/server/tracker/storage` |
+
+- Link arrays (`Leader.projectIds`, `Project.opportunityIds`,
+  `Project.milestoneIds`, ...) and slugs are derived on read. The leaders
+  slice gets them from a links provider built on `projectIdsForFigures`,
+  `opportunityIdsByAuthor`, `mediaIdsByAuthor`, `pollIdsByOwner` and
+  `productIdsByAuthor`. The content service therefore skips its memory-mode
+  relinking and slug numbering in Tracker mode.
+- Every record a content repository returns carries `ownerUserId` (row owner
+  auth user id); `ownerUserIdOf()` reads it. `src/server/content/service.ts`
+  applies the Ownership rule with it, with `projectOwnerUserId()` for projects
+  and milestones, and with the figure's `user_id` for leaders. Row-level
+  security checks the same thing again on every write.
+- `content.reset()` and `resetAll()` answer 403: Tracker data is never reset
+  from Siasa. `POST /api/content/reset` works in memory mode only.
+- Writes that had to leave out data (a Tracker migration not applied yet)
+  return `warnings: string[]` next to `item`; the forms show them.
+- Repository errors carry an HTTP `status` (`LeaderStoreError`,
+  `ProjectAccessError` 403 / `ProjectInputError` 400 / `ProjectConflictError`
+  409, `TrackerWriteError`, `ContentWriteError`, `ImageUploadError`).
+  `failureFromError()` in `src/server/http-errors.ts` turns them into the API
+  answer. Database text never reaches the browser: 5xx and errors without a
+  status become a generic message (logged on the server), and a 4xx whose
+  message quotes Postgres is replaced by a generic one for that status.
+- Polls: `POST /api/content/polls/vote` `{ pollId, optionId }` votes through
+  the `cast_poll_vote` RPC (one vote per account; 503 until migration M7);
+  `GET /api/content/polls/vote?pollId=` answers `{ optionId, results }` (the
+  caller's vote and the `poll_results` tallies).
+- Uploads: `POST /api/uploads` checks `Content-Length` (5 MB plus multipart
+  framing) before reading the body, then `storeTrackerImage()` validates the
+  bytes and stores them under `<auth uid>/<yyyy-mm>/` with the user's session.
+- Applications: "mine" is `listForApplicant(userId)`, "received" is
+  `listForAuthor(userId)` (any account that published a listing), and admins
+  get `listAll()` (service role, admin re-checked in the store). Withdrawing
+  answers 501 until M6 adds the applicant DELETE policy. Saved opportunities
+  answer 503 until M8 creates `saved_opportunities`.
+
+## Adly and ads
+
+Adly campaigns and dashboard paid ads are both `adly_campaigns` rows
+(`src/server/tracker/adly`). Routes:
+
+| Route | Does |
+|---|---|
+| `GET /api/ads/campaigns?scope=mine\|all` | The caller's ads (or all, admin) with the pricing quote and wallet balance |
+| `POST /api/ads/campaigns` | Create an ad from the dashboard composer |
+| `POST /api/ads/campaigns/[id]` | `{ action: approve \| reject \| publish \| pause \| resume \| stop \| sync, note? }` |
+| `POST /api/ads/publish/[id]` | Owner publishes (or republishes) through the Tracker publish edge functions; `{ channel? }` |
+| `GET /api/adly/workspace` | Adly workspace: campaigns from the Tracker, studio content from memory |
+| `PUT\|DELETE /api/adly/plans` | Save a campaign plan; delete a draft or archive a published campaign |
+| `GET\|POST /api/adly/agent/[id]` | Adly agent chat, recommendations and channel results |
+| `POST /api/adly/sync/[id]` | Pull live impressions, clicks and spend (`sync-ad-insights`) |
+
+- Siasa-only fields live under `adly_campaigns.metadata.siasa`, which the
+  Tracker ignores: `leader_id`, `objective`, `start_date`, `end_date`,
+  `image_url`, `estimated_reach`, `source` (`ads` / `adly`), `review` (the
+  admin approval gate), `policy_review`, `publishing` (one publish at a time)
+  and `unpaid` (networks that accepted the ad but whose wallet debit failed;
+  returned as `warnings` by the publish routes and shown on the campaign).
+- Network credentials (`GADS_*`, `X_*`, `META_*`, `TIKTOK_*`,
+  `OPENAI_API_KEY`) are Supabase function secrets in the Tracker project
+  only. Siasa holds none.
+- `ADS_REQUIRE_APPROVAL` (default true) makes an admin approve before the
+  owner can publish. `ADS_DRY_RUN=true` asks the edge functions for a dry run:
+  an audit row only, nothing is created on a network or charged.
+- The Adly studio's posters, simulations and creatives still use the memory
+  adapter.
+- Memory mode keeps a simulated paid-ads flow (`src/server/ads/service.ts`)
+  that never contacts a network.
+
+## Wallet
+
+The wallet routes run on the Tracker wallet (`src/server/tracker/wallet`):
+
+| Route | Does |
+|---|---|
+| `GET /api/wallet/payments` | Balance, movements and unfinished top-ups of the signed-in user |
+| `POST /api/wallet/payments/top-up` | `{ amount, method? }`: starts a Paystack top-up, answers `{ checkoutUrl, reference }` |
+| `POST /api/wallet/payments/verify` | `{ reference }`: confirms a top-up when the user returns from Paystack |
+| `POST /api/wallet/payments/withdraw` | `{ amount, method, destination }`: `request_withdrawal` RPC |
+
+The legacy `/api/wallet`, `/api/wallet/top-up` and `/api/wallet/withdraw`
+answer 410 in Tracker mode, and the Tracker repositories have no wallet or
+ad-campaign store (they throw), so nothing can fall back to a memory wallet.
+
 ## Money
 
 The Tracker's wallet is real money. Siasa never writes wallet balances itself.
@@ -166,4 +272,5 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...        # publishable key
 SUPABASE_SERVICE_ROLE_KEY=...            # server only; admin pages need it
 ```
 
-Leave them unset, or set `MTAJI_STORE=memory`, to run on sample data.
+Leave them unset, or set `MTAJI_STORE=memory`, to run on sample data. The
+other settings (ads, site URL) are listed in the README.

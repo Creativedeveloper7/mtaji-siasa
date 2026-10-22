@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "images.unsplash.com",
       },
-      // Photos uploaded through /api/uploads (Supabase Storage, public "media" bucket)
+      // Photos uploaded through /api/uploads (Tracker Supabase Storage, public "initiative-images" bucket)
       {
         protocol: "https",
         hostname: "*.supabase.co",

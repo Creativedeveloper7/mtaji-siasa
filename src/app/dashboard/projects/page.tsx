@@ -51,7 +51,6 @@ export default function PoliticianProjectsPage() {
     getProjectsByIds,
     upsertProject,
     deleteProject,
-    upsertLeader,
     upsertMilestone,
     deleteMilestone,
     getMilestonesByProject,
@@ -73,13 +72,6 @@ export default function PoliticianProjectsPage() {
 
   if (!leader) return null;
 
-  const linkProject = (project: Project) => {
-    const ids = leader.projectIds.includes(project.id)
-      ? leader.projectIds
-      : [...leader.projectIds, project.id];
-    upsertLeader({ ...leader, projectIds: ids });
-  };
-
   const save = async (seedMilestones = false) => {
     if (!editing) return;
     if (!editing.name.trim()) {
@@ -100,7 +92,9 @@ export default function PoliticianProjectsPage() {
       setError(result.error);
       return;
     }
-    linkProject(saved);
+    // The server links the project to its leaders. On the Tracker a new project gets a new id.
+    const projectId = result.item?.id ?? saved.id;
+    if (result.warnings?.length) alert(result.warnings.join("\n"));
 
     if (seedMilestones && !saved.milestoneIds.length) {
       const titles = [
@@ -116,7 +110,7 @@ export default function PoliticianProjectsPage() {
         ids.push(id);
         upsertMilestone({
           id,
-          projectId: saved.id,
+          projectId,
           number: i + 1,
           date: saved.startDate,
           title,
@@ -124,7 +118,6 @@ export default function PoliticianProjectsPage() {
           status: i === 0 ? "current" : "upcoming",
         });
       });
-      upsertProject({ ...saved, milestoneIds: ids });
     }
     setEditing(null);
   };
@@ -194,10 +187,6 @@ export default function PoliticianProjectsPage() {
                     void deleteMilestone(m.id)
                   );
                   deleteProject(p.id);
-                  upsertLeader({
-                    ...leader,
-                    projectIds: leader.projectIds.filter((id) => id !== p.id),
-                  });
                 }}
               >
                 Delete

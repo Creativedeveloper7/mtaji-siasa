@@ -24,7 +24,7 @@ const emptyVision = (): Vision => ({
 });
 
 export default function PoliticianVisionPage() {
-  const { leader, isAspirant } = usePoliticianProfile();
+  const { leader, isAspirant, isDraft } = usePoliticianProfile();
   const { upsertLeader } = useContent();
   const [form, setForm] = useState<Vision>(emptyVision());
   const [saved, setSaved] = useState(false);
@@ -35,6 +35,20 @@ export default function PoliticianVisionPage() {
   }, [leader]);
 
   if (!leader) return null;
+
+  if (isDraft) {
+    return (
+      <div>
+        <AdminHeader
+          title="Vision"
+          description="Create your leader profile first (name and office). Your vision is saved on that profile."
+        />
+        <Button href="/dashboard/profile" variant="outline">
+          Go to profile
+        </Button>
+      </div>
+    );
+  }
 
   if (!isAspirant && leader.type !== "aspirant") {
     return (
@@ -50,8 +64,8 @@ export default function PoliticianVisionPage() {
     );
   }
 
-  const save = () => {
-    upsertLeader({
+  const save = async () => {
+    const result = await upsertLeader({
       ...leader,
       type: "aspirant",
       vision: {
@@ -61,6 +75,11 @@ export default function PoliticianVisionPage() {
         expectedImpact: form.expectedImpact.filter(Boolean),
       },
     });
+    if (!result.ok) {
+      alert(result.error);
+      return;
+    }
+    if (result.warnings?.length) alert(result.warnings.join("\n"));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };

@@ -22,13 +22,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        persistence,
-        error: error instanceof Error ? error.message : "Store check failed.",
-      },
-      { status: 503 }
-    );
+    console.error("[health] store check failed", error);
+    return NextResponse.json({ ok: false, persistence, error: "Store check failed." }, { status: 503 });
   }
 }

@@ -67,14 +67,24 @@ export default function AdminProjectsPage() {
 
   if (!ready) return <LoadingState />;
 
-  const save = () => {
-    if (!editing) return;
-    upsertProject({
-      ...editing,
-      slug: editing.slug || slugify(editing.name),
-      progress: Math.max(0, Math.min(100, Number(editing.progress) || 0)),
+  /** Saves the project; returns its stored id (a new Tracker project gets a new uuid), or null on error. */
+  const persist = async (project: Project): Promise<string | null> => {
+    const result = await upsertProject({
+      ...project,
+      slug: project.slug || slugify(project.name),
+      progress: Math.max(0, Math.min(100, Number(project.progress) || 0)),
     });
-    setEditing(null);
+    if (!result.ok) {
+      alert(result.error);
+      return null;
+    }
+    if (result.warnings?.length) alert(result.warnings.join("\n"));
+    return result.item?.id ?? project.id;
+  };
+
+  const save = async () => {
+    if (!editing) return;
+    if ((await persist(editing)) !== null) setEditing(null);
   };
 
   const addDefaultMilestones = (project: Project) => {
@@ -99,7 +109,6 @@ export default function AdminProjectsPage() {
         status: i === 0 ? "current" : "upcoming",
       });
     });
-    upsertProject({ ...project, milestoneIds: ids });
   };
 
   return (
@@ -176,11 +185,10 @@ export default function AdminProjectsPage() {
                 type="button"
                 variant="outline"
                 fullWidth
-                onClick={() => {
-                  const slug = editing.slug || slugify(editing.name);
-                  const saved = { ...editing, slug };
-                  upsertProject(saved);
-                  if (!saved.milestoneIds.length) addDefaultMilestones(saved);
+                onClick={async () => {
+                  const id = await persist(editing);
+                  if (id === null) return;
+                  if (!editing.milestoneIds.length) addDefaultMilestones({ ...editing, id });
                   setEditing(null);
                 }}
               >

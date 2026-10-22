@@ -135,7 +135,7 @@ export default function PoliticianOpportunitiesPage() {
             <td className="px-4 py-3 text-ink-muted max-w-[180px] truncate">
               {projects.find((p) => p.id === o.projectId)?.name ?? "—"}
             </td>
-            <td className="px-4 py-3 text-ink-muted">{o.deadline}</td>
+            <td className="px-4 py-3 text-ink-muted">{o.deadline || "Rolling"}</td>
             <td className="px-4 py-3">
               <Link
                 href={`/dashboard/applications?opportunity=${encodeURIComponent(o.id)}`}

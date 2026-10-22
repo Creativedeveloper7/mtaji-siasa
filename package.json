@@ -20,7 +20,6 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "server-only": "^0.0.1",
-    "sharp": "^0.35.4",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {

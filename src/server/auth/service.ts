@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthSession, UserRole } from "@/types/auth";
 import type { PublicUser } from "@/server/domain";
-import { slugify } from "@/lib/store";
 import { getRepositories, usesTracker } from "@/server";
 import { TrackerConfigError, userClient } from "@/server/tracker/clients";
 import {
@@ -65,15 +64,15 @@ export function phase1LeaderId(userId: string): string {
 }
 
 /**
- * Phase 2: leaders move to political_figures. Until then a politician with no
- * political_figures row gets a leader profile in the memory content store,
- * keyed by phase1LeaderId(userId) (see ensurePoliticianProfile).
+ * A politician with no political_figures row has no Leader yet. Their content
+ * still hangs off their auth user id, and the Tracker adapter shows it under
+ * the Phase 1 leader id `user-<uid>` (leaderIdForOwner), so the session uses
+ * that id for display and linking. Authorization never uses it (Ownership rule).
  */
 async function withPhase1Leader(session: AuthSession): Promise<AuthSession> {
   if (session.leaderId) return session;
-  const id = phase1LeaderId(session.userId);
-  const linked = await getRepositories().content.findLeader(id);
-  return linked ? { ...session, leaderId: linked.id } : session;
+  if (session.role !== "leader" && session.role !== "aspirant") return session;
+  return { ...session, leaderId: phase1LeaderId(session.userId) };
 }
 
 /** Load the session; a Tracker read failure is logged and surfaces as AccountUnavailable. */
@@ -326,11 +325,12 @@ async function promoteToLeader(userId: string): Promise<AuthSession | null> {
 }
 
 /**
- * Open the politician workspace. Phase 2: this moves to political_figures. For
- * now it never creates a political_figures row (Siasa's sign-up does not collect
- * the office and term the Tracker requires). It creates a leader in the memory
- * content store with id = the user's political_figures.id, or
- * phase1LeaderId(user id) when they have none.
+ * Open the politician workspace. A citizen or organization is switched to a
+ * political_figure account first. No political_figures row is created here:
+ * the Tracker needs an office the person has not entered yet. They create it
+ * from the profile page (PUT /api/content/leaders), which derives the
+ * position from the office text. Until then the session's leaderId is the
+ * Phase 1 id `user-<uid>`.
  */
 export async function ensurePoliticianProfile(
   current: AuthSession
@@ -345,41 +345,6 @@ export async function ensurePoliticianProfile(
   }
   // Never the bare user id (see phase1LeaderId).
   const leaderId = session.leaderId ?? phase1LeaderId(session.userId);
-  const content = getRepositories().content;
-  if (await content.findLeader(leaderId)) {
-    return { ok: true, session: { ...session, leaderId }, leaderId };
-  }
-  const aspirant = session.role === "aspirant";
-  await content.upsertLeader({
-    id: leaderId,
-    slug: slugify(session.fullName) || leaderId,
-    name: session.fullName,
-    honorific: aspirant ? "H.E." : "Hon.",
-    position: aspirant
-      ? "Political aspirant — profile in progress"
-      : "Elected leader — profile in progress",
-    type: aspirant ? "aspirant" : "elected",
-    county: "Nairobi",
-    photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80",
-    shortBio: "Complete your profile to showcase your development record.",
-    bio: "Welcome to your M-Taji Siasa politician workspace. Update your biography, publish projects with GIS evidence, and engage citizens through Faida.",
-    achievements: [],
-    social: {},
-    projectIds: [],
-    opportunityIds: [],
-    mediaIds: [],
-    pollIds: [],
-    productIds: [],
-    vision: aspirant
-      ? {
-          statement: "Add your vision statement for citizens to discover.",
-          manifesto: [],
-          priorities: [],
-          proposedProjects: [],
-          expectedImpact: [],
-        }
-      : undefined,
-  });
   return { ok: true, session: { ...session, leaderId }, leaderId };
 }
 

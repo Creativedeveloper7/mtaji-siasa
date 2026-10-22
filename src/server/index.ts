@@ -2,7 +2,7 @@ import { createMemoryRepositories } from "@/server/memory/database";
 import type { AppRepositories } from "@/server/repositories";
 import { createTrackerRepositories } from "@/server/tracker/database";
 
-const MEMORY_ADAPTER_VERSION = 7;
+const MEMORY_ADAPTER_VERSION = 8;
 
 type ServerSlot = {
   version: number;
