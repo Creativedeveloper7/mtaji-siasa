@@ -160,22 +160,39 @@ describe("listing status and deadline", () => {
     expect(opportunityStatusFromTracker(listing, deadline, NOW)).toBe(expected);
   });
 
+  const stored = (listing_status: string, deadline: string | null) => ({ listing_status, deadline });
+
   it("writes closed only when closing is meant", () => {
-    expect(listingStatusToTracker("open", "2026-12-01", "published", NOW)).toBe("published");
-    expect(listingStatusToTracker("closing-soon", "2026-10-25", "closed", NOW)).toBe("published");
+    expect(listingStatusToTracker("open", "2026-12-01", stored("published", "2026-12-01"), NOW)).toBe("published");
+    expect(listingStatusToTracker("closing-soon", "2026-10-25", stored("closed", "2026-10-25"), NOW)).toBe("published");
     expect(listingStatusToTracker(undefined, null, undefined, NOW)).toBe("published");
-    expect(listingStatusToTracker("closed", "2026-12-01", "published", NOW)).toBe("closed");
-    expect(listingStatusToTracker("closed", null, "published", NOW)).toBe("closed");
-    // Expired by deadline: the derived "closed" does not hide the listing.
-    expect(listingStatusToTracker("closed", "2026-10-01", "published", NOW)).toBe("published");
-    expect(listingStatusToTracker("closed", "2026-10-01", "closed", NOW)).toBe("closed");
+    // An explicit close of a live listing.
+    expect(listingStatusToTracker("closed", "2026-12-01", stored("published", "2026-12-01"), NOW)).toBe("closed");
+    expect(listingStatusToTracker("closed", null, stored("published", null), NOW)).toBe("closed");
+    // Stored closed stays closed.
+    expect(listingStatusToTracker("closed", "2026-10-01", stored("closed", "2026-10-01"), NOW)).toBe("closed");
+    expect(listingStatusToTracker("closed", "2026-12-01", stored("closed", "2026-10-01"), NOW)).toBe("closed");
+    // New rows: closed with a past deadline is the expired echo.
     expect(listingStatusToTracker("closed", "2026-10-01", undefined, NOW)).toBe("published");
+    expect(listingStatusToTracker("closed", "2026-12-01", undefined, NOW)).toBe("closed");
+  });
+
+  it("keeps an expired-but-published listing published when its deadline is extended", () => {
+    // Stored: published, deadline passed -> every read says "closed" (derived).
+    const row = stored("published", "2026-10-01");
+    expect(opportunityStatusFromTracker(row.listing_status, row.deadline, NOW)).toBe("closed");
+    // The editor echoes "closed" back with a new future deadline: must reopen, not close.
+    expect(listingStatusToTracker("closed", "2026-12-01", row, NOW)).toBe("published");
+    // Same echo without moving the deadline: still published (reads closed by date).
+    expect(listingStatusToTracker("closed", "2026-10-01", row, NOW)).toBe("published");
   });
 
   it("never writes a listing_status outside the CHECK list", () => {
     for (const status of ["open", "closing-soon", "closed", undefined] as const) {
       for (const deadline of [null, "2026-01-01", "2027-01-01"]) {
-        expect(LISTING_STATUSES).toContain(listingStatusToTracker(status, deadline, "closed", NOW));
+        for (const existing of [undefined, stored("closed", deadline), stored("published", deadline)]) {
+          expect(LISTING_STATUSES).toContain(listingStatusToTracker(status, deadline, existing, NOW));
+        }
       }
     }
   });
@@ -397,15 +414,15 @@ describe("application mapping", () => {
     expect(applicationStatusFromTracker(status)).toBe(expected);
   });
 
-  it("writes statuses, falling back to reviewed without M6", () => {
+  it("writes statuses and never downgrades shortlisted", () => {
     expect(applicationStatusToTracker("submitted")).toBe("pending");
     expect(applicationStatusToTracker("reviewing")).toBe("reviewed");
     expect(applicationStatusToTracker("shortlisted")).toBe("shortlisted");
-    expect(applicationStatusToTracker("shortlisted", false)).toBe("reviewed");
-    expect(applicationStatusToTracker("accepted", false)).toBe("accepted");
-    for (const status of ["submitted", "reviewing", "shortlisted", "accepted", "rejected"] as const) {
-      expect(LIVE_APPLICATION_STATUSES).toContain(applicationStatusToTracker(status, false));
+    expect(applicationStatusToTracker("accepted")).toBe("accepted");
+    for (const status of ["submitted", "reviewing", "accepted", "rejected"] as const) {
+      expect(LIVE_APPLICATION_STATUSES).toContain(applicationStatusToTracker(status));
     }
+    expect(LIVE_APPLICATION_STATUSES).not.toContain(applicationStatusToTracker("shortlisted"));
   });
 
   it("maps a live-shaped row with no M6 columns", () => {
@@ -469,8 +486,8 @@ describe("application mapping", () => {
   });
 
   it("review patch carries status and note only", () => {
-    expect(applicationReviewPatch({ ...app, status: "shortlisted" }, false)).toEqual({
-      base: { status: "reviewed" },
+    expect(applicationReviewPatch({ ...app, status: "shortlisted" })).toEqual({
+      base: { status: "shortlisted" },
       extra: { review_note: "Great" },
     });
   });

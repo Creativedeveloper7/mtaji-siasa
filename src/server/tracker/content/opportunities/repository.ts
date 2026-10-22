@@ -2,7 +2,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Opportunity } from "@/types";
 import type { ContentRepository } from "@/server/repositories";
 import type { Promisified } from "@/server/tracker/types";
+import { compareFigures } from "@/server/tracker/accounts";
 import { assignSlugs, findBySlug, isUuid } from "@/server/tracker/slug";
+import { phase1LeaderId, withOwner, type Owned } from "@/server/tracker/content/media/shared";
 import {
   opportunityFromRow,
   opportunityToRow,
@@ -15,6 +17,7 @@ import {
   defaultClients,
   TrackerWriteError,
   writeWithExtra,
+  type ExtraColumnsState,
   type OpportunityClients,
 } from "./support";
 
@@ -56,21 +59,43 @@ async function loadInitiatives(client: SupabaseClient, ids: string[]): Promise<M
 }
 
 /**
- * political_figures.id per author user id. Newest row wins, as in roles.ts.
- * Anon RLS only shows `status = 'active'` figures until M3, so an aspirant
- * author has no leaderId on public reads yet.
+ * political_figures.id per author user id. The OLDEST row wins (created_at,
+ * then id: compareFigures, the session's rule), so a figure row added later
+ * cannot take over an author's leaderId. Display only; authorization uses
+ * ownerUserId. Anon RLS only shows `status = 'active'` figures until M3, so an
+ * aspirant author has no leaderId on public reads yet.
  */
 export async function leaderIdsByUser(client: SupabaseClient, userIds: string[]): Promise<Map<string, string>> {
   if (!userIds.length) return new Map();
   const { data, error } = await client
     .from("political_figures")
     .select("id, user_id, created_at")
-    .in("user_id", userIds)
-    .order("created_at", { ascending: true });
+    .in("user_id", userIds);
   check(error, "Could not load leaders");
+  const rows = ((data ?? []) as Array<{ id: string; user_id: string | null; created_at?: string | null }>)
+    .slice()
+    .sort(compareFigures);
   const map = new Map<string, string>();
-  for (const row of (data ?? []) as Array<{ id: string; user_id: string }>) map.set(row.user_id, row.id);
+  for (const row of rows) if (row.user_id && !map.has(row.user_id)) map.set(row.user_id, row.id);
   return map;
+}
+
+/**
+ * Route slug per row. Slugs are assigned over the PUBLISHED rows only, so the
+ * author (whose session also sees their closed rows) and the public get the
+ * same slug for every published listing. A non-published row the reader can
+ * see gets its slug from the published set plus itself, so it never takes a
+ * published listing's slug (a clash gives it the `-<id8>` suffix).
+ */
+export function routeSlugs(rows: OpportunityRow[]): Map<string, string> {
+  const published = rows.filter((row) => row.listing_status === "published");
+  const slugs = assignSlugs(published, (row) => row.title);
+  for (const row of rows) {
+    if (slugs.has(row.id)) continue;
+    const own = assignSlugs([...published, row], (item) => item.title).get(row.id);
+    if (own) slugs.set(row.id, own);
+  }
+  return slugs;
 }
 
 /** Published blogs per initiative (Opportunity.relatedMediaIds). */
@@ -89,15 +114,19 @@ async function loadRelatedMedia(client: SupabaseClient, initiativeIds: string[])
   return map;
 }
 
-/** Maps rows to Siasa opportunities. `all` decides the slugs, `rows` what is returned. */
+/**
+ * Maps rows to Siasa opportunities. `all` decides the slugs (routeSlugs),
+ * `rows` what is returned. Each item carries `ownerUserId` (author_id), the
+ * auth user the service layer authorizes writes against.
+ */
 export async function hydrateOpportunities(
   client: SupabaseClient,
   all: OpportunityRow[],
   rows: OpportunityRow[] = all,
   now: Date = new Date()
-): Promise<Opportunity[]> {
+): Promise<Owned<Opportunity>[]> {
   if (!rows.length) return [];
-  const slugs = assignSlugs(all, (row) => row.title);
+  const slugs = routeSlugs(all);
   const initiativeIds = unique(rows.map((row) => row.initiative_id));
   const [initiatives, leaders, media] = await Promise.all([
     loadInitiatives(client, initiativeIds),
@@ -105,13 +134,17 @@ export async function hydrateOpportunities(
     loadRelatedMedia(client, initiativeIds),
   ]);
   return rows.map((row) =>
-    opportunityFromRow(row, {
-      slug: slugs.get(row.id) ?? row.id.slice(0, 8),
-      initiative: row.initiative_id ? initiatives.get(row.initiative_id) : undefined,
-      leaderId: row.author_id ? leaders.get(row.author_id) : undefined,
-      relatedMediaIds: row.initiative_id ? media.get(row.initiative_id) : undefined,
-      now,
-    })
+    withOwner(
+      opportunityFromRow(row, {
+        slug: slugs.get(row.id) ?? row.id.slice(0, 8),
+        initiative: row.initiative_id ? initiatives.get(row.initiative_id) : undefined,
+        // No figure: the author's Phase 1 leader id `user-<uid>` (display and linking only).
+        leaderId: row.author_id ? leaders.get(row.author_id) ?? phase1LeaderId(row.author_id) : undefined,
+        relatedMediaIds: row.initiative_id ? media.get(row.initiative_id) : undefined,
+        now,
+      }),
+      row.author_id
+    )
   );
 }
 
@@ -160,7 +193,12 @@ export function createOpportunityRepository(
   clients: OpportunityClients = defaultClients(),
   options: { now?: () => Date } = {}
 ): OpportunityRepository {
-  const state = { extraMissing: false };
+  const state: ExtraColumnsState = {};
+  const extraColumns = (values: Record<string, unknown>) => ({
+    values,
+    migration: "Tracker migration M5b",
+    now: () => now().getTime(),
+  });
   const now = options.now ?? (() => new Date());
 
   async function listAll(): Promise<Opportunity[]> {
@@ -198,7 +236,7 @@ export function createOpportunityRepository(
     findOpportunity: async (id) => (isUuid(id) ? findWhere((rows) => rows.find((row) => row.id === id)) : undefined),
 
     findOpportunityBySlug: async (slug) =>
-      findWhere((rows) => findBySlug(rows, assignSlugs(rows, (row) => row.title), slug)),
+      findWhere((rows) => findBySlug(rows, routeSlugs(rows), slug)),
 
     listOpportunitiesByIds: async (ids) => {
       const wanted = ids.filter(isUuid);
@@ -221,7 +259,7 @@ export function createOpportunityRepository(
         if (existing.author_id !== userId) {
           throw new TrackerWriteError("Only the author can edit this opportunity.", "forbidden");
         }
-        const { data, error } = await writeWithExtra(state, (withExtra) =>
+        const { data, error } = await writeWithExtra(state, extraColumns(write.extra), (withExtra) =>
           client
             .from("opportunities")
             .update({
@@ -240,7 +278,7 @@ export function createOpportunityRepository(
       }
 
       // Siasa ids like "opp-…" are not uuids; the database assigns the id.
-      const { data, error } = await writeWithExtra(state, (withExtra) =>
+      const { data, error } = await writeWithExtra(state, extraColumns(write.extra), (withExtra) =>
         client
           .from("opportunities")
           .insert({

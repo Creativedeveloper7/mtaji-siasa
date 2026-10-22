@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import type { AdCampaign, AdCampaignStatus, AdPlatformRun } from "@/types";
+import type { TrackerAdExtras } from "@/server/tracker/adly/mapping";
 
 export const AD_STATUS: Record<AdCampaignStatus, { label: string; tone: "neutral" | "success" | "warning" | "accent" | "error" }> = {
   pending_approval: { label: "Awaiting approval", tone: "warning" },
@@ -47,7 +48,8 @@ export function AdCampaignCard({
   approvalPublishes = true,
   onAction,
 }: {
-  campaign: AdCampaign;
+  /** Tracker extras (unpaid, changes waiting for review, archived-but-on-network) are optional. */
+  campaign: AdCampaign & TrackerAdExtras;
   busy?: AdCardAction | null;
   admin?: boolean;
   /** Shown to admins: who the ad is for */
@@ -57,7 +59,12 @@ export function AdCampaignCard({
   approvalPublishes?: boolean;
   onAction: (action: AdCardAction) => void;
 }) {
-  const status = AD_STATUS[campaign.status];
+  // Archived in Siasa never means stopped on the network.
+  const status = campaign.networkMayBeRunning
+    ? { label: "Archived (check network)", tone: "warning" as const }
+    : AD_STATUS[campaign.status];
+  const unpaidKes = campaign.unpaidKes ?? 0;
+  const awaitingReview = campaign.status === "pending_approval" || Boolean(campaign.changesPendingReview);
   const running = campaign.status === "active" || campaign.status === "paused";
   const spent = campaign.platforms.reduce((sum, r) => sum + (r.spentKes ?? 0), 0);
   const impressions = campaign.platforms.reduce((sum, r) => sum + (r.impressions ?? 0), 0);
@@ -83,7 +90,11 @@ export function AdCampaignCard({
                   : ` · ${campaign.durationDays} day${campaign.durationDays === 1 ? "" : "s"}`}
               </p>
             </div>
-            <StatusBadge status={status.label} tone={status.tone} pulse={campaign.status === "active"} />
+            <div className="flex flex-wrap items-center gap-1.5">
+              {unpaidKes > 0 && <StatusBadge status="Unpaid" tone="error" />}
+              {campaign.changesPendingReview && <StatusBadge status="Changes awaiting approval" tone="warning" />}
+              <StatusBadge status={status.label} tone={status.tone} pulse={campaign.status === "active"} />
+            </div>
           </div>
 
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-caption sm:grid-cols-4">
@@ -93,7 +104,18 @@ export function AdCampaignCard({
             <Stat label="Clicks" value={number(clicks)} />
             {spent > 0 && <Stat label="Spent" value={formatCurrency(Math.round(spent))} />}
             {campaign.refundedKes > 0 && <Stat label="Refunded" value={formatCurrency(campaign.refundedKes)} />}
+            {unpaidKes > 0 && <Stat label="Unpaid" value={formatCurrency(unpaidKes)} />}
           </dl>
+
+          {unpaidKes > 0 && (
+            <p className="mt-3 flex items-start gap-1 rounded-md border border-error/30 bg-error-muted px-3 py-2 text-caption text-error" role="alert">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+              <span>
+                Unpaid: {(campaign.unpaid ?? []).map((u) => `${u.provider === "x" ? "X" : u.provider.charAt(0).toUpperCase() + u.provider.slice(1)} ${formatCurrency(u.amountKes)}`).join(", ") || formatCurrency(unpaidKes)}
+                {" "}— the network accepted the ad but the wallet charge failed. Not retried automatically.
+              </span>
+            </p>
+          )}
 
           {campaign.statusNote && <p className="mt-3 text-caption text-ink-muted">{campaign.statusNote}</p>}
 
@@ -130,7 +152,7 @@ export function AdCampaignCard({
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-border bg-bg-elevated px-4 py-3">
-        {campaign.status === "pending_approval" && admin && (
+        {awaitingReview && admin && (
           <>
             <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("reject")}>
               {busy === "reject" ? "Rejecting…" : approvalPublishes ? "Reject & refund" : "Reject"}

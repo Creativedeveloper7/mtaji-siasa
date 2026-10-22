@@ -13,6 +13,7 @@ import {
   currentUserId,
   defaultClients,
   isMissingTable,
+  requireAdmin,
   TrackerWriteError,
   type OpportunityClients,
 } from "./support";
@@ -79,7 +80,8 @@ export function createEngagementRepository(
 
     listAdlyInterests: async () => {
       // Service role: contact_submissions has no SELECT policy at all.
-      // Admin only; the route must check session.role === 'admin' first.
+      // Admin only, verified here with auth.getUser() (401/403 otherwise).
+      await requireAdmin(clients);
       const admin = await clients.service();
       const { data, error } = await admin
         .from("contact_submissions")

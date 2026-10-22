@@ -15,7 +15,7 @@ export async function GET(_request: Request, context: Context) {
   const editor = await adlyEditor();
   if (editor.response) return editor.response;
   const { id } = await context.params;
-  return send(await readConversation(id));
+  return send(await readConversation(id, editor.actor.userId));
 }
 
 /** One chat turn: { message }. */
@@ -24,7 +24,7 @@ export async function POST(request: Request, context: Context) {
   const editor = await adlyEditor();
   if (editor.response) return editor.response;
   const { id } = await context.params;
-  return send(await chatWithAdly(id, await readBody(request)));
+  return send(await chatWithAdly(id, await readBody(request), editor.actor.userId));
 }
 
 /** Recommendation status: { id, status: "dismissed" | "applied" }. */
@@ -33,5 +33,5 @@ export async function PATCH(request: Request, context: Context) {
   const editor = await adlyEditor();
   if (editor.response) return editor.response;
   const { id } = await context.params;
-  return send(await setRecommendation(id, await readBody(request)));
+  return send(await setRecommendation(id, await readBody(request), editor.actor.userId));
 }

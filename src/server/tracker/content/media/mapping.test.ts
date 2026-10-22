@@ -18,6 +18,8 @@ import {
   isMissingColumnError,
   isMissingFunctionError,
   leaderIdForOwner,
+  ownerUserIdOf,
+  withOwner,
   nullIfEmpty,
   pickByIds,
 } from "./shared";
@@ -218,19 +220,33 @@ describe("blogWrite", () => {
 });
 
 describe("shared helpers", () => {
-  it("picks the newest figure per user and derives leaderId", () => {
+  it("picks the OLDEST figure per user (the session's rule) and derives leaderId", () => {
     const figures = indexFiguresByUser([
-      { id: "old", user_id: AUTHOR, name: "Old", created_at: "2025-01-01" },
-      { id: FIGURE, user_id: AUTHOR, name: "New", created_at: "2026-01-01" },
+      { id: "newer", user_id: AUTHOR, name: "Added later", created_at: "2026-01-01" },
+      { id: FIGURE, user_id: AUTHOR, name: "First", created_at: "2025-01-01" },
       { id: "seeded", user_id: null, name: "No account" },
     ]);
     expect(figures.get(AUTHOR)?.id).toBe(FIGURE);
     expect(figures.size).toBe(1);
     expect(leaderIdForOwner(AUTHOR, figures)).toBe(FIGURE);
+    // No figure: the Phase 1 leader id, never the bare uid.
     expect(leaderIdForOwner("44444444-4444-4444-8444-444444444444", figures)).toBe(
-      "44444444-4444-4444-8444-444444444444"
+      "user-44444444-4444-4444-8444-444444444444"
     );
     expect(leaderIdForOwner(null, figures)).toBeUndefined();
+  });
+  it("breaks created_at ties by id, like compareFigures", () => {
+    const figures = indexFiguresByUser([
+      { id: "b-figure", user_id: AUTHOR, name: "B", created_at: "2025-01-01" },
+      { id: "a-figure", user_id: AUTHOR, name: "A", created_at: "2025-01-01" },
+    ]);
+    expect(figures.get(AUTHOR)?.id).toBe("a-figure");
+  });
+  it("exposes the owner's auth user id on a record", () => {
+    const owned = withOwner({ id: "x" }, AUTHOR);
+    expect(ownerUserIdOf(owned)).toBe(AUTHOR);
+    expect(ownerUserIdOf(withOwner({ id: "y" }, null))).toBeUndefined();
+    expect(ownerUserIdOf({ id: "z" })).toBeUndefined();
   });
   it("converts dates to and from Nairobi time", () => {
     expect(eatDate("2026-10-21T21:30:00Z")).toBe("2026-10-22");

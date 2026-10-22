@@ -384,3 +384,61 @@ describe("publish audit on runs", () => {
     expect(draft.platforms[0]).toMatchObject({ status: "pending", error: "Not live (dry run): Missing secrets: GADS_DEV_TOKEN" });
   });
 });
+
+describe("review fixes", () => {
+  it("L3: both views end on start + duration − 1", async () => {
+    const { campaignEndDate } = await import("@/server/tracker/adly/mapping");
+    expect(campaignEndDate("2026-10-10", 1)).toBe("2026-10-10");
+    expect(campaignEndDate("2026-10-10", 14)).toBe("2026-10-23");
+    const ad = rowToAdCampaign(trackerLiveRow); // last_publish_at 2026-10-10, 14 days
+    const c = rowToCampaign({ ...trackerLiveRow, metadata: { ...trackerLiveRow.metadata, siasa: { start_date: "2026-10-10" } } });
+    expect(ad.endDate).toBe("2026-10-23");
+    expect(c.endDate).toBe("2026-10-23");
+  });
+
+  it("L4: a stored budget of 0 stays 0 on a round trip; only a missing budget defaults", async () => {
+    const { normalizePlan } = await import("@/server/tracker/adly/plan");
+    expect(normalizePlan({ ...trackerDraftRow, budget: 0 }).budgetKes).toBe(0);
+    expect(normalizePlan({ ...trackerDraftRow, budget: "0" }).budgetKes).toBe(0);
+    expect(normalizePlan({ ...trackerDraftRow, budget: null }).budgetKes).toBe(5000);
+    const row = { ...trackerDraftRow, budget: 0 };
+    expect(campaignToRow(rowToCampaign(row), row).budget).toBe(0);
+  });
+
+  it("L5: project_title follows projectId", () => {
+    const asSiasa = rowToCampaign(trackerLiveRow);
+    const same = campaignToRow(asSiasa, trackerLiveRow);
+    expect(same.metadata!.project_title).toBe("Kondele water kiosks");
+    const moved = campaignToRow({ ...asSiasa, projectId: "11111111-2222-4333-8444-555555555555" }, trackerLiveRow);
+    expect(moved.metadata!.project_title ?? null).toBeNull(); // cleared, not the old project's title
+    const titled = campaignToRow({ ...asSiasa, projectId: "11111111-2222-4333-8444-555555555555" }, trackerLiveRow, {
+      projectTitle: "New project",
+    });
+    expect(titled.metadata!.project_title).toBe("New project");
+  });
+
+  it("H1: a new row is always a draft and updates never carry a status", () => {
+    const asSiasa = rowToCampaign(trackerDraftRow);
+    expect(campaignToRow({ ...asSiasa, status: "active" }, null).status).toBe("draft");
+    expect(campaignToRow({ ...asSiasa, status: "completed" }, null).status).toBe("draft");
+    expect(campaignToRow({ ...asSiasa, status: "paused" }, trackerDraftRow).status).toBeUndefined();
+  });
+
+  it("H2: a Tracker-published row edited in Siasa needs a review; an unchanged save does not", () => {
+    const asSiasa = rowToCampaign(trackerLiveRow);
+    expect(readSiasaMeta(campaignToRow(asSiasa, trackerLiveRow).metadata).review).toBeUndefined();
+    const edited = campaignToRow({ ...asSiasa, budget: 900 }, trackerLiveRow);
+    expect(readSiasaMeta(edited.metadata).review?.state).toBe("pending");
+    const off = campaignToRow({ ...asSiasa, budget: 900 }, trackerLiveRow, { requireApproval: false });
+    expect(readSiasaMeta(off.metadata).review).toBeUndefined();
+  });
+
+  it("M2: preserveProviderIds keeps stored network ids", async () => {
+    const { preserveProviderIds, isProviderIdKey } = await import("@/server/tracker/adly/mapping");
+    const next = preserveProviderIds(trackerLiveRow.metadata, { x_campaign_id: undefined, x_tweet_id: "", other: 1 });
+    expect(next).toMatchObject({ x_campaign_id: "1x2y3z", x_line_item_id: "li-77", x_tweet_id: "180000000000", other: 1 });
+    expect(isProviderIdKey("google_ad_group_id")).toBe(true);
+    expect(isProviderIdKey("x_stub")).toBe(false);
+    expect(isProviderIdKey("google_valid")).toBe(false);
+  });
+});

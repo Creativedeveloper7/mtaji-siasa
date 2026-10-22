@@ -87,6 +87,11 @@ export interface ContentRepository {
   listProductsByLeader(leaderId: string): Promise<Product[]>;
   upsertProduct(item: Product): Promise<Product>;
   deleteProduct(id: string): Promise<boolean>;
+  /**
+   * Tracker only: the auth user id that owns a project (changemakers.user_id),
+   * for the Ownership rule (docs/tracker-backend.md). Absent in memory mode.
+   */
+  projectOwnerUserId?(projectId: string): Promise<string | undefined>;
 }
 
 export interface AdlyRepository {

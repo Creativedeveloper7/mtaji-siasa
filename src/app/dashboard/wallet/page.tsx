@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Package, PiggyBank, Users } from "lucide-react";
 import {
   AdminField,
@@ -98,7 +98,13 @@ function verificationNotice(v: TopUpVerification): Notice {
 }
 
 export default function PoliticianWalletPage() {
-  const { leader } = usePoliticianProfile();
+  const { leader, user, ready } = usePoliticianProfile();
+  // The Tracker wallet belongs to the signed-in account, not the Leader
+  // profile: an admin without a profile still has (and sees) their own wallet.
+  const ownerId = ready ? user?.userId ?? null : null;
+  const ownerLabel = leader ? `${leader.honorific} ${leader.name}` : "your account";
+  /** The Paystack return is verified once per page load, whatever re-renders follow. */
+  const returnHandled = useRef(false);
   const [wallet, setWallet] = useState<WalletView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [returnNotice, setReturnNotice] = useState<Notice | null>(null);
@@ -125,9 +131,10 @@ export default function PoliticianWalletPage() {
   }, []);
 
   useEffect(() => {
-    if (!leader) return;
-    let cancel = false;
-    (async () => {
+    if (!ownerId || returnHandled.current) return;
+    returnHandled.current = true;
+    // No cancel flag: this runs once, so its result must always be applied.
+    void (async () => {
       const params = new URLSearchParams(window.location.search);
       const returning = params.get("topup") === "1";
       const reference = params.get("reference") || params.get("trxref") || (returning ? readStoredRef() : null);
@@ -142,7 +149,6 @@ export default function PoliticianWalletPage() {
           "/api/wallet/payments/verify",
           { method: "POST", body: JSON.stringify({ reference }) }
         );
-        if (cancel) return;
         if (result.ok && result.data.verification) {
           setReturnNotice(verificationNotice(result.data.verification));
           if (result.data.verification.outcome !== "pending") storeRef(null);
@@ -152,15 +158,15 @@ export default function PoliticianWalletPage() {
             return;
           }
         } else {
+          // The reference is not kept: the top-up still appears under unfinished
+          // top-ups, and the webhook credits it if it was paid.
+          storeRef(null);
           setReturnNotice({ tone: "error", text: result.data.error || "Could not confirm the payment." });
         }
       }
-      if (!cancel) await load();
+      await load();
     })();
-    return () => {
-      cancel = true;
-    };
-  }, [leader, load]);
+  }, [ownerId, load]);
 
   const fundCards = useMemo(() => {
     const received = wallet?.received ?? { topUps: 0, crowdfunding: 0, shop: 0 };
@@ -191,7 +197,7 @@ export default function PoliticianWalletPage() {
 
   const totalReceived = fundCards.reduce((sum, s) => sum + s.amount, 0);
 
-  if (!leader) return null;
+  if (!ownerId) return null;
 
   if (!wallet) {
     return (
@@ -294,7 +300,7 @@ export default function PoliticianWalletPage() {
             ? `Wallet balance ${formatCurrency(wallet.balance)}, of which ${formatCurrency(
                 wallet.pendingWithdrawals
               )} is held for pending withdrawals.`
-            : `One pooled wallet for ${leader.honorific} ${leader.name}. Top-ups, donations and sales all land here and pay for your ads.`}
+            : `One pooled wallet for ${ownerLabel}. Top-ups, donations and sales all land here and pay for your ads.`}
         </p>
       </section>
 

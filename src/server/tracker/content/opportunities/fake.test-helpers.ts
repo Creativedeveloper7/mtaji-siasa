@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OpportunityClients } from "./support";
+import type { ContentClients } from "@/server/tracker/content/media/session";
 
 type Row = Record<string, unknown>;
 type Error = { code?: string; message: string } | null;
@@ -19,6 +20,12 @@ export interface FakeState {
   tables: Record<string, Row[]>;
   calls: FakeCall[];
   userId?: string;
+  /** app_metadata.role of the signed-in user (e.g. "admin"). */
+  appRole?: string;
+  /** rpc(name, args) handlers; a missing name answers PGRST202 like PostgREST. */
+  rpc?: Record<string, (args: Record<string, unknown>, state: FakeState) => { data: unknown; error: Error }>;
+  /** Runs before every query; lets a test change the tables between two requests. */
+  beforeQuery?: (call: FakeCall) => void;
   fail?: Array<{ table: string; op: FakeCall["op"]; error: NonNullable<Error>; when?: (call: FakeCall) => boolean }>;
 }
 
@@ -39,6 +46,7 @@ export function fakeClient(state: FakeState): SupabaseClient {
       });
 
     function run(): { data: unknown; error: Error } {
+      state.beforeQuery?.(call);
       state.calls.push(call);
       const failure = state.fail?.findIndex((item) => item.table === table && item.op === call.op && (!item.when || item.when(call)));
       if (failure !== undefined && failure >= 0) {
@@ -102,10 +110,40 @@ export function fakeClient(state: FakeState): SupabaseClient {
   const auth = {
     getUser: async () =>
       state.userId
-        ? { data: { user: { id: state.userId } }, error: null }
+        ? {
+            data: {
+              user: { id: state.userId, app_metadata: state.appRole ? { role: state.appRole } : {}, user_metadata: {} },
+            },
+            error: null,
+          }
         : { data: { user: null }, error: { message: "no session" } },
   };
-  return { from, auth } as unknown as SupabaseClient;
+  const rpc = async (name: string, args: Record<string, unknown>) => {
+    const handler = state.rpc?.[name];
+    if (!handler) return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name}` } };
+    return handler(args, state);
+  };
+  return { from, auth, rpc } as unknown as SupabaseClient;
+}
+
+/**
+ * ContentClients (media/polls/products) over the same fake. `user` is the
+ * signed-in session, `anon` the same tables without a user, `service` either
+ * its own state or the same one. Each client carries a `label`.
+ */
+export function fakeContentClients(state: FakeState, service?: FakeState): ContentClients & { labelOf(c: unknown): string } {
+  const labels = new WeakMap<object, string>();
+  const make = (label: string, s: FakeState) => {
+    const client = fakeClient(s);
+    labels.set(client, label);
+    return client;
+  };
+  return {
+    anon: () => make("anon", { ...state, userId: undefined, appRole: undefined }),
+    user: async () => make("user", state),
+    service: () => make("service", service ?? state),
+    labelOf: (client) => labels.get(client as object) ?? "?",
+  };
 }
 
 export function fakeClients(state: FakeState, service?: FakeState): OpportunityClients {

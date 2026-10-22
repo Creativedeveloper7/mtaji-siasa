@@ -1,5 +1,10 @@
-export { createProjectRepository, listProjectSatelliteSnapshots, ProjectAccessError } from "./repository";
-export type { ProjectRepository } from "./repository";
+export {
+  createProjectRepository,
+  listProjectSatelliteSnapshots,
+  ProjectAccessError,
+  ProjectConflictError,
+} from "./repository";
+export type { ProjectRepository, ProjectRepositoryOptions } from "./repository";
 export {
   leaderIdsForProjects,
   projectIdsByOwner,

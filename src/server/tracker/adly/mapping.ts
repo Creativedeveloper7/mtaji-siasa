@@ -88,7 +88,28 @@ export interface SiasaMeta {
   review?: SiasaReview;
   /** Adly policy pre-check for this campaign */
   policy_review?: PolicyReview;
+  /** Publish claim (one publish at a time per campaign); cleared when the publish ends */
+  publishing?: SiasaPublishClaim;
+  /** Networks that accepted the ad but whose wallet debit failed (not retried automatically) */
+  unpaid?: SiasaUnpaid[];
 }
+
+export interface SiasaPublishClaim {
+  /** ISO time the claim was taken */
+  at: string;
+  /** auth user id of the publisher */
+  by: string;
+}
+
+export interface SiasaUnpaid {
+  provider: string;
+  amountKes: number;
+  at: string;
+  error: string;
+}
+
+/** A publish claim older than this may be taken over (the publisher crashed or timed out). */
+export const PUBLISH_CLAIM_TTL_MS = 5 * 60_000;
 
 export function readSiasaMeta(metadata: unknown): SiasaMeta {
   const s = obj(obj(metadata).siasa);
@@ -108,7 +129,82 @@ export function readSiasaMeta(metadata: unknown): SiasaMeta {
         ? clean<SiasaReview>({ state, note: str(review.note), at: str(review.at) ?? "", by: str(review.by) })
         : undefined,
     policy_review: str(policy.id) && Array.isArray(policy.checks) ? (policy as unknown as PolicyReview) : undefined,
+    publishing: readClaim(s.publishing),
+    unpaid: readUnpaid(s.unpaid),
   });
+}
+
+function readClaim(raw: unknown): SiasaPublishClaim | undefined {
+  const o = obj(raw);
+  const at = str(o.at);
+  const by = str(o.by);
+  return at && by ? { at, by } : undefined;
+}
+
+function readUnpaid(raw: unknown): SiasaUnpaid[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: SiasaUnpaid[] = [];
+  for (const item of raw) {
+    const o = obj(item);
+    const provider = str(o.provider);
+    const amountKes = Number(o.amountKes);
+    if (!provider || !Number.isFinite(amountKes)) continue;
+    out.push({ provider, amountKes, at: str(o.at) ?? "", error: str(o.error) ?? "" });
+  }
+  return out.length ? out : undefined;
+}
+
+/** True when a publish claim is held and not yet stale. */
+export function isClaimActive(claim: SiasaPublishClaim | undefined, now = new Date()): boolean {
+  if (!claim) return false;
+  const t = Date.parse(claim.at);
+  return Number.isFinite(t) && now.getTime() - t < PUBLISH_CLAIM_TTL_MS;
+}
+
+// ---------------------------------------------------------------------------
+// provider ids
+
+/**
+ * Metadata keys the publish edge functions own: network ids such as
+ * google_campaign_id, google_ad_group_id, x_line_item_id, meta_adset_id.
+ */
+export function isProviderIdKey(key: string): boolean {
+  return /^(google|youtube|meta|tiktok|x)_([a-z0-9]+_)*ids?$/.test(key);
+}
+
+/** True when any network has a campaign id for this row (it reached a network). */
+export function hasProviderCampaign(row: Pick<AdlyCampaignRow, "metadata">): boolean {
+  const meta = obj(row.metadata);
+  return Object.values(PROVIDER_CAMPAIGN_KEY).some((key) => {
+    const v = meta[key];
+    return (typeof v === "string" && v.trim() !== "") || typeof v === "number";
+  });
+}
+
+/** Networks (labels) this row has a campaign id on. */
+export function providerCampaignChannels(row: Pick<AdlyCampaignRow, "metadata">): TrackerChannel[] {
+  const meta = obj(row.metadata);
+  return (Object.keys(PROVIDER_CAMPAIGN_KEY) as TrackerChannel[]).filter((ch) => {
+    const v = meta[PROVIDER_CAMPAIGN_KEY[ch]];
+    return (typeof v === "string" && v.trim() !== "") || typeof v === "number";
+  });
+}
+
+/**
+ * Never let a Siasa write drop or blank a network id the stored row has:
+ * copies every provider id key from `stored` into `next` when `next` lacks it
+ * (absent, undefined, null or empty string).
+ */
+export function preserveProviderIds(stored: unknown, next: Record<string, unknown>): Record<string, unknown> {
+  const base = obj(stored);
+  const out = { ...next };
+  for (const [key, value] of Object.entries(base)) {
+    if (!isProviderIdKey(key)) continue;
+    if (value === undefined || value === null || value === "") continue;
+    const incoming = out[key];
+    if (incoming === undefined || incoming === null || incoming === "") out[key] = value;
+  }
+  return out;
 }
 
 /** Merge a patch into metadata.siasa, keeping every other metadata key. */
@@ -280,6 +376,16 @@ function addDays(iso: string, days: number): string {
   return new Date(t + days * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** Last day a campaign runs: start + duration − 1 (a 1-day ad ends the day it starts). YYYY-MM-DD. */
+export function campaignEndDate(start: string, durationDays: number): string {
+  return addDays(start, Math.max(1, durationDays) - 1);
+}
+
+/** First day shown for a row: the Siasa start date, else the first publish, else creation. YYYY-MM-DD. */
+function campaignStartDate(row: Pick<AdlyCampaignRow, "metadata" | "created_at">): string {
+  return readSiasaMeta(row.metadata).start_date ?? (str(obj(row.metadata).last_publish_at) ?? row.created_at).slice(0, 10);
+}
+
 export interface RowContext {
   stats?: readonly AdChannelStatRow[];
   /** Leader shown when metadata.siasa.leader_id is missing (rows made in the Tracker) */
@@ -291,8 +397,7 @@ export function rowToCampaign(row: AdlyCampaignRow, ctx: RowContext = {}): Campa
   const plan = normalizePlan(row);
   const scope = parseCampaignScope(row.metadata);
   const creative = parseCreative(row.creative);
-  const meta = obj(row.metadata);
-  const start = siasa.start_date ?? (str(meta.last_publish_at) ?? row.created_at).slice(0, 10);
+  const start = campaignStartDate(row);
   return clean({
     id: row.id,
     slug: slugFrom(row.name, row.id),
@@ -304,7 +409,7 @@ export function rowToCampaign(row: AdlyCampaignRow, ctx: RowContext = {}): Campa
     projectId: scope.project_id ?? undefined,
     targeting: rowToGeoTargeting(row),
     startDate: start,
-    endDate: siasa.end_date ?? addDays(start, plan.durationDays - 1),
+    endDate: siasa.end_date ?? campaignEndDate(start, plan.durationDays),
     budget: plan.budgetKes,
     currency: "KES",
     creativeIds: hasCreativeCopy(creative) ? [creativeIdFor(row.id)] : [],
@@ -389,12 +494,90 @@ function sameArea(a: GeoTargeting, b: GeoTargeting): boolean {
   return norm(a.county) === norm(b.county) && norm(a.constituency) === norm(b.constituency) && norm(a.ward) === norm(b.ward);
 }
 
+// ---------------------------------------------------------------------------
+// approval after edits
+
+type FingerprintRow = Pick<AdlyCampaignRow, "name" | "budget" | "channels" | "targeting" | "creative" | "metadata" | "created_at">;
+
+/**
+ * Everything that changes what a network would publish: creative copy and
+ * media, budget, channels, targeting, landing URL, dates, image and project.
+ * Read through the same defaults the writers use, so a round-trip save of an
+ * unchanged campaign gives the same fingerprint.
+ */
+export function publishFingerprint(row: FingerprintRow): string {
+  const t = obj(row.targeting);
+  const siasa = readSiasaMeta(row.metadata);
+  const plan = normalizePlan(row);
+  const c = parseCreative(row.creative);
+  const start = campaignStartDate(row);
+  return JSON.stringify({
+    budget: plan.budgetKes,
+    channels: Array.from(new Set((row.channels ?? []).map((ch) => normalizeChannel(ch) ?? ch))).sort(),
+    locations: strArr(t.locations) ?? ["Kenya"],
+    age: str(t.age_group) ?? ALL_ADULTS_AGE_GROUP,
+    interests: strArr(t.interests) ?? ["civic engagement"],
+    days: plan.durationDays,
+    selections: parseLocationSelections(row.metadata),
+    creative: {
+      headline: c.headline ?? null,
+      body: c.body ?? null,
+      cta: c.cta ?? null,
+      hook: c.hook ?? null,
+      landing: c.landing_page_url ?? null,
+      media: (c.media ?? []).map((m) => m.path),
+      thumbnail: c.thumbnail_asset_id ?? null,
+      platforms: c.platforms ?? null,
+    },
+    start,
+    end: siasa.end_date ?? campaignEndDate(start, plan.durationDays),
+    image: siasa.image_url ?? null,
+    project: parseCampaignScope(row.metadata).project_id ?? null,
+  });
+}
+
+/**
+ * When a write changes anything publish-relevant, an approval no longer
+ * covers it: an approved review goes back to pending (with a note), and a
+ * campaign already on a network without a Siasa review gets one. Returns the
+ * write with metadata updated, or unchanged when nothing relevant changed.
+ */
+export function applyEditReview(
+  existing: AdlyCampaignRow,
+  write: RowWrite,
+  options: { requireApproval?: boolean; now?: Date } = {}
+): RowWrite {
+  if (options.requireApproval === false) return write;
+  const after = { ...existing, ...write } as AdlyCampaignRow;
+  if (publishFingerprint(existing) === publishFingerprint(after)) return write;
+  const metadata = write.metadata ?? existing.metadata;
+  const review = readSiasaMeta(metadata).review;
+  const at = (options.now ?? new Date()).toISOString();
+  let next: SiasaReview | undefined;
+  if (review?.state === "approved") {
+    const when = review.at ? ` on ${review.at.slice(0, 10)}` : "";
+    next = { state: "pending", at, note: `Changed after it was approved${when}; needs a new review.` };
+  } else if (!review && hasProviderCampaign(existing)) {
+    next = { state: "pending", at, note: "Changed after publishing; needs a review before it is republished." };
+  }
+  if (!next) return write;
+  return { ...write, metadata: withSiasaMeta(metadata, { review: next }) };
+}
+
+export interface CampaignWriteOptions {
+  /** Title of the project when `campaign.projectId` is set (looked up by the caller). */
+  projectTitle?: string;
+  /** ADS_REQUIRE_APPROVAL; edits reset an approval only when it is on. Default true. */
+  requireApproval?: boolean;
+  now?: Date;
+}
+
 /**
  * Columns for a Siasa Campaign. `existing` is the stored row on update; its
- * jsonb is merged, never replaced. `status` is left out on update when the
- * Tracker has already moved past draft (publish functions own live states).
+ * jsonb is merged, never replaced. Status is never taken from the client:
+ * new rows are always drafts and only the publish / review actions move it.
  */
-export function campaignToRow(campaign: Campaign, existing?: AdlyCampaignRow | null): RowWrite {
+export function campaignToRow(campaign: Campaign, existing?: AdlyCampaignRow | null, options: CampaignWriteOptions = {}): RowWrite {
   const targetingBase = obj(existing?.targeting);
   const metaBase = obj(existing?.metadata);
   // Siasa holds one area; a Tracker plan can hold several. Rewrite them only when the area changed.
@@ -411,10 +594,14 @@ export function campaignToRow(campaign: Campaign, existing?: AdlyCampaignRow | n
   let metadata: Record<string, unknown> = { ...metaBase };
   if (geo.selections.length) metadata.location_selections = geo.selections;
   else delete metadata.location_selections;
+  // The stored title only belongs to the stored project; a new project takes the caller's title.
+  const sameProject = Boolean(campaign.projectId) && parseCampaignScope(metaBase).project_id === campaign.projectId;
   metadata = withCampaignScope(metadata, {
     campaign_type: campaign.projectId ? "project" : "manifesto",
     project_id: campaign.projectId ?? null,
-    project_title: campaign.projectId ? str(metaBase.project_title) ?? null : null,
+    project_title: campaign.projectId
+      ? options.projectTitle ?? (sameProject ? str(metaBase.project_title) ?? null : null)
+      : null,
   });
   const reviewing = campaign.status === "in-review";
   const currentReview = readSiasaMeta(metaBase).review;
@@ -426,7 +613,7 @@ export function campaignToRow(campaign: Campaign, existing?: AdlyCampaignRow | n
     source: readSiasaMeta(metaBase).source ?? "adly",
     review:
       reviewing && currentReview?.state !== "approved"
-        ? { state: "pending", at: new Date().toISOString() }
+        ? { state: "pending", at: (options.now ?? new Date()).toISOString() }
         : currentReview,
   });
 
@@ -447,23 +634,25 @@ export function campaignToRow(campaign: Campaign, existing?: AdlyCampaignRow | n
   };
   if (!existing) {
     write.creative = {};
-    write.status = toTrackerStatus(campaign.status);
-  } else if (existing.status === "draft" || existing.status === "paused") {
-    const next = toTrackerStatus(campaign.status);
-    // Siasa cannot make a campaign live by editing it: that is what publishing does.
-    if (next === "draft" || next === "paused") write.status = next;
+    // Always a draft: only publishing makes a campaign live, and an admin's approval comes first.
+    write.status = "draft";
+    return write;
   }
-  return write;
+  return applyEditReview(existing, write, options);
 }
 
 /** Merge a Siasa AdCreative into the stored creative jsonb (media, platforms and brief kept). */
-export function creativeToRow(creative: AdCreative, existing: AdlyCampaignRow): RowWrite {
+export function creativeToRow(
+  creative: AdCreative,
+  existing: AdlyCampaignRow,
+  options: { requireApproval?: boolean; now?: Date } = {}
+): RowWrite {
   const base = obj(existing.creative);
   const platforms = obj(base.platforms);
   const google = obj(platforms.google);
   const x = obj(platforms.x);
   const metadata = withSiasaMeta(existing.metadata, { image_url: str(creative.image) });
-  return {
+  const write: RowWrite = {
     creative: {
       ...base,
       headline: creative.headline,
@@ -481,6 +670,7 @@ export function creativeToRow(creative: AdCreative, existing: AdlyCampaignRow): 
     },
     metadata,
   };
+  return applyEditReview(existing, write, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +690,8 @@ export function toAdCampaignStatus(row: Pick<AdlyCampaignRow, "status" | "metada
     case "failed":
       return "failed";
     case "archived":
+      // Archived in Siasa does not stop a network campaign; the card shows
+      // "Archived (check network)" for those (see networkMayBeRunning).
       return review?.state === "rejected" || review?.state === "cancelled" ? "rejected" : "stopped";
     default:
       if (review?.state === "rejected" || review?.state === "cancelled") return "rejected";
@@ -512,8 +704,14 @@ export function toAdCampaignStatus(row: Pick<AdlyCampaignRow, "status" | "metada
 const LIVE_APPROVAL = ["active", "enabled", "serving", "learning", "live", "eligible"];
 const FAILED_APPROVAL = ["failed", "rejected", "disapproved", "removed", "error", "sync_error"];
 
-export function statToRunStatus(stat: AdChannelStatRow | undefined, campaignStatus: string): AdPlatformRun["status"] {
-  if (campaignStatus === "completed" || campaignStatus === "archived") return stat ? "ended" : "pending";
+export function statToRunStatus(
+  stat: AdChannelStatRow | undefined,
+  campaignStatus: string,
+  onNetwork = false
+): AdPlatformRun["status"] {
+  // Archiving in Siasa does not end a network campaign: report what the network said.
+  if (campaignStatus === "completed" || (campaignStatus === "archived" && !onNetwork)) return stat ? "ended" : "pending";
+  if (campaignStatus === "archived" && !stat) return "pending";
   if (!stat) return campaignStatus === "live" || campaignStatus === "submitted" ? "live" : "pending";
   const s = stat.approval_status.toLowerCase();
   if (LIVE_APPROVAL.includes(s)) return "live";
@@ -532,6 +730,19 @@ function externalIdsFor(channel: TrackerChannel, metadata: Record<string, unknow
   return Object.keys(out).length ? out : undefined;
 }
 
+/** Tracker-only fields sent alongside an AdCampaign (the shared type has no room for them). */
+export interface TrackerAdExtras {
+  /** Networks that accepted the ad but whose wallet charge failed */
+  unpaid?: SiasaUnpaid[];
+  unpaidKes?: number;
+  /** Edited after approval / publishing: an admin has to review the changes */
+  changesPendingReview?: boolean;
+  /** Archived in Siasa but it has network campaign ids: it may still run there */
+  networkMayBeRunning?: boolean;
+}
+
+export type TrackerAdCampaign = AdCampaign & TrackerAdExtras;
+
 export interface AdCampaignContext extends RowContext {
   imageUrl?: string;
   /** Latest ad_publish_audit row per provider */
@@ -540,7 +751,7 @@ export interface AdCampaignContext extends RowContext {
   reachPerKes?: number;
 }
 
-export function rowToAdCampaign(row: AdlyCampaignRow, ctx: AdCampaignContext = {}): AdCampaign {
+export function rowToAdCampaign(row: AdlyCampaignRow, ctx: AdCampaignContext = {}): TrackerAdCampaign {
   const siasa = readSiasaMeta(row.metadata);
   const plan = normalizePlan(row);
   const creative = parseCreative(row.creative);
@@ -555,7 +766,7 @@ export function rowToAdCampaign(row: AdlyCampaignRow, ctx: AdCampaignContext = {
     .map((channel) => {
       const stat = stats.find((s) => s.provider === channel);
       const audit = ctx.audits?.find((a) => a.provider === channel);
-      let status = statToRunStatus(stat, row.status);
+      let status = statToRunStatus(stat, row.status, isPublishedTo(row, channel));
       const auditMessage = str(obj(audit?.response_payload).error) ?? str(audit?.error) ?? str(obj(audit?.response_payload).message);
       // The last publish attempt failed and the network shows nothing live.
       if (audit?.status === "failed" && status !== "live" && status !== "paused") status = "failed";
@@ -583,7 +794,10 @@ export function rowToAdCampaign(row: AdlyCampaignRow, ctx: AdCampaignContext = {
 
   const startDate = str(meta.last_publish_at) ?? siasa.start_date;
   const status = toAdCampaignStatus(row);
-  return clean({
+  const networkMayBeRunning = row.status === "archived" && hasProviderCampaign(row);
+  const changesPendingReview = row.status !== "draft" && row.status !== "archived" && siasa.review?.state === "pending";
+  const unpaidKes = (siasa.unpaid ?? []).reduce((sum, u) => sum + u.amountKes, 0);
+  return clean<TrackerAdCampaign>({
     id: row.id,
     leaderId: siasa.leader_id ?? ctx.fallbackLeaderId ?? "",
     createdBy: row.user_id,
@@ -600,17 +814,43 @@ export function rowToAdCampaign(row: AdlyCampaignRow, ctx: AdCampaignContext = {
     estimatedReach: siasa.estimated_reach ?? Math.round(plan.budgetKes * (ctx.reachPerKes ?? 10)),
     kesPerUsd: TRACKER_KES_PER_USD,
     status,
-    statusNote: adStatusNote(status, siasa),
+    statusNote: adStatusNote(status, siasa, { networkMayBeRunning, changesPendingReview, unpaidKes, channels: providerCampaignChannels(row) }),
     startDate,
-    endDate: startDate ? new Date(Date.parse(startDate) + plan.durationDays * 86_400_000).toISOString() : undefined,
+    // Same rule as the Adly workspace: start + duration − 1 (the last day it runs).
+    endDate: startDate ? siasa.end_date ?? campaignEndDate(startDate, plan.durationDays) : undefined,
     // The Tracker never refunds: it debits only after a network accepts the ad.
     refundedKes: 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
+    unpaid: siasa.unpaid,
+    unpaidKes: unpaidKes > 0 ? unpaidKes : undefined,
+    changesPendingReview: changesPendingReview || undefined,
+    networkMayBeRunning: networkMayBeRunning || undefined,
   });
 }
 
-function adStatusNote(status: AdCampaignStatus, siasa: SiasaMeta): string | undefined {
+function adStatusNote(
+  status: AdCampaignStatus,
+  siasa: SiasaMeta,
+  flags: { networkMayBeRunning: boolean; changesPendingReview: boolean; unpaidKes: number; channels: TrackerChannel[] }
+): string | undefined {
+  const notes: string[] = [];
+  if (flags.unpaidKes > 0) {
+    notes.push(
+      `Unpaid: KES ${flags.unpaidKes.toLocaleString()} — a network accepted the ad but the wallet charge failed. Top up; an admin will settle it.`
+    );
+  }
+  if (flags.networkMayBeRunning) {
+    const where = flags.channels.map(channelLabel).join(" and ") || "the network";
+    notes.push(`Archived in Siasa only. It may still be running on ${where}: check the network's Ads Manager.`);
+  }
+  if (flags.changesPendingReview) notes.push("Your changes are waiting for an admin to approve them before they can be republished.");
+  const base = baseStatusNote(status, siasa);
+  if (base) notes.push(base);
+  return notes.length ? notes.join(" ") : undefined;
+}
+
+function baseStatusNote(status: AdCampaignStatus, siasa: SiasaMeta): string | undefined {
   const note = siasa.review?.note;
   if (status === "pending_approval") return "Waiting for an admin to approve. Nothing is charged until you publish.";
   if (status === "launching") return "Approved. Publish to send it to the networks — your wallet is charged per network that accepts it.";

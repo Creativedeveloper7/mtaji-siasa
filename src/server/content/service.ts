@@ -1,7 +1,10 @@
 import type { AuthSession } from "@/types/auth";
 import type { Leader, MediaItem, Opportunity, Poll, Product, Project } from "@/types";
 import { slugify } from "@/lib/store";
-import { getRepositories } from "@/server";
+import { getRepositories, usesTracker } from "@/server";
+import { failureFromError } from "@/server/http-errors";
+import { ownerUserIdOf } from "@/server/tracker/content/media/shared";
+import { collectWarnings } from "@/server/tracker/warnings";
 import {
   isRecord,
   parseLeader,
@@ -62,14 +65,26 @@ function content() {
   return getRepositories().content;
 }
 
-export async function readSnapshot(): Promise<ContentSuccess> {
-  return ok({ ok: true, content: await content().snapshot() });
+export async function readSnapshot(): Promise<ContentResult> {
+  try {
+    return ok({ ok: true, content: await content().snapshot() });
+  } catch (error) {
+    return failureFromError(error, "read content");
+  }
 }
 
 export async function listCollection(
   collection: ContentCollection,
   params: URLSearchParams
 ): Promise<ContentResult> {
+  try {
+    return await readCollection(collection, params);
+  } catch (error) {
+    return failureFromError(error, `read ${collection}`);
+  }
+}
+
+async function readCollection(collection: ContentCollection, params: URLSearchParams): Promise<ContentResult> {
   const id = params.get("id")?.trim() || undefined;
   const slug = params.get("slug")?.trim() || undefined;
   const leaderId = params.get("leaderId")?.trim() || undefined;
@@ -129,11 +144,26 @@ function one(item: unknown, label: string): ContentResult {
   return ok({ ok: true, item });
 }
 
+/**
+ * Create or update one record. In Tracker mode the response carries
+ * `warnings` when the repository had to leave data out (a Tracker migration
+ * that is not applied yet). Repository errors become their HTTP status.
+ */
 export async function saveCollection(
   actor: ContentActor,
   collection: ContentCollection,
   body: unknown
 ): Promise<ContentResult> {
+  try {
+    const { result, warnings } = await collectWarnings(() => saveOne(actor, collection, body));
+    if (result.ok && warnings.length) return { ...result, body: { ...result.body, warnings } };
+    return result;
+  } catch (error) {
+    return failureFromError(error, `save ${collection}`);
+  }
+}
+
+async function saveOne(actor: ContentActor, collection: ContentCollection, body: unknown): Promise<ContentResult> {
   if (collection === "leaders") return saveLeader(actor, body);
   if (collection === "projects") return saveProject(actor, body);
   if (collection === "milestones") return saveMilestone(actor, body);
@@ -149,6 +179,14 @@ export async function deleteCollection(
   id: string
 ): Promise<ContentResult> {
   if (!id) return fail(400, "id is required.");
+  try {
+    return await deleteOne(actor, collection, id);
+  } catch (error) {
+    return failureFromError(error, `delete ${collection}`);
+  }
+}
+
+async function deleteOne(actor: ContentActor, collection: ContentCollection, id: string): Promise<ContentResult> {
   if (collection === "leaders") return deleteLeader(actor, id);
   if (collection === "projects") return deleteProject(actor, id);
   if (collection === "milestones") return deleteMilestone(actor, id);
@@ -160,13 +198,24 @@ export async function deleteCollection(
 
 async function saveLeader(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = content();
+  const tracker = usesTracker();
   const requestedId = isId(body);
   const existing = requestedId ? await store.findLeader(requestedId) : undefined;
-  if (requestedId && !existing) {
-    /* create with the caller-supplied id */
-  }
-  const parsed = parseLeader(body, existing);
+  const parsed = parseLeader(body, existing, { stockPhoto: !tracker });
   if (typeof parsed === "string") return fail(400, parsed);
+
+  if (tracker) {
+    // Ownership rule: the figure's user_id against the verified session, or admin.
+    if (existing && !ownsByUser(actor, existing)) {
+      return fail(403, "You can only edit your own leader profile.");
+    }
+    // A politician may create their own political_figures row (the store sets
+    // user_id to the caller and refuses a second one). Slug and link arrays
+    // are derived by the Tracker adapter, so they are not computed here.
+    const saved = await store.upsertLeader(parsed);
+    return ok({ ok: true, item: saved }, existing ? 200 : 201);
+  }
+
   if (!existing && !isAdmin(actor)) {
     return fail(403, "Only an admin can create a leader profile.");
   }
@@ -191,13 +240,28 @@ async function saveLeader(actor: ContentActor, body: unknown): Promise<ContentRe
 
 async function saveProject(actor: ContentActor, body: unknown): Promise<ContentResult> {
   const store = content();
+  const tracker = usesTracker();
   const requestedId = isId(body);
   const existing = requestedId ? await store.findProject(requestedId) : undefined;
-  if (existing && !ownsProject(actor, existing)) {
+  if (existing && !(await ownsProject(actor, existing))) {
     return fail(403, "You can only edit projects linked to your profile.");
   }
   const parsed = parseProject(body, existing);
   if (typeof parsed === "string") return fail(400, parsed);
+
+  if (tracker) {
+    const next: Project = { ...parsed };
+    // A new project always lists its creator. On update the leader list is
+    // checked by the Tracker adapter (only an admin may add a co-leader).
+    if (!existing && !isAdmin(actor) && !next.leaderIds.includes(actor.leaderId)) {
+      next.leaderIds = [...next.leaderIds, actor.leaderId];
+    }
+    // Checked on create only: a Tracker project owned by an organisation has no leader.
+    if (!existing && next.leaderIds.length === 0) return fail(400, "A project needs at least one leader.");
+    const saved = await store.upsertProject(next);
+    return ok({ ok: true, item: saved }, existing ? 200 : 201);
+  }
+
   const next: Project = {
     ...parsed,
     slug: await uniqueSlug(parsed.slug, parsed.id, async (slug) => (await store.findProjectBySlug(slug))?.id),
@@ -229,6 +293,8 @@ async function saveMilestone(actor: ContentActor, body: unknown): Promise<Conten
   const project = await store.findProject(parsed.projectId);
   if (!project) return fail(400, "Milestone project was not found.");
   const saved = await store.upsertMilestone(parsed);
+  // Tracker: Project.milestoneIds is derived from milestones.initiative_id.
+  if (usesTracker()) return ok({ ok: true, item: saved }, existing ? 200 : 201);
   if (!project.milestoneIds.includes(saved.id)) {
     await store.upsertProject({ ...project, milestoneIds: [...project.milestoneIds, saved.id] });
   }
@@ -249,7 +315,7 @@ type OwnedKind = "opportunity" | "media" | "poll" | "product";
 async function saveOwned(actor: ContentActor, body: unknown, kind: OwnedKind): Promise<ContentResult> {
   const requestedId = isId(body);
   const existing = requestedId ? await findOwned(kind, requestedId) : undefined;
-  if (requestedId && existing && !ownsRecord(actor, existing.leaderId)) {
+  if (requestedId && existing && !ownsRecord(actor, existing)) {
     return fail(403, "You can only edit records linked to your profile.");
   }
   const stamped =
@@ -259,11 +325,18 @@ async function saveOwned(actor: ContentActor, body: unknown, kind: OwnedKind): P
   if (!isAdmin(actor)) parsed.leaderId = actor.leaderId;
   if (kind === "product" && !parsed.leaderId) return fail(400, "Product leaderId is required.");
   const projectId = projectLinkOf(kind, parsed);
-  if (projectId) {
+  // Tracker: a link that is already stored (an admin may have set it) is kept without a new check.
+  const keptLink = usesTracker() && existing !== undefined && projectLinkOf(kind, existing) === projectId;
+  if (projectId && !keptLink) {
     if (!(await content().findProject(projectId))) return fail(400, "Linked project was not found.");
     if (!(await ownsProjectId(actor, projectId))) {
       return fail(403, "You can only link records to your own projects.");
     }
+  }
+  if (usesTracker()) {
+    // Slugs and the leader / project link arrays are derived by the Tracker adapter.
+    const saved = await writeOwned(kind, parsed);
+    return ok({ ok: true, item: saved }, existing ? 200 : 201);
   }
   parsed.slug = await uniqueSlug(parsed.slug || slugify(labelOf(parsed)) || parsed.id, parsed.id, (slug) => slugOwner(kind, slug));
   const saved = await writeOwned(kind, parsed);
@@ -286,12 +359,12 @@ async function deleteProject(actor: ContentActor, id: string): Promise<ContentRe
   const store = content();
   const project = await store.findProject(id);
   if (!project) return fail(404, "Project not found.");
-  if (!ownsProject(actor, project)) return fail(403, "You can only delete projects linked to your profile.");
+  if (!(await ownsProject(actor, project))) return fail(403, "You can only delete projects linked to your profile.");
   for (const milestone of await store.listMilestonesByProject(id)) {
     await store.deleteMilestone(milestone.id);
   }
-  await relinkLeaders("projectIds", id, []);
-  await store.deleteProject(id);
+  if (!usesTracker()) await relinkLeaders("projectIds", id, []);
+  if (!(await store.deleteProject(id))) return fail(403, "You can only delete projects linked to your profile.");
   return ok({ ok: true });
 }
 
@@ -302,7 +375,7 @@ async function deleteMilestone(actor: ContentActor, id: string): Promise<Content
   if (!(await ownsProjectId(actor, milestone.projectId))) {
     return fail(403, "You can only delete milestones on your projects.");
   }
-  const project = await store.findProject(milestone.projectId);
+  const project = usesTracker() ? undefined : await store.findProject(milestone.projectId);
   if (project) {
     await store.upsertProject({
       ...project,
@@ -316,32 +389,60 @@ async function deleteMilestone(actor: ContentActor, id: string): Promise<Content
 async function deleteOwned(actor: ContentActor, id: string, kind: OwnedKind): Promise<ContentResult> {
   const existing = await findOwned(kind, id);
   if (!existing) return fail(404, "Record not found.");
-  if (!ownsRecord(actor, existing.leaderId)) {
+  if (!ownsRecord(actor, existing)) {
     return fail(403, "You can only delete records linked to your profile.");
   }
-  await relinkLeaders(linkKey(kind), id, []);
-  if (kind === "opportunity") await relinkProjects("opportunityIds", id, undefined);
-  if (kind === "media") await relinkProjects("mediaIds", id, undefined);
+  if (!usesTracker()) {
+    await relinkLeaders(linkKey(kind), id, []);
+    if (kind === "opportunity") await relinkProjects("opportunityIds", id, undefined);
+    if (kind === "media") await relinkProjects("mediaIds", id, undefined);
+  }
   const store = content();
-  if (kind === "opportunity") await store.deleteOpportunity(id);
-  else if (kind === "media") await store.deleteMedia(id);
-  else if (kind === "poll") await store.deletePoll(id);
-  else await store.deleteProduct(id);
+  let removed: boolean;
+  if (kind === "opportunity") removed = await store.deleteOpportunity(id);
+  else if (kind === "media") removed = await store.deleteMedia(id);
+  else if (kind === "poll") removed = await store.deletePoll(id);
+  else removed = await store.deleteProduct(id);
+  // Row-level security can refuse a delete by matching no row.
+  if (!removed) return fail(403, "You can only delete records linked to your profile.");
   return ok({ ok: true });
 }
 
-function ownsProject(actor: ContentActor, project: Project): boolean {
-  return isAdmin(actor) || project.leaderIds.includes(actor.leaderId);
+/*
+ * Ownership. Tracker mode follows the Ownership rule (docs/tracker-backend.md):
+ * the row's owner auth user id against the verified session.userId, or admin.
+ * leaderId is never used for authorization there (political_figures.id is
+ * client-settable). Memory mode keeps the leaderId links of the demo data.
+ */
+
+/** Tracker: the record's ownerUserId (author / owner / figure user_id) is the caller. */
+function ownsByUser(actor: ContentActor, record: object | undefined): boolean {
+  if (isAdmin(actor)) return true;
+  const owner = ownerUserIdOf(record);
+  return Boolean(owner && owner === actor.userId);
+}
+
+async function ownsProject(actor: ContentActor, project: Project): Promise<boolean> {
+  if (isAdmin(actor)) return true;
+  if (usesTracker()) return ownsProjectByUser(actor, project.id);
+  return project.leaderIds.includes(actor.leaderId);
+}
+
+async function ownsProjectByUser(actor: ContentActor, projectId: string): Promise<boolean> {
+  const owner = await content().projectOwnerUserId?.(projectId);
+  return Boolean(owner && owner === actor.userId);
 }
 
 async function ownsProjectId(actor: ContentActor, projectId: string): Promise<boolean> {
   if (isAdmin(actor)) return true;
+  if (usesTracker()) return ownsProjectByUser(actor, projectId);
   const project = await content().findProject(projectId);
   return Boolean(project && project.leaderIds.includes(actor.leaderId));
 }
 
-function ownsRecord(actor: ContentActor, leaderId: string | undefined): boolean {
-  return isAdmin(actor) || leaderId === actor.leaderId;
+function ownsRecord(actor: ContentActor, record: OwnedRecord): boolean {
+  if (usesTracker()) return ownsByUser(actor, record);
+  return isAdmin(actor) || record.leaderId === actor.leaderId;
 }
 
 type OwnedRecord = (Opportunity | MediaItem | Poll | Product) & { slug: string; leaderId?: string };

@@ -177,7 +177,9 @@ describe("writes", () => {
   it("a leader cannot edit someone else's row", async () => {
     setup(OTHER);
     const store = createLeaderStore({ clients });
-    await expect(store.save(stranger, await leaderOf(IDS.owned))).rejects.toMatchObject({ status: 403 });
+    await expect(store.save(stranger, { ...(await leaderOf(IDS.owned)), shortBio: "Hijacked" })).rejects.toMatchObject({
+      status: 403,
+    });
     expect(calls().filter((c) => !c.endsWith(":select"))).toEqual([]);
   });
 
@@ -189,7 +191,7 @@ describe("writes", () => {
 
   it("a save that only changes derived link arrays writes nothing", async () => {
     setup(OTHER);
-    const store = createLeaderStore({ clients, newColumns: false });
+    const store = createLeaderStore({ clients });
     const leader = await leaderOf(IDS.owned);
     // relinkLeaders-style call from another leader's session
     const saved = await store.save(stranger, { ...leader, projectIds: ["x"] });
@@ -259,5 +261,111 @@ describe("writes", () => {
     const repo = createLeaderRepository({ clients });
     expect(await repo.deleteLeader(IDS.seeded)).toBe(true);
     expect(calls()).toContain("service:delete");
+  });
+});
+
+/** political_figures columns on the live table before migration 20261022150000. */
+const LIVE_FIGURE_COLUMNS = [
+  "id", "user_id", "name", "position", "county", "constituency", "ward", "term_start", "term_end",
+  "term_years", "manifesto", "commissioned_projects", "total_investment", "projects_by_category",
+  "status", "created_at", "updated_at", "slug",
+];
+
+describe("migration-adaptive writes (findings 4, 5)", () => {
+  it("before the migration: retries without the new columns and reports what was not saved", async () => {
+    setup(OWNER);
+    db.columns = { political_figures: LIVE_FIGURE_COLUMNS };
+    const warnings: string[] = [];
+    const store = createLeaderStore({ clients, onWarning: (m) => warnings.push(m) });
+    const saved = await store.save(owner, { ...(await leaderOf(IDS.owned)), county: "Kisumu", shortBio: "New" });
+    expect(saved.county).toBe("Kisumu");
+    const updates = db.calls.filter((c) => c.op === "update");
+    expect(updates).toHaveLength(2);
+    expect(updates[1].values).not.toHaveProperty("short_bio");
+    const row = db.tables.political_figures.find((r) => r.id === IDS.owned)!;
+    expect(row.county).toBe("Kisumu");
+    expect(row).not.toHaveProperty("short_bio");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("short_bio");
+    expect(warnings[0]).not.toContain("honorific"); // null values lost nothing
+  });
+
+  it("before the migration: an admin create works and reports the dropped office title", async () => {
+    db.columns = { political_figures: LIVE_FIGURE_COLUMNS };
+    const warnings: string[] = [];
+    const store = createLeaderStore({ clients, onWarning: (m) => warnings.push(m) });
+    const base = await leaderOf(IDS.seeded);
+    const created = await store.save(admin, { ...base, id: "x", name: "Pre Migration", position: "MCA, Kileleshwa" });
+    expect(db.tables.political_figures.find((r) => r.id === created.id)).toMatchObject({ position: "mca" });
+    expect(warnings.join(" ")).toContain("office_title");
+  });
+
+  it("after the migration: one write, no warnings, new columns stored", async () => {
+    setup(OWNER);
+    db.columns = { political_figures: [...LIVE_FIGURE_COLUMNS, "honorific", "office_title", "profile_image_url", "cover_image_url", "short_bio", "bio", "achievements", "social_links", "vision"] };
+    const warn = vi.fn();
+    const store = createLeaderStore({ clients, onWarning: warn });
+    await store.save(owner, { ...(await leaderOf(IDS.owned)), shortBio: "New" });
+    expect(db.calls.filter((c) => c.op === "update")).toHaveLength(1);
+    expect(db.tables.political_figures.find((r) => r.id === IDS.owned)).toMatchObject({ short_bio: "New" });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("does not retry an unrelated missing column", async () => {
+    setup(OWNER);
+    db.columns = { political_figures: LIVE_FIGURE_COLUMNS.filter((c) => c !== "county") };
+    const store = createLeaderStore({ clients, onWarning: () => {} });
+    await expect(store.save(owner, { ...(await leaderOf(IDS.owned)), county: "Kisumu" })).rejects.toMatchObject({
+      status: 500,
+    });
+    expect(db.calls.filter((c) => c.op === "update")).toHaveLength(1);
+  });
+
+  it("a real live row with profiles.bio and no new columns saves as a no-op", async () => {
+    setup(OWNER);
+    db.columns = { political_figures: LIVE_FIGURE_COLUMNS };
+    const store = createLeaderStore({ clients });
+    const leader = await leaderOf(IDS.owned);
+    expect(leader.bio).toBe("Bio from profiles");
+    await store.save(owner, leader);
+    expect(db.calls.filter((c) => c.op === "update")).toEqual([]);
+  });
+});
+
+describe("optimistic concurrency (finding 6)", () => {
+  it("stamps updated_at and requires the value it read", async () => {
+    setup(OWNER);
+    const store = createLeaderStore({ clients, now: () => new Date("2026-10-22T09:00:00.000Z") });
+    await store.save(owner, { ...(await leaderOf(IDS.owned)), shortBio: "New" });
+    const update = db.calls.find((c) => c.op === "update")!;
+    expect(update.filters).toContainEqual(["updated_at", "eq", "2025-11-02T10:00:00.000Z"]);
+    expect(db.tables.political_figures.find((r) => r.id === IDS.owned)?.updated_at).toBe("2026-10-22T09:00:00.000Z");
+  });
+
+  it("409 when the row changed after it was read", async () => {
+    setup(OWNER);
+    db.beforeWrite = (call) => {
+      if (call.op === "update") {
+        const row = db.tables.political_figures.find((r) => r.id === IDS.owned)!;
+        row.updated_at = "2026-10-22T08:59:59.000Z";
+      }
+    };
+    const store = createLeaderStore({ clients });
+    await expect(store.save(owner, { ...(await leaderOf(IDS.owned)), shortBio: "Mine" })).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+});
+
+describe("reactivation (finding 7e)", () => {
+  it("an owner's save keeps an inactive row inactive; an admin's save reactivates it", async () => {
+    setup(OWNER);
+    const row = db.tables.political_figures.find((r) => r.id === IDS.owned)!;
+    row.status = "inactive";
+    const store = createLeaderStore({ clients });
+    await store.save(owner, { ...(await leaderOf(IDS.owned)), shortBio: "Still here" });
+    expect(row.status).toBe("inactive");
+    await store.save(admin, { ...(await leaderOf(IDS.owned)), shortBio: "Back" });
+    expect(row.status).toBe("active");
   });
 });

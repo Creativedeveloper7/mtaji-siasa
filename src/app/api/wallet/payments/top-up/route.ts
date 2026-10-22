@@ -15,7 +15,9 @@ export async function POST(request: Request) {
   if (gate.response) return gate.response;
   const body = await readJson<{ amount?: unknown; method?: unknown }>(request);
   if (!body) return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
-  const result = await startTopUp(gate.user, body, topUpCallbackUrl(request));
+  const callback = topUpCallbackUrl(request);
+  if (!callback.ok) return callback.response;
+  const result = await startTopUp(gate.user, body, callback.url);
   if (!result.ok) return walletError(result);
   return NextResponse.json({ ok: true, ...result.data }, { status: result.status });
 }

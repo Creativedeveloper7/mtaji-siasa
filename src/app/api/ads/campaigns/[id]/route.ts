@@ -26,5 +26,9 @@ export async function POST(request: Request, context: Context) {
   }
   const action = isRecord(body) ? asTrackerAdAction(body.action) : null;
   if (!action) return NextResponse.json({ ok: false, error: "Unknown action." }, { status: 400 });
+  // Same gate as /api/ads/publish/[id]: publishing and syncing are for leaders, aspirants and admins.
+  if ((action === "publish" || action === "sync") && !["leader", "aspirant", "admin"].includes(session.role)) {
+    return NextResponse.json({ ok: false, error: "Only leaders, aspirants and admins can publish or refresh ads." }, { status: 403 });
+  }
   return send(await actOnTrackerAd(session, id, action, note, new URL(request.url).origin));
 }

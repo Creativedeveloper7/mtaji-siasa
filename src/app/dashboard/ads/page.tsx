@@ -200,7 +200,7 @@ export default function PoliticianAdsPage() {
       return;
     if (action === "publish" && !confirm(`Publish "${campaign.name}" now? Your wallet pays each network that accepts the ad.`)) return;
     setBusy({ id: campaign.id, action });
-    const result = await apiJson<{ item?: AdCampaign; walletBalance?: number; error?: string }>(
+    const result = await apiJson<{ item?: AdCampaign; walletBalance?: number; warnings?: string[]; error?: string }>(
       `/api/ads/campaigns/${encodeURIComponent(campaign.id)}`,
       { method: "POST", body: JSON.stringify({ action }) }
     );
@@ -212,6 +212,8 @@ export default function PoliticianAdsPage() {
     const updated = result.data.item;
     setItems((current) => current.map((c) => (c.id === updated.id ? updated : c)));
     if (typeof result.data.walletBalance === "number") setBalance(result.data.walletBalance);
+    // A network accepted the ad but the wallet charge failed: say so plainly.
+    if (result.data.warnings?.length) alert(result.data.warnings.join("\n"));
   };
 
   return (

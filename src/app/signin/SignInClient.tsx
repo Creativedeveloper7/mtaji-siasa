@@ -7,22 +7,26 @@ import { Button } from "@/components/ui/Button";
 import { Logo } from "@/components/layout/Logo";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { LoadingState } from "@/components/ui/EmptyState";
+import { safeNext } from "@/lib/safe-next";
 
 export default function SignInClient() {
   const { signIn, ready, user } = useAuth();
   const params = useSearchParams();
-  const next = params.get("next") || params.get("redirect") || "/";
+  // Same-site paths only: anything else (//evil.com, /\evil.com, https://…) becomes "/".
+  const next = safeNext(params.get("next") || params.get("redirect"));
   const [error, setError] = useState(
     params.get("error") === "confirmation"
       ? "That confirmation link is invalid or has expired. Sign in, or sign up again for a new link."
       : ""
   );
+  const notice =
+    params.get("confirmed") === "maybe" ? "If you just confirmed your email, sign in to continue." : "";
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!ready || !user) return;
     const destination =
-      next.startsWith("/") && next !== "/"
+      next !== "/"
         ? next
         : user.role === "admin"
           ? "/admin"
@@ -48,7 +52,7 @@ export default function SignInClient() {
       return;
     }
     const destination =
-      next.startsWith("/") && next !== "/"
+      next !== "/"
         ? next
         : result.session.role === "admin"
           ? "/admin"
@@ -110,6 +114,12 @@ export default function SignInClient() {
           autoComplete="current-password"
         />
 
+        {notice && !error && (
+          <p className="rounded-md border border-border bg-surface px-3 py-2 text-small text-ink-muted">
+            {notice}
+          </p>
+        )}
+
         {error && (
           <p className="rounded-md border border-error/30 bg-error-muted px-3 py-2 text-small text-error">
             {error}
@@ -125,7 +135,7 @@ export default function SignInClient() {
         New here?{" "}
         <Link
           href={
-            next.startsWith("/") && next !== "/"
+            next !== "/"
               ? `/signup?next=${encodeURIComponent(next)}`
               : "/signup"
           }

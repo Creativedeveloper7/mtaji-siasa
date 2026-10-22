@@ -4,7 +4,14 @@ import type { ContentRepository } from "@/server/repositories";
 import type { Promisified } from "@/server/tracker/types";
 import { anonClient, serviceClient, userClient } from "@/server/tracker/clients";
 import { assignSlugs, findBySlug, isUuid, rowSlug } from "@/server/tracker/slug";
+import { withOwner } from "@/server/tracker/content/media/shared";
 import {
+  droppedColumnsWarning,
+  writeAdaptive,
+  type DbResult,
+} from "@/server/tracker/content/projects/adaptive";
+import {
+  NEW_FIGURE_COLUMNS,
   NO_LINKS,
   isNoopWrite,
   isPubliclyListed,
@@ -65,10 +72,12 @@ export interface LeaderStoreOptions {
   links?: LeaderLinksProvider;
   clients?: Partial<LeaderClients>;
   /**
-   * False until §17 M3 and M5 are applied: writes then leave out the new
-   * columns (honorific, office_title, photo, bio, vision…). Default true.
+   * Told when a write had to leave out data because migration
+   * 20261022150000 (§17 M3 + M5) is not applied yet: the write is retried
+   * without the new columns (honorific, office_title, photo, bio, vision…),
+   * which works both before and after the migration. Default: console.warn.
    */
-  newColumns?: boolean;
+  onWarning?: (message: string) => void;
   now?: () => Date;
 }
 
@@ -110,7 +119,21 @@ export function createLeaderStore(options: LeaderStoreOptions = {}): LeaderStore
     service: options.clients?.service ?? serviceClient,
   };
   const now = options.now ?? (() => new Date());
-  const newColumns = options.newColumns ?? true;
+  const warn = options.onWarning ?? ((message: string) => console.warn(message));
+
+  /** Runs a write, dropping the §17 M3/M5 columns once if the database does not have them yet. */
+  async function adaptive(
+    attempt: (payload: Record<string, unknown>) => PromiseLike<QueryResult<FigureRow[]>>,
+    payload: FigureWrite & Record<string, unknown>
+  ): Promise<QueryResult<FigureRow[]>> {
+    const { result, lost } = await writeAdaptive<FigureRow[]>(
+      attempt as (payload: Record<string, unknown>) => PromiseLike<DbResult<FigureRow[]>>,
+      payload,
+      NEW_FIGURE_COLUMNS
+    );
+    if (lost.length > 0) warn(droppedColumnsWarning(TABLE, lost));
+    return result;
+  }
 
   async function publicRows(): Promise<FigureRow[]> {
     const result = (await clients
@@ -158,7 +181,8 @@ export function createLeaderStore(options: LeaderStoreOptions = {}): LeaderStore
     const [links, bios] = await Promise.all([linksFor(rows), profileBios(rows)]);
     return rows.map((row) => {
       const found = links.get(row.id) ?? {};
-      return rowToLeader(row, {
+      // ownerUserId (political_figures.user_id) is what writes are authorized against.
+      return withOwner(rowToLeader(row, {
         slug: slugs.get(row.id),
         profileBio: row.user_id ? bios.get(row.user_id) : undefined,
         links: {
@@ -168,7 +192,7 @@ export function createLeaderStore(options: LeaderStoreOptions = {}): LeaderStore
           pollIds: found.pollIds ?? NO_LINKS.pollIds,
           productIds: found.productIds ?? NO_LINKS.productIds,
         },
-      });
+      }), row.user_id);
     });
   }
 
@@ -188,8 +212,12 @@ export function createLeaderStore(options: LeaderStoreOptions = {}): LeaderStore
     return rowById(client, id);
   }
 
-  function write(leader: Leader, existing: FigureRow | null): FigureWrite {
-    const result = leaderToRow(leader, existing, { now: now(), newColumns });
+  function write(
+    leader: Leader,
+    existing: FigureRow | null,
+    extra: { profileBio?: string | null; canReactivate?: boolean } = {}
+  ): FigureWrite {
+    const result = leaderToRow(leader, existing, { now: now(), ...extra });
     if (!result.ok) throw new LeaderStoreError(400, result.error);
     return result.row;
   }
@@ -227,7 +255,11 @@ export function createLeaderStore(options: LeaderStoreOptions = {}): LeaderStore
 
       if (existing) {
         const owner = existing.user_id !== null && existing.user_id === actor.userId;
-        const patch = write(leader, existing);
+        // The read showed profiles.bio when the figure has none; the write must know it.
+        const profileBio = existing.user_id && !existing.bio?.trim()
+          ? (await profileBios([existing])).get(existing.user_id)
+          : undefined;
+        const patch = write(leader, existing, { profileBio, canReactivate: actor.isAdmin });
         // Link arrays and slug are derived, so a save that changes only them
         // writes nothing (this keeps the service's relinkLeaders() harmless).
         if (isNoopWrite(patch, existing)) return one(existing);
@@ -237,18 +269,29 @@ export function createLeaderStore(options: LeaderStoreOptions = {}): LeaderStore
         // Owner: user client under RLS. Admin editing another account's row or a
         // leader with no account: service, because no RLS rule lets an admin write it.
         const client = owner ? await clients.user() : clients.service();
-        const result = (await client
-          .from(TABLE)
-          .update(patch)
-          .eq("id", existing.id)
-          .select("*")
-          .single()) as QueryResult<FigureRow>;
-        const saved = check(result, "save the leader");
-        if (!saved) throw new LeaderStoreError(500, "Could not save the leader.");
+        // Optimistic concurrency: the row must still have the updated_at it was
+        // read with. political_figures has no updated_at trigger, so the write sets it.
+        const expected = typeof existing.updated_at === "string" ? existing.updated_at : null;
+        const body: FigureWrite & Record<string, unknown> = { ...patch };
+        if (expected) body.updated_at = now().toISOString();
+        const result = await adaptive((payload) => {
+          let query = client.from(TABLE).update(payload).eq("id", existing.id);
+          if (expected) query = query.eq("updated_at", expected);
+          return query.select("*") as unknown as PromiseLike<QueryResult<FigureRow[]>>;
+        }, body);
+        const saved = (check(result, "save the leader") ?? [])[0];
+        if (!saved) {
+          const current = await rowById(client, existing.id);
+          if (!current) throw new LeaderStoreError(404, "Leader not found.");
+          if (expected && current.updated_at !== expected) {
+            throw new LeaderStoreError(409, "This leader profile was changed elsewhere. Reload it and try again.");
+          }
+          throw new LeaderStoreError(403, "You can only edit your own leader profile.");
+        }
         return one(saved);
       }
 
-      const insert: FigureWrite = write(leader, null);
+      const insert: FigureWrite = write(leader, null, { canReactivate: actor.isAdmin });
       if (isUuid(leader.id)) insert.id = leader.id;
 
       let client: SupabaseClient;
@@ -269,11 +312,14 @@ export function createLeaderStore(options: LeaderStoreOptions = {}): LeaderStore
         }
         insert.user_id = actor.userId;
       }
-      const result = (await client.from(TABLE).insert(insert).select("*").single()) as QueryResult<FigureRow>;
+      const result = await adaptive(
+        (payload) => client.from(TABLE).insert(payload).select("*") as unknown as PromiseLike<QueryResult<FigureRow[]>>,
+        insert
+      );
       if (result.error?.code === "23505") {
         throw new LeaderStoreError(409, "That leader profile already exists.");
       }
-      const saved = check(result, "create the leader");
+      const saved = (check(result, "create the leader") ?? [])[0];
       if (!saved) throw new LeaderStoreError(500, "Could not create the leader.");
       return one(saved);
     },

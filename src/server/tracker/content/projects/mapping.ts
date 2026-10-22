@@ -18,7 +18,10 @@ import type { InitiativeRow, MilestoneRow } from "./rows";
 export type Json = Record<string, unknown>;
 export type LatLng = { lat: number; lng: number };
 
-export class ProjectInputError extends Error {}
+/** A value the Tracker cannot store. HTTP 400. */
+export class ProjectInputError extends Error {
+  readonly status = 400 as const;
+}
 
 export function isRecord(value: unknown): value is Json {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -138,25 +141,42 @@ export function categoryBucket(value: string | null | undefined): ProjectCategor
   return value && INFRASTRUCTURE_CATEGORIES.has(value) ? "infrastructure" : "non-infrastructure";
 }
 
-/**
- * Siasa (subcategory, category) → initiatives.category. Always returns a value
- * from the check list. In order: the subcategory names a Tracker value or
- * label; a §4 keyword matches; the current value is kept when it still fits
- * the Siasa bucket; else `infrastructure` / `other` by bucket.
- */
-export function resolveTrackerCategory(input: {
-  subcategory?: string | null;
-  category?: ProjectCategory | null;
-  existing?: string | null;
-}): TrackerCategory {
-  const sub = (input.subcategory ?? "").trim();
-  const lowered = sub.toLowerCase();
+function categoryFromText(sub: string): TrackerCategory | undefined {
+  const lowered = sub.trim().toLowerCase();
   if (isTrackerCategory(lowered)) return lowered;
   const snake = lowered.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   if (isTrackerCategory(snake)) return snake;
   const byLabel = CATEGORY_BY_LABEL.get(lowered);
   if (byLabel) return byLabel;
   for (const [pattern, value] of CATEGORY_KEYWORDS) if (pattern.test(lowered)) return value;
+  return undefined;
+}
+
+/**
+ * Siasa (subcategory, category) → initiatives.category. Always returns a value
+ * from the check list. In order: the subcategory names a Tracker value or
+ * label; a §4 keyword matches; the current value is kept when it still fits
+ * the Siasa bucket; else `infrastructure` / `other` by bucket.
+ *
+ * When the Siasa bucket changed on this save (infrastructure ↔
+ * non-infrastructure) and the subcategory still belongs to the old bucket,
+ * the bucket wins: keeping the subcategory would read back in the old bucket
+ * and silently undo the change.
+ */
+export function resolveTrackerCategory(input: {
+  subcategory?: string | null;
+  category?: ProjectCategory | null;
+  existing?: string | null;
+}): TrackerCategory {
+  const fromText = categoryFromText(input.subcategory ?? "");
+  const oldBucket = isTrackerCategory(input.existing) ? categoryBucket(input.existing) : undefined;
+  const bucketChanged = Boolean(input.category && oldBucket && input.category !== oldBucket);
+  if (fromText) {
+    if (bucketChanged && categoryBucket(fromText) === oldBucket) {
+      return input.category === "infrastructure" ? "infrastructure" : "other";
+    }
+    return fromText;
+  }
   const bucket = input.category ?? (input.existing ? categoryBucket(input.existing) : undefined);
   if (isTrackerCategory(input.existing) && (!bucket || categoryBucket(input.existing) === bucket)) {
     return input.existing;
@@ -452,16 +472,20 @@ export function buildLocation(
   existingRaw: unknown,
   input: { label: string; county: string; center?: GeoPoint | null; boundary?: GeoBounds | null }
 ): Json {
-  const base: Json = isRecord(existingRaw) ? { ...existingRaw } : {};
+  const creating = !isRecord(existingRaw);
+  const base: Json = creating ? {} : { ...(existingRaw as Json) };
   const current = parseLocation(existingRaw);
   const county = (input.county ?? "").trim();
-  base.county = county;
-  if (!("constituency" in base)) base.constituency = "";
+  // An unchanged county keeps its stored form (no spurious write on a round trip).
+  if (creating || county !== (current.county ?? "")) base.county = county;
+  // The Tracker create shape has constituency and specific_area keys; an
+  // existing row that lacks them is not padded (that would be a no-op write).
+  if (creating && !("constituency" in base)) base.constituency = "";
 
   const label = (input.label ?? "").trim();
   if (label !== locationLabel(current)) {
     base.specific_area = specificAreaFromLabel(label, { county, constituency: current.constituency });
-  } else if (!("specific_area" in base)) {
+  } else if (creating && !("specific_area" in base)) {
     base.specific_area = "";
   }
 
@@ -707,7 +731,14 @@ export function buildInitiativeUpdate(
   );
 
   set("expected_completion", toDateOnly(project.expectedCompletion) ?? null);
-  set("reference_images", mergeReferenceImages(existing.reference_images, project.image));
+  // projectImage() falls back to the first satellite frame. Sending that back
+  // must not copy it into reference_images, so only a changed image is merged,
+  // and a satellite frame never is.
+  const image = (project.image ?? "").trim();
+  const satellite = parseSatelliteSnapshots(existing.satellite_snapshots).map((s) => s.imageUrl.trim());
+  if (image && image !== projectImage(existing) && !satellite.includes(image)) {
+    set("reference_images", mergeReferenceImages(existing.reference_images, image));
+  }
   set(
     "location",
     buildLocation(existing.location, {

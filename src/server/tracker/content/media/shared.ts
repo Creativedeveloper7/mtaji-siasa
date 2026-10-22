@@ -1,3 +1,5 @@
+import { compareFigures } from "@/server/tracker/accounts";
+
 /**
  * Pure helpers shared by the media, polls and products slices (no Supabase
  * client, no server-only import, so tests load them directly). They live here
@@ -15,11 +17,13 @@ export interface FigureRef {
 
 /**
  * user id -> that user's political_figures row. When a user has several rows
- * the newest wins (same rule as AuthSession.leaderId in roles.ts).
+ * the OLDEST wins (created_at, then id): the same rule the session uses for
+ * AuthSession.leaderId (compareFigures in accounts.ts), so a figure row added
+ * later can never take over an account's leaderId.
  */
 export function indexFiguresByUser(rows: FigureRef[]): Map<string, FigureRef> {
   const out = new Map<string, FigureRef>();
-  const sorted = [...rows].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  const sorted = [...rows].sort(compareFigures);
   for (const row of sorted) {
     if (row.user_id && !out.has(row.user_id)) out.set(row.user_id, row);
   }
@@ -28,13 +32,14 @@ export function indexFiguresByUser(rows: FigureRef[]): Map<string, FigureRef> {
 
 /**
  * Siasa leaderId for a row owned by `ownerId` (blogs.author_id, polls.owner_id,
- * products.author_id).
+ * products.author_id). Display and linking only: authorization goes by
+ * `ownerUserId` (tracker-backend.md, "Ownership rule").
  *
- * - The owner's political_figures.id when they have one.
- * - Otherwise the owner's auth user id. tracker-backend.md (Phase 1): a session
- *   with no political_figures row uses the Supabase user id as its leaderId, so
- *   this keeps the content service's `leaderId === actor.leaderId` ownership
- *   check working for those users. findLeader(<user id>) simply finds nothing.
+ * - The owner's political_figures.id when they have one (oldest row).
+ * - Otherwise the owner's Phase 1 memory leader id, `user-<uid>` (the same
+ *   value as phase1LeaderId in src/server/auth/service.ts). Never the bare
+ *   uid: political_figures.id is client-settable, so another user could own a
+ *   figure whose id equals this owner's uid.
  * - undefined when the row has no owner (products.author_id is nullable).
  */
 export function leaderIdForOwner(
@@ -42,7 +47,31 @@ export function leaderIdForOwner(
   figures: Map<string, FigureRef>
 ): string | undefined {
   if (!ownerId) return undefined;
-  return figures.get(ownerId)?.id ?? ownerId;
+  return figures.get(ownerId)?.id ?? phase1LeaderId(ownerId);
+}
+
+/** Mirrors phase1LeaderId (src/server/auth/service.ts) without importing the auth service. */
+export function phase1LeaderId(userId: string): string {
+  return `user-${userId}`;
+}
+
+/**
+ * A mapped content record plus the auth user id that owns its row
+ * (blogs.author_id, polls.owner_id, products.author_id, opportunities.author_id).
+ * The service layer authorizes writes by comparing this with session.userId
+ * (or admin), never by leaderId. Absent when the row has no owner.
+ */
+export type Owned<T> = T & { ownerUserId?: string };
+
+/** The owner's auth user id of a record returned by a Tracker content repository, if known. */
+export function ownerUserIdOf(record: object | null | undefined): string | undefined {
+  const value = (record as { ownerUserId?: unknown } | null | undefined)?.ownerUserId;
+  return typeof value === "string" && value ? value : undefined;
+}
+
+/** Adds ownerUserId to a mapped record (left off when the row has no owner). */
+export function withOwner<T extends object>(record: T, ownerId: string | null | undefined): Owned<T> {
+  return ownerId ? { ...record, ownerUserId: ownerId } : record;
 }
 
 /** Kenya is UTC+3 all year (no DST). */

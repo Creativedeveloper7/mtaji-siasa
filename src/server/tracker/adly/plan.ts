@@ -387,9 +387,12 @@ export function normalizePlan(row: Pick<AdlyCampaignRow, "name" | "budget" | "ch
   const interests = Array.isArray(t.interests)
     ? t.interests.filter((x): x is string => typeof x === "string")
     : [];
-  const budget = num(row.budget);
+  // The 5000 default is only for a plan that has no budget at all (a brand-new
+  // row). A stored 0 stays 0, so a round-trip save never turns it into 5000.
+  const noBudget = row.budget === null || row.budget === undefined || String(row.budget).trim() === "";
+  const budget = Math.max(0, num(row.budget));
   return {
-    budgetKes: budget > 0 ? budget : 5000,
+    budgetKes: noBudget ? 5000 : budget,
     locations,
     ageGroup: normalizeAgeGroup(rawAge) || rawAge || "25-34",
     interests: interests.length ? interests : ["civic engagement"],

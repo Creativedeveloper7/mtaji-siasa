@@ -22,7 +22,7 @@ import {
   resolveOwner,
   type ContentClients,
 } from "./session";
-import { groupIdsByOwner, isMissingColumnError, leaderIdForOwner, pickByIds } from "./shared";
+import { groupIdsByOwner, isMissingColumnError, leaderIdForOwner, pickByIds, withOwner, type Owned } from "./shared";
 
 export type MediaRepository = Pick<
   Promisified<ContentRepository>,
@@ -101,21 +101,27 @@ export function createMediaRepository(clients: ContentClients = defaultContentCl
   };
 }
 
-/** Maps rows; `slugScope` is the set slugs are made unique within. */
-async function mapRows(client: SupabaseClient, rows: BlogRow[], slugScope: BlogRow[]): Promise<MediaItem[]> {
+/**
+ * Maps rows; `slugScope` is the set slugs are made unique within. Each item
+ * carries `ownerUserId` (blogs.author_id) for user-id authorization.
+ */
+async function mapRows(client: SupabaseClient, rows: BlogRow[], slugScope: BlogRow[]): Promise<Owned<MediaItem>[]> {
   const slugs = assignSlugs(slugScope, (row) => row.title);
   const figures = await figuresForUsers(client, rows.map((row) => row.author_id));
   const byInitiative = groupIdsByOwner(slugScope, (row) => row.initiative_id);
   const opportunities = await opportunityIdsByInitiative(client, [...byInitiative.keys()]);
   return rows.map((row) =>
-    mapBlogRow(row, {
-      slug: slugs.get(row.id) ?? rowSlug(row.title, row.id),
-      leaderId: leaderIdForOwner(row.author_id, figures),
-      relatedMediaIds: row.initiative_id
-        ? (byInitiative.get(row.initiative_id) ?? []).filter((id) => id !== row.id)
-        : [],
-      relatedOpportunityIds: row.initiative_id ? opportunities.get(row.initiative_id) ?? [] : [],
-    })
+    withOwner(
+      mapBlogRow(row, {
+        slug: slugs.get(row.id) ?? rowSlug(row.title, row.id),
+        leaderId: leaderIdForOwner(row.author_id, figures),
+        relatedMediaIds: row.initiative_id
+          ? (byInitiative.get(row.initiative_id) ?? []).filter((id) => id !== row.id)
+          : [],
+        relatedOpportunityIds: row.initiative_id ? opportunities.get(row.initiative_id) ?? [] : [],
+      }),
+      row.author_id
+    )
   );
 }
 

@@ -21,7 +21,7 @@ export async function PUT(request: Request) {
   if (!isRecord(body)) return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
 
   if (!usesTracker()) return send(await saveMemoryPlan(editor.actor, body));
-  if (!body.campaign && isRecord(body.creative)) return send(await saveTrackerCreative(body.creative));
+  if (!body.campaign && isRecord(body.creative)) return send(await saveTrackerCreative(editor.actor, body.creative));
   return send(await saveTrackerPlan(editor.actor, body));
 }
 
@@ -32,7 +32,7 @@ export async function DELETE(request: Request) {
   const id = new URL(request.url).searchParams.get("id")?.trim() ?? "";
   if (!id) return NextResponse.json({ ok: false, error: "id is required." }, { status: 400 });
   if (!usesTracker()) return send(await deleteAdly(editor.actor, "campaigns", id));
-  return send(await deleteTrackerCampaign(id));
+  return send(await deleteTrackerCampaign(editor.actor, id));
 }
 
 /** Memory store: the same three saves the page used to make one by one. */

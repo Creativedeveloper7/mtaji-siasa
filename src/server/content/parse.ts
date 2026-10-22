@@ -1,4 +1,5 @@
 import type {
+  GeoBounds,
   Leader,
   MediaCategory,
   MediaItem,
@@ -89,7 +90,19 @@ function vision(value: unknown, existing: Leader["vision"]): Leader["vision"] {
   };
 }
 
-export function parseLeader(body: unknown, existing?: Leader): Leader | string {
+export interface ParseLeaderOptions {
+  /**
+   * Fill a missing photo with the stock portrait (memory demo only). On the
+   * Tracker backend a missing photo stays empty: the stock image would be
+   * written to political_figures.profile_image_url as if it were the person.
+   */
+  stockPhoto?: boolean;
+}
+
+const STOCK_PORTRAIT = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80";
+
+export function parseLeader(body: unknown, existing?: Leader, options: ParseLeaderOptions = {}): Leader | string {
+  const stockPhoto = options.stockPhoto ?? true;
   if (!isRecord(body)) return "Leader body must be an object.";
   const name = "name" in body ? asString(body.name) : existing?.name;
   if (!name) return "Leader name is required.";
@@ -106,8 +119,7 @@ export function parseLeader(body: unknown, existing?: Leader): Leader | string {
     constituency: "constituency" in body ? asString(body.constituency) : existing?.constituency,
     ward: "ward" in body ? asString(body.ward) : existing?.ward,
     photo:
-      ("photo" in body ? asString(body.photo) : existing?.photo) ??
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80",
+      ("photo" in body ? asString(body.photo) : existing?.photo) ?? (stockPhoto ? STOCK_PORTRAIT : ""),
     coverImage: "coverImage" in body ? asString(body.coverImage) : existing?.coverImage,
     shortBio: ("shortBio" in body ? asString(body.shortBio) : existing?.shortBio) ?? "",
     bio: ("bio" in body ? asString(body.bio) : existing?.bio) ?? "",
@@ -132,20 +144,24 @@ function geo(value: unknown, existing?: Project["geo"]): Project["geo"] | string
   if (value == null) {
     return existing ?? { center: { lat: -1.2864, lng: 36.8172 } };
   }
-  if (!isRecord(value) || !isRecord(value.center)) return "Project geo.center with lat and lng is required.";
+  if (!isRecord(value)) return "Project geo.center with lat and lng is required.";
+  const boundary = isRecord(value.boundary) ? value.boundary : undefined;
+  const nextBoundary: GeoBounds | undefined =
+    boundary?.type === "Polygon" && Array.isArray(boundary.coordinates)
+      ? { type: "Polygon", coordinates: boundary.coordinates as number[][][] }
+      : existing?.boundary;
+  if (!isRecord(value.center)) {
+    // A Tracker project may have no pin yet (Project.geo.center is optional).
+    // Keep what is stored; a project with neither pin nor boundary is refused.
+    if (!existing?.center && !nextBoundary) return "Project geo.center with lat and lng is required.";
+    return { ...(existing?.center ? { center: existing.center } : {}), boundary: nextBoundary };
+  }
   const lat = Number(value.center.lat);
   const lng = Number(value.center.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return "Project coordinates must be numbers.";
   }
-  const boundary = isRecord(value.boundary) ? value.boundary : undefined;
-  return {
-    center: { lat, lng },
-    boundary:
-      boundary?.type === "Polygon" && Array.isArray(boundary.coordinates)
-        ? { type: "Polygon", coordinates: boundary.coordinates as number[][][] }
-        : existing?.boundary,
-  };
+  return { center: { lat, lng }, boundary: nextBoundary };
 }
 
 export function parseProject(body: unknown, existing?: Project): Project | string {

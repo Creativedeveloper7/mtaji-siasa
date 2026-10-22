@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  availableBalance,
   buildWalletView,
+  classifyWalletRpcError,
+  hasAtMostTwoDecimals,
+  heldWithdrawalAmount,
+  isWithdrawalHeld,
   interpretVerification,
   mapTopUpAttempts,
   mapTransaction,
@@ -178,6 +183,8 @@ describe("withdrawals", () => {
     expect(withdrawalStatus("something_new")).toBe("pending");
     expect(withdrawalStatus("paid")).toBe("completed");
     expect(withdrawalStatus("Rejected")).toBe("failed");
+    expect(withdrawalStatus("cancelled")).toBe("failed");
+    expect(withdrawalStatus("completed")).toBe("completed");
   });
 
   it("masks the destination", () => {
@@ -224,6 +231,8 @@ describe("buildWalletView", () => {
       wallet,
       transactions: [adIncrease, adDebit, topUpCredit, donationCredit],
       withdrawals: [pendingWithdrawal, paidWithdrawal],
+      heldCandidates: [pendingWithdrawal, paidWithdrawal],
+      debitedWithdrawalIds: new Set([paidWithdrawal.id]),
       payments: [payment({ id: PAYMENT_A, status: "complete" }), payment({ id: PAYMENT_B })],
       creditedPaymentIds: new Set([PAYMENT_A]),
       now: NOW,
@@ -255,6 +264,8 @@ describe("buildWalletView", () => {
       wallet: null,
       transactions: [],
       withdrawals: [],
+      heldCandidates: [],
+      debitedWithdrawalIds: new Set(),
       payments: [payment({})],
       creditedPaymentIds: new Set(),
       now: NOW,
@@ -275,6 +286,8 @@ describe("buildWalletView", () => {
       wallet: { ...wallet, balance: 500 },
       transactions: [],
       withdrawals: [pendingWithdrawal],
+      heldCandidates: [pendingWithdrawal],
+      debitedWithdrawalIds: new Set(),
       payments: [],
       creditedPaymentIds: new Set(),
       now: NOW,
@@ -306,6 +319,17 @@ describe("interpretVerification", () => {
     expect(interpretVerification({ status: "abandoned", amount: 0 }, ref)).toMatchObject({ outcome: "failed", reference: ref });
     expect(interpretVerification(null, ref).outcome).toBe("failed");
   });
+  it("keeps a recently abandoned checkout pending for 30 minutes", () => {
+    const started = (minutesAgo: number) => ({
+      createdAt: new Date(NOW.getTime() - minutesAgo * 60_000).toISOString(),
+      now: NOW,
+    });
+    expect(interpretVerification({ status: "abandoned" }, ref, started(5)).outcome).toBe("pending");
+    expect(interpretVerification({ status: "abandoned" }, ref, started(30)).outcome).toBe("pending");
+    expect(interpretVerification({ status: "abandoned" }, ref, started(31)).outcome).toBe("failed");
+    expect(interpretVerification({ status: "failed" }, ref, started(1)).outcome).toBe("failed");
+    expect(interpretVerification({ status: "abandoned" }, ref, { createdAt: "garbage", now: NOW }).outcome).toBe("failed");
+  });
 });
 
 describe("walletErrorMessage", () => {
@@ -326,6 +350,43 @@ describe("input parsing", () => {
     expect(parseTopUpInput({ amount: 500, method: "bitcoin" }).ok).toBe(false);
   });
 
+  it("accepts two-decimal amounts despite binary floating point", () => {
+    // 128.02 * 100 === 12801.999999999998 in IEEE 754.
+    expect(parseTopUpInput({ amount: 128.02 })).toEqual({ ok: true, amount: 128.02, method: "M-PESA" });
+    expect(parseTopUpInput({ amount: 128.05 })).toEqual({ ok: true, amount: 128.05, method: "M-PESA" });
+    expect(parseTopUpInput({ amount: "128.02" })).toMatchObject({ ok: true, amount: 128.02 });
+    expect(parseWithdrawalInput({ amount: 0.01, method: "mpesa", destination: "0700000123" })).toMatchObject({
+      ok: true,
+      amount: 0.01,
+    });
+    expect(parseWithdrawalInput({ amount: 128.02, method: "mpesa", destination: "0700000123" })).toMatchObject({
+      ok: true,
+      amount: 128.02,
+    });
+    expect(parseWithdrawalInput({ amount: 1e-7, method: "mpesa", destination: "0700000123" })).toEqual({
+      ok: false,
+      error: "Use at most two decimal places.",
+    });
+    expect(parseTopUpInput({ amount: 100.001 })).toEqual({ ok: false, error: "Use at most two decimal places." });
+    expect(parseWithdrawalInput({ amount: 100.001, method: "mpesa", destination: "0700000123" }).ok).toBe(false);
+    expect(hasAtMostTwoDecimals(128.02)).toBe(true);
+    expect(hasAtMostTwoDecimals(0.01)).toBe(true);
+    expect(hasAtMostTwoDecimals(1e-7)).toBe(false);
+    expect(hasAtMostTwoDecimals(100.001)).toBe(false);
+  });
+
+  it("accepts only plain decimal strings", () => {
+    const w = (amount: unknown) => parseWithdrawalInput({ amount, method: "mpesa", destination: "0700000123" });
+    expect(w("0x64").ok).toBe(false);
+    expect(w("1e3").ok).toBe(false);
+    expect(w("Infinity").ok).toBe(false);
+    expect(w(" ").ok).toBe(false);
+    expect(w("1,000").ok).toBe(false);
+    expect(w(Number.NaN).ok).toBe(false);
+    expect(w(" 250.50 ")).toMatchObject({ ok: true, amount: 250.5 });
+    expect(w(1e3)).toMatchObject({ ok: true, amount: 1000 });
+  });
+
   it("validates withdrawals", () => {
     expect(parseWithdrawalInput({ amount: 1000, method: "mpesa", destination: " 0700 000 123 " })).toEqual({
       ok: true,
@@ -343,5 +404,146 @@ describe("input parsing", () => {
     expect(readReturnReference(new URLSearchParams("topup=1&trxref=abc123def&reference=abc123def"))).toBe("abc123def");
     expect(readReturnReference(new URLSearchParams("topup=1"))).toBeNull();
     expect(readReturnReference(new URLSearchParams("reference=<script>"))).toBeNull();
+  });
+});
+
+describe("held withdrawals and available balance", () => {
+  const w = (id: string, status: string, amount: number | string) => ({ id, status, amount });
+
+  it("holds every non-final withdrawal, matching the Tracker exactly", () => {
+    const none = new Set<string>();
+    expect(isWithdrawalHeld(w("a", "pending", 1), none)).toBe(true);
+    expect(isWithdrawalHeld(w("a", "approved", 1), none)).toBe(true);
+    expect(isWithdrawalHeld(w("a", "processing", 1), none)).toBe(true);
+    expect(isWithdrawalHeld(w("a", "something_new", 1), none)).toBe(true);
+    // Not one of the Tracker's final spellings, so the database holds it too.
+    expect(isWithdrawalHeld(w("a", "Rejected", 1), none)).toBe(true);
+    expect(isWithdrawalHeld(w("a", "canceled", 1), none)).toBe(true);
+    for (const closed of ["rejected", "failed", "cancelled"]) {
+      expect(isWithdrawalHeld(w("a", closed, 1), none)).toBe(false);
+    }
+  });
+
+  it("keeps a paid/completed withdrawal held until its debit row exists", () => {
+    expect(isWithdrawalHeld(w("a", "paid", 1), new Set())).toBe(true);
+    expect(isWithdrawalHeld(w("a", "completed", 1), new Set(["b"]))).toBe(true);
+    expect(isWithdrawalHeld(w("a", "paid", 1), new Set(["a"]))).toBe(false);
+    expect(isWithdrawalHeld(w("a", "completed", 1), new Set(["a"]))).toBe(false);
+  });
+
+  it("sums held amounts to the cent", () => {
+    const rows = [
+      w("p1", "pending", "0.10"),
+      w("p2", "approved", 0.2),
+      w("paid-debited", "paid", 500),
+      w("paid-legacy", "paid", "300.05"),
+      w("rej", "rejected", 999),
+    ];
+    expect(heldWithdrawalAmount(rows, new Set(["paid-debited"]))).toBe(300.35);
+    expect(heldWithdrawalAmount([], new Set())).toBe(0);
+  });
+
+  it("computes available balance, never below zero", () => {
+    expect(availableBalance(4200, 1000)).toBe(3200);
+    expect(availableBalance(128.02, 0.01)).toBe(128.01);
+    expect(availableBalance(500, 1000)).toBe(0);
+    expect(availableBalance(0, 0)).toBe(0);
+  });
+
+  it("treats a paid withdrawal without its debit as held in the wallet view", () => {
+    const view = buildWalletView({
+      wallet,
+      transactions: [],
+      withdrawals: [paidWithdrawal],
+      heldCandidates: [pendingWithdrawal, paidWithdrawal],
+      debitedWithdrawalIds: new Set(),
+      payments: [],
+      creditedPaymentIds: new Set(),
+      now: NOW,
+    });
+    expect(view.pendingWithdrawals).toBe(1300);
+    expect(view.availableBalance).toBe(2900);
+    expect(view.movements[0]).toMatchObject({ id: paidWithdrawal.id, status: "pending" });
+  });
+
+  it("counts held withdrawals beyond the listed ones", () => {
+    const older = Array.from({ length: 30 }, (_, i) => ({ ...pendingWithdrawal, id: `old-${i}`, amount: 10 }));
+    const view = buildWalletView({
+      wallet,
+      transactions: [],
+      withdrawals: older.slice(0, 20),
+      heldCandidates: older,
+      debitedWithdrawalIds: new Set(),
+      payments: [],
+      creditedPaymentIds: new Set(),
+      now: NOW,
+    });
+    expect(view.pendingWithdrawals).toBe(300);
+    expect(view.availableBalance).toBe(3900);
+  });
+
+  it("shows a payout debit through its withdrawal row, not twice", () => {
+    const payout: TrackerWalletTransactionRow = {
+      id: "88888888-8888-4888-8888-888888888888",
+      wallet_id: WALLET_ID,
+      source: "withdrawal",
+      amount: 300,
+      direction: "debit",
+      reference_type: "withdrawal",
+      reference_id: paidWithdrawal.id,
+      metadata: {},
+      created_at: "2026-10-18T11:00:00.000Z",
+    };
+    const listed = buildWalletView({
+      wallet,
+      transactions: [payout],
+      withdrawals: [paidWithdrawal],
+      heldCandidates: [paidWithdrawal],
+      debitedWithdrawalIds: new Set([paidWithdrawal.id]),
+      payments: [],
+      creditedPaymentIds: new Set(),
+      now: NOW,
+    });
+    expect(listed.movements.map((m) => [m.id, m.status])).toEqual([[paidWithdrawal.id, "completed"]]);
+    expect(listed.pendingWithdrawals).toBe(0);
+
+    const unlisted = buildWalletView({
+      wallet,
+      transactions: [payout],
+      withdrawals: [],
+      heldCandidates: [paidWithdrawal],
+      debitedWithdrawalIds: new Set([paidWithdrawal.id]),
+      payments: [],
+      creditedPaymentIds: new Set(),
+      now: NOW,
+    });
+    expect(unlisted.movements).toEqual([expect.objectContaining({ id: payout.id, kind: "withdrawal", direction: "out" })]);
+  });
+});
+
+describe("classifyWalletRpcError", () => {
+  it("maps the Tracker's balance check to the caller's conflict status", () => {
+    expect(classifyWalletRpcError({ message: "amount exceeds available balance", code: "P0001" }, 409)).toEqual({
+      status: 409,
+      error: expect.stringMatching(/exceeds your available balance/),
+    });
+    expect(classifyWalletRpcError({ message: "Insufficient wallet balance", code: "P0001" }, 402).status).toBe(402);
+  });
+
+  it("keeps business rules as 400 and auth as 401", () => {
+    expect(classifyWalletRpcError({ message: "destination required", code: "P0001" }, 409)).toEqual({
+      status: 400,
+      error: "Enter where the money should be sent.",
+    });
+    expect(classifyWalletRpcError({ message: "some new rule", code: "P0001" }, 409).status).toBe(400);
+    expect(classifyWalletRpcError({ message: "invalid input syntax for type numeric", code: "22P02" }, 409).status).toBe(400);
+    expect(classifyWalletRpcError({ message: "not authenticated", code: "P0001" }, 409).status).toBe(401);
+  });
+
+  it("maps network and server failures to 502", () => {
+    expect(classifyWalletRpcError({ message: "TypeError: fetch failed", code: "" }, 409).status).toBe(502);
+    expect(classifyWalletRpcError({ message: "upstream timeout", code: "57014" }, 409).status).toBe(502);
+    expect(classifyWalletRpcError({ message: "Could not find the function", code: "PGRST202" }, 409).status).toBe(502);
+    expect(classifyWalletRpcError(null, 409).status).toBe(502);
   });
 });

@@ -128,9 +128,15 @@ describe("statusFromType", () => {
     expect(statusFromType("elected", "seeking_reelection")).toBe("seeking_reelection");
     expect(statusFromType("elected", "active")).toBe("active");
     expect(statusFromType("elected", "aspirant")).toBe("active");
-    expect(statusFromType("elected", "inactive")).toBe("active");
-    expect(statusFromType("elected", "former")).toBe("active");
     expect(statusFromType("elected")).toBe("active");
+  });
+
+  it("keeps inactive / former unless the caller may reactivate (admins)", () => {
+    expect(statusFromType("elected", "inactive")).toBe("inactive");
+    expect(statusFromType("elected", "former")).toBe("former");
+    expect(statusFromType("elected", "inactive", { canReactivate: true })).toBe("active");
+    expect(statusFromType("elected", "former", { canReactivate: true })).toBe("active");
+    expect(statusFromType("aspirant", "former")).toBe("aspirant");
   });
 });
 
@@ -384,5 +390,110 @@ describe("manifesto helpers", () => {
     expect(
       writeManifesto({ statement: "T", manifesto: ["x"], priorities: [], proposedProjects: [], expectedImpact: [] }, null, NOW)
     ).toEqual({ text: "x", hero_title: "T", focus_areas: [], targets: [], uploaded_at: NOW.toISOString() });
+  });
+});
+
+describe("no-op detection on live-shaped rows (finding 3)", () => {
+  /** Post-migration row as most live rows will look: new columns present but empty. */
+  function migratedEmptyRow(overrides: Partial<FigureRow> = {}): FigureRow {
+    return seededRow({
+      user_id: "9a9a9a9a-0000-4000-8000-000000000009",
+      honorific: null,
+      office_title: null,
+      profile_image_url: null,
+      cover_image_url: null,
+      short_bio: null,
+      bio: null,
+      achievements: null,
+      social_links: null,
+      vision: null,
+      ...overrides,
+    });
+  }
+
+  function roundTrip(row: FigureRow, profileBio?: string) {
+    const result = leaderToRow(rowToLeader(row, { profileBio }), row, { now: NOW, profileBio });
+    if (!result.ok) throw new Error(result.error);
+    return result.row;
+  }
+
+  it("null office_title: the formatted position is not written back", () => {
+    const row = migratedEmptyRow();
+    const patch = roundTrip(row);
+    expect(patch).not.toHaveProperty("office_title");
+    expect(isNoopWrite(patch, row)).toBe(true);
+  });
+
+  it("null office_title with manifesto.office_label: the label is not copied into office_title", () => {
+    const row = migratedEmptyRow({
+      position: "senator",
+      manifesto: { text: "", targets: [], focus_areas: [], office_label: "Senator, Nyeri County" },
+    });
+    expect(isNoopWrite(roundTrip(row), row)).toBe(true);
+  });
+
+  it("null vision with manifesto text: no empty vision object is written", () => {
+    const row = migratedEmptyRow({
+      manifesto: { text: "Water first.\n\nThen roads.", hero_title: "Hope", targets: [], focus_areas: [] },
+    });
+    const patch = roundTrip(row);
+    expect(patch).not.toHaveProperty("vision");
+    expect(isNoopWrite(patch, row)).toBe(true);
+  });
+
+  it("null bio with profiles.bio present: the profile bio is never persisted", () => {
+    const row = migratedEmptyRow();
+    const patch = roundTrip(row, "Bio from profiles");
+    expect(patch).not.toHaveProperty("bio");
+    expect(isNoopWrite(patch, row)).toBe(true);
+  });
+
+  it("all three at once, before and after the migration", () => {
+    const manifesto = { text: "One.\n\nTwo.", targets: [], focus_areas: [], uploaded_at: "2025-11-02T10:00:00.000Z" };
+    const after = migratedEmptyRow({ manifesto });
+    expect(isNoopWrite(roundTrip(after, "Profile bio"), after)).toBe(true);
+    const before = seededRow({ user_id: "9a9a9a9a-0000-4000-8000-000000000009", manifesto });
+    expect(isNoopWrite(roundTrip(before, "Profile bio"), before)).toBe(true);
+  });
+
+  it("an existing manifesto without text keeps it absent", () => {
+    const row = migratedEmptyRow({ manifesto: { hero_title: "Hope", party: "P" } });
+    const patch = roundTrip(row);
+    expect(isNoopWrite(patch, row)).toBe(true);
+  });
+
+  it("still writes real changes", () => {
+    const row = migratedEmptyRow();
+    const leader = rowToLeader(row, { profileBio: "Profile bio" });
+    const edited = {
+      ...leader,
+      position: "Governor, Kiambu County",
+      bio: "My own bio",
+      vision: { statement: "", manifesto: [], priorities: ["Water"], proposedProjects: [], expectedImpact: [] },
+    };
+    const result = leaderToRow(edited, row, { now: NOW, profileBio: "Profile bio" });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.row).toMatchObject({
+      office_title: "Governor, Kiambu County",
+      position: "governor",
+      bio: "My own bio",
+      vision: { priorities: ["Water"], proposedProjects: [], expectedImpact: [] },
+    });
+  });
+
+  it("clearing a bio that fell back to profiles.bio stores null, not the profile bio", () => {
+    const row = migratedEmptyRow({ bio: "Own bio" });
+    const result = leaderToRow({ ...rowToLeader(row), bio: "" }, row, { now: NOW, profileBio: "Profile bio" });
+    expect(result.ok && result.row.bio).toBeNull();
+  });
+
+  it("a non-admin save keeps an inactive row inactive; an admin save reactivates", () => {
+    const row = migratedEmptyRow({ status: "inactive" });
+    const leader = { ...rowToLeader(row), shortBio: "Changed" };
+    const mine = leaderToRow(leader, row, { now: NOW });
+    expect(mine.ok && mine.row.status).toBe("inactive");
+    expect(isNoopWrite(roundTrip(row), row)).toBe(true);
+    const admin = leaderToRow(leader, row, { now: NOW, canReactivate: true });
+    expect(admin.ok && admin.row.status).toBe("active");
   });
 });

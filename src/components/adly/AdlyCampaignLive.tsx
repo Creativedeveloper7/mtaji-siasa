@@ -28,6 +28,10 @@ interface Conversation {
   }[];
   publishable: string[];
   awaitingApproval: string | null;
+  /** Another publish of this campaign is running */
+  publishing?: boolean;
+  /** Networks that accepted the ad but whose wallet charge failed */
+  unpaid?: { provider: string; amountKes: number; at: string }[];
   status: string;
   hasCreative: boolean;
 }
@@ -171,7 +175,7 @@ export function AdlyCampaignLive({
             <Button
               type="button"
               size="sm"
-              disabled={!!busy || !data || !data.publishable.length || Boolean(data.awaitingApproval)}
+              disabled={!!busy || !data || !data.publishable.length || Boolean(data.awaitingApproval) || Boolean(data.publishing)}
               onClick={() => void publish()}
             >
               {busy === "publish" ? "Publishing…" : live ? "Update on networks" : "Publish"}
@@ -179,6 +183,14 @@ export function AdlyCampaignLive({
           </div>
         </div>
         {data?.awaitingApproval && <p className="mt-3 text-caption text-warning">{data.awaitingApproval}</p>}
+        {data?.publishing && <p className="mt-3 text-caption text-warning">Publishing is already in progress for this campaign.</p>}
+        {data?.unpaid && data.unpaid.length > 0 && (
+          <p className="mt-3 rounded-md border border-error/30 bg-error-muted px-3 py-2 text-caption text-error" role="alert">
+            Unpaid:{" "}
+            {data.unpaid.map((u) => `${channelName(u.provider)} KES ${u.amountKes.toLocaleString()}`).join(", ")} — the network
+            accepted the ad but your wallet was not charged. Top up; an admin will settle it.
+          </p>
+        )}
         {data && !data.publishable.length && (
           <p className="mt-3 text-caption text-warning">Choose Google or X for this campaign to publish it.</p>
         )}

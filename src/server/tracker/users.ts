@@ -3,6 +3,7 @@ import type { UserRepository } from "@/server/repositories";
 import type { PublicUser } from "@/server/domain";
 import { anonClient, hasServiceRole, serviceClient, userClient } from "@/server/tracker/clients";
 import {
+  compareFigures,
   loadAccountRows,
   toAccount,
   type AuthUser,
@@ -19,15 +20,53 @@ function check(error: { message: string } | null, action: string) {
   if (error) throw new Error(`${action}: ${error.message}`);
 }
 
-/** Every auth user. auth.admin needs the service role. */
-async function listAuthUsers(admin: SupabaseClient): Promise<AuthUser[]> {
-  const users: AuthUser[] = [];
+/** Ids per `.in()` filter: keeps each PostgREST request URL well under proxy limits. */
+const IN_CHUNK = 100;
+
+function chunks<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** Every auth user, one listUsers page at a time. auth.admin needs the service role. */
+async function* authUserPages(admin: SupabaseClient): AsyncGenerator<AuthUser[]> {
   for (let page = 1; ; page += 1) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: PAGE });
     check(error, "Could not list users");
-    users.push(...data.users);
-    if (data.users.length < PAGE) return users;
+    if (data.users.length) yield data.users;
+    if (data.users.length < PAGE) return;
   }
+}
+
+/**
+ * The profile rows of these users only. Selecting whole tables would stop at
+ * PostgREST's row cap (1000) and silently drop accounts.
+ */
+async function profileRowsFor(admin: SupabaseClient, ids: string[]) {
+  const profiles: ProfileRow[] = [];
+  const userProfiles: UserProfileRow[] = [];
+  const figures: FigureRow[] = [];
+  for (const part of chunks(ids, IN_CHUNK)) {
+    const [p, up, f] = await Promise.all([
+      admin.from("profiles").select("id, name, email, phone").in("id", part),
+      admin.from("user_profiles").select("user_id, user_type, phone").in("user_id", part),
+      admin
+        .from("political_figures")
+        .select("id, user_id, status, created_at")
+        .in("user_id", part),
+    ]);
+    check(p.error ?? up.error ?? f.error, "Could not load profiles");
+    profiles.push(...((p.data ?? []) as ProfileRow[]));
+    userProfiles.push(...((up.data ?? []) as UserProfileRow[]));
+    figures.push(...((f.data ?? []) as FigureRow[]));
+  }
+  return { profiles, userProfiles, figures };
+}
+
+/** LIKE pattern that matches `text` literally (no % or _ wildcards). */
+function likeLiteral(text: string): string {
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
 async function findAuthUser(admin: SupabaseClient, id: string): Promise<AuthUser | undefined> {
@@ -68,47 +107,51 @@ export function createTrackerUserRepository(): UserRepository {
 
     listPublic: async () => {
       const admin = serviceClient();
-      const [users, profiles, userProfiles, figures] = await Promise.all([
-        listAuthUsers(admin),
-        admin.from("profiles").select("id, name, email, phone"),
-        admin.from("user_profiles").select("user_id, user_type, phone"),
-        admin
-          .from("political_figures")
-          .select("id, user_id, status")
-          .not("user_id", "is", null)
-          .order("created_at", { ascending: true }),
-      ]);
-      check(profiles.error ?? userProfiles.error ?? figures.error, "Could not load profiles");
-      const profileBy = new Map((profiles.data as ProfileRow[]).map((row) => [row.id, row]));
-      const userProfileBy = new Map(
-        (userProfiles.data as UserProfileRow[]).map((row) => [row.user_id, row])
-      );
-      // Ascending order: the newest row per user wins, as in loadAccountRows.
-      const figureBy = new Map((figures.data as FigureRow[]).map((row) => [row.user_id, row]));
-      return users
-        .map((user) =>
-          toAccount({
-            user,
-            profile: profileBy.get(user.id),
-            userProfile: userProfileBy.get(user.id),
-            figure: figureBy.get(user.id),
-          })
-        )
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const accounts: PublicUser[] = [];
+      for await (const users of authUserPages(admin)) {
+        const rows = await profileRowsFor(
+          admin,
+          users.map((user) => user.id)
+        );
+        const profileBy = new Map(rows.profiles.map((row) => [row.id, row]));
+        const userProfileBy = new Map(rows.userProfiles.map((row) => [row.user_id, row]));
+        // Same pick as loadAccountRows: the oldest row per user (ties by id).
+        const figureBy = new Map<string, FigureRow>();
+        for (const row of [...rows.figures].sort(compareFigures)) {
+          if (row.user_id && !figureBy.has(row.user_id)) figureBy.set(row.user_id, row);
+        }
+        for (const user of users) {
+          accounts.push(
+            toAccount({
+              user,
+              profile: profileBy.get(user.id),
+              userProfile: userProfileBy.get(user.id),
+              figure: figureBy.get(user.id),
+            })
+          );
+        }
+      }
+      return accounts.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     },
 
     findById,
 
     findByEmail: async (email) => {
+      const wanted = email.trim().toLowerCase();
+      if (!wanted) return undefined;
       const admin = serviceClient();
+      // Case-insensitive but literal: % and _ are escaped, and the exact
+      // lower-case comparison below drops anything else ilike lets through.
       const { data, error } = await admin
         .from("profiles")
-        .select("id")
-        .ilike("email", email.trim().toLowerCase())
-        .limit(1)
-        .maybeSingle();
+        .select("id, email")
+        .ilike("email", likeLiteral(wanted))
+        .limit(10);
       check(error, "Could not look up the email");
-      return data ? findById((data as { id: string }).id) : undefined;
+      const match = ((data ?? []) as Array<{ id: string; email: string | null }>).find(
+        (row) => (row.email ?? "").trim().toLowerCase() === wanted
+      );
+      return match ? findById(match.id) : undefined;
     },
 
     create: async (input) => {

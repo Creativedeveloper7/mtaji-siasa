@@ -451,12 +451,10 @@ describe("initiative writes", () => {
     const existing = row({ location: { county: "Nairobi", coordinates: { lat: -1.286389, lng: 36.817223 } } });
     const mapped = mapInitiative(existing, links(), { slug: "x", today: TODAY });
     const patch = buildInitiativeUpdate(existing, mapped, { links: links(), today: TODAY });
-    expect(patch.location).toEqual({
-      county: "Nairobi",
-      coordinates: { lat: -1.286389, lng: 36.817223 },
-      constituency: "",
-      specific_area: "",
-    });
+    // Nothing changed, so the live {county, coordinates} shape is not padded with empty keys.
+    expect(patch).toEqual({});
+    const moved = buildInitiativeUpdate(existing, { ...mapped, county: "Kiambu" }, { links: links(), today: TODAY });
+    expect(moved.location).toEqual({ county: "Kiambu", coordinates: { lat: -1.286389, lng: 36.817223 } });
   });
 
   it("writes only changed scalar columns and never Tracker-only ones", () => {
@@ -607,5 +605,55 @@ describe("milestones", () => {
     expect(toDateOnly("2026-08")).toBe("2026-08-01");
     expect(toDateOnly("")).toBeUndefined();
     expect(toDateOnly(null)).toBeUndefined();
+  });
+});
+
+describe("satellite fallback is never written into reference_images (finding 2)", () => {
+  it("a live row with no photos and one satellite frame round-trips to an empty patch", () => {
+    const live = row({ reference_images: [], satellite_snapshots: [SNAPSHOT_BASELINE] });
+    const mapped = mapInitiative(live, links(), { slug: "x", today: TODAY });
+    expect(mapped.image).toBe(SNAPSHOT_BASELINE.imageUrl);
+    expect(buildInitiativeUpdate(live, mapped, { links: links(), today: TODAY })).toEqual({});
+    const nullImages = row({ reference_images: null, satellite_snapshots: [SNAPSHOT_BASELINE] });
+    expect(
+      buildInitiativeUpdate(nullImages, mapInitiative(nullImages, links(), { slug: "x", today: TODAY }), {
+        links: links(),
+        today: TODAY,
+      })
+    ).toEqual({});
+  });
+
+  it("never stores any satellite frame, but does store a real new image", () => {
+    const live = row({ reference_images: ["https://example.test/img/1.jpg"], satellite_snapshots: [SNAPSHOT_BASELINE, SNAPSHOT_PLAIN] });
+    const mapped = mapInitiative(live, links(), { slug: "x", today: TODAY });
+    expect(buildInitiativeUpdate(live, { ...mapped, image: SNAPSHOT_PLAIN.imageUrl }, { links: links(), today: TODAY })).toEqual({});
+    expect(
+      buildInitiativeUpdate(live, { ...mapped, image: "https://example.test/img/new.jpg" }, { links: links(), today: TODAY })
+    ).toEqual({ reference_images: ["https://example.test/img/new.jpg", "https://example.test/img/1.jpg"] });
+  });
+});
+
+describe("category bucket changes (finding 7b)", () => {
+  it("a bucket change with a subcategory from the old bucket takes the new bucket's default", () => {
+    expect(resolveTrackerCategory({ subcategory: "roads", category: "non-infrastructure", existing: "roads" })).toBe("other");
+    expect(resolveTrackerCategory({ subcategory: "Education", category: "infrastructure", existing: "education" })).toBe(
+      "infrastructure"
+    );
+  });
+
+  it("a subcategory that fits the new bucket is kept, and unchanged buckets behave as before", () => {
+    expect(resolveTrackerCategory({ subcategory: "education", category: "non-infrastructure", existing: "roads" })).toBe(
+      "education"
+    );
+    expect(resolveTrackerCategory({ subcategory: "roads", category: "infrastructure", existing: "roads" })).toBe("roads");
+    expect(resolveTrackerCategory({ subcategory: "roads", category: "non-infrastructure" })).toBe("roads");
+  });
+
+  it("the update patch follows a bucket change", () => {
+    const live = row({ category: "water" });
+    const mapped = mapInitiative(live, links(), { slug: "x", today: TODAY });
+    expect(
+      buildInitiativeUpdate(live, { ...mapped, category: "non-infrastructure" }, { links: links(), today: TODAY })
+    ).toEqual({ category: "other" });
   });
 });

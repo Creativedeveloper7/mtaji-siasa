@@ -45,11 +45,42 @@ export async function withFreshWallet(user: WalletUser, body: Record<string, unk
   return NextResponse.json({ ok: true, ...body, wallet: wallet.ok ? wallet.data : undefined }, { status });
 }
 
-/** Where Paystack sends the user back to. PUBLIC_SITE_URL wins over the request's own origin. */
-export function topUpCallbackUrl(request: Request): string {
-  const site = (process.env.PUBLIC_SITE_URL ?? "").trim().replace(/\/$/, "");
-  const origin = site || new URL(request.url).origin;
-  return `${origin}/dashboard/wallet?topup=1`;
+/**
+ * Where Paystack sends the user back to. In production this must come from
+ * PUBLIC_SITE_URL: the request's own origin follows the Host header, which a
+ * client controls. Outside production the request origin is used as a fallback.
+ */
+export function topUpCallbackUrl(
+  request: Request
+): { ok: true; url: string; response?: undefined } | { ok: false; response: NextResponse } {
+  const site = (process.env.PUBLIC_SITE_URL ?? "").trim().replace(/\/+$/, "");
+  if (site) {
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(site);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+      return { ok: false, response: callbackConfigError("PUBLIC_SITE_URL is not a valid http(s) URL.") };
+    }
+    return { ok: true, url: `${parsed.origin}/dashboard/wallet?topup=1` };
+  }
+  if (process.env.NODE_ENV === "production") {
+    return {
+      ok: false,
+      response: callbackConfigError("PUBLIC_SITE_URL must be set in production for Paystack top-ups."),
+    };
+  }
+  return { ok: true, url: `${new URL(request.url).origin}/dashboard/wallet?topup=1` };
+}
+
+function callbackConfigError(detail: string): NextResponse {
+  console.error(`[wallet] ${detail}`);
+  return NextResponse.json(
+    { ok: false, error: "Top-ups are not configured on this server (missing site URL). Contact support." },
+    { status: 500 }
+  );
 }
 
 export async function readJson<T>(request: Request): Promise<T | null> {

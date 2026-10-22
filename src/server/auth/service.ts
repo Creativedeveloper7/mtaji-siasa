@@ -55,23 +55,63 @@ async function sessionFromUser(client: SupabaseClient, user: AuthUser): Promise<
 }
 
 /**
+ * Id of the Phase 1 memory leader profile of a politician with no
+ * political_figures row. Never the bare auth user id: political_figures.id is
+ * client-settable, so a figure row could be created with another user's uid as
+ * its id. The "user-" prefix is not a uuid and cannot collide with a figure id.
+ */
+export function phase1LeaderId(userId: string): string {
+  return `user-${userId}`;
+}
+
+/**
  * Phase 2: leaders move to political_figures. Until then a politician with no
  * political_figures row gets a leader profile in the memory content store,
- * keyed by their Supabase user id (see ensurePoliticianProfile).
+ * keyed by phase1LeaderId(userId) (see ensurePoliticianProfile).
  */
 async function withPhase1Leader(session: AuthSession): Promise<AuthSession> {
   if (session.leaderId) return session;
-  const linked = await getRepositories().content.findLeader(session.userId);
+  const id = phase1LeaderId(session.userId);
+  const linked = await getRepositories().content.findLeader(id);
   return linked ? { ...session, leaderId: linked.id } : session;
 }
 
-/** The signed-in user, verified with auth.getUser() (never read from the cookie alone). */
+/** Load the session; a Tracker read failure is logged and surfaces as AccountUnavailable. */
+class AccountUnavailable extends Error {}
+
+async function loadSession(client: SupabaseClient, user: AuthUser): Promise<AuthSession> {
+  try {
+    return await sessionFromUser(client, user);
+  } catch (error) {
+    console.error("[auth] could not load the account", user.id, error);
+    throw new AccountUnavailable();
+  }
+}
+
+const ACCOUNT_UNAVAILABLE: AuthFailure = {
+  ok: false,
+  error: "Your account could not be loaded right now. Try again in a moment.",
+  status: 503,
+};
+
+/**
+ * The signed-in user, verified with auth.getUser() (never read from the cookie
+ * alone). Null when signed out, and also when the account rows cannot be read:
+ * the failure is logged here instead of turning every route into a 500 page.
+ */
 export async function currentSession(): Promise<AuthSession | null> {
   if (!usesTracker()) return null;
-  const client = await userClient();
-  const { data, error } = await client.auth.getUser();
-  if (error || !data.user) return null;
-  return sessionFromUser(client, data.user);
+  try {
+    const client = await userClient();
+    const { data, error } = await client.auth.getUser();
+    if (error || !data.user) return null;
+    return await loadSession(client, data.user);
+  } catch (error) {
+    if (!(error instanceof AccountUnavailable)) {
+      console.error("[auth] could not read the session", error);
+    }
+    return null;
+  }
 }
 
 export async function signIn(email: unknown, password: unknown): Promise<AuthResult> {
@@ -90,7 +130,11 @@ export async function signIn(email: unknown, password: unknown): Promise<AuthRes
     }
     return fail("Invalid email or password.", 401);
   }
-  return { ok: true, session: await sessionFromUser(client, data.user) };
+  try {
+    return { ok: true, session: await loadSession(client, data.user) };
+  } catch {
+    return ACCOUNT_UNAVAILABLE;
+  }
 }
 
 export async function signUp(input: SignUpInput, origin: string): Promise<SignUpResult> {
@@ -143,13 +187,19 @@ export async function signUp(input: SignUpInput, origin: string): Promise<SignUp
 
   // The triggers do not copy the phone. Best effort: it is also in user_metadata.
   await client.from("profiles").update({ phone }).eq("id", data.user.id);
-  return { ok: true, session: await sessionFromUser(client, data.user) };
+  try {
+    return { ok: true, session: await loadSession(client, data.user) };
+  } catch {
+    return ACCOUNT_UNAVAILABLE;
+  }
 }
 
 export async function signOut(): Promise<void> {
   if (!usesTracker()) return;
   const client = await userClient();
-  await client.auth.signOut();
+  // Local scope: end this browser's session only. The default (global) would
+  // also sign the person out of the Tracker app and every other device.
+  await client.auth.signOut({ scope: "local" });
 }
 
 /** Run an admin directory call, turning a missing service role key into a 503. */
@@ -208,7 +258,7 @@ export async function adminUpsertUser(body: unknown): Promise<AuthResult> {
         role: role as UserRole,
         leaderId,
       });
-      return { ok: true, session: toSession(created) };
+      return roleStuck(created, role as UserRole) ?? { ok: true, session: toSession(created) };
     }
     const updated = await users.update({
       ...existing,
@@ -220,10 +270,32 @@ export async function adminUpsertUser(body: unknown): Promise<AuthResult> {
     });
     if (!updated) return fail("User not found.", 404);
     if (password) await users.setPassword(updated.id, password);
-    return { ok: true, session: toSession(updated) };
+    // `updated` is re-read from the Tracker, so this is the role that took effect.
+    return roleStuck(updated, role as UserRole) ?? { ok: true, session: toSession(updated) };
   });
   if (!result.ok) return result.status === 502 ? { ...result, status: 409 } : result;
   return result.value;
+}
+
+/**
+ * A 409 when the saved account does not have the role the admin asked for. A
+ * political_figures row's status decides leader vs aspirant, so that choice
+ * cannot be overridden from the user directory.
+ */
+function roleStuck(account: PublicUser, requested: UserRole): AuthFailure | undefined {
+  if (account.role === requested) return undefined;
+  const politician = (role: UserRole) => role === "leader" || role === "aspirant";
+  if (politician(account.role) && politician(requested)) {
+    return fail(
+      `The other changes were saved, but this account is still ${account.role === "leader" ? "a leader" : "an aspirant"}: ` +
+        "its political figure status decides leader vs aspirant. Change that status in the M-Taji Tracker.",
+      409
+    );
+  }
+  return fail(
+    `The other changes were saved, but the account's role is still ${account.role}, not ${requested}.`,
+    409
+  );
 }
 
 export async function adminDeleteUser(
@@ -257,8 +329,8 @@ async function promoteToLeader(userId: string): Promise<AuthSession | null> {
  * Open the politician workspace. Phase 2: this moves to political_figures. For
  * now it never creates a political_figures row (Siasa's sign-up does not collect
  * the office and term the Tracker requires). It creates a leader in the memory
- * content store with id = the user's political_figures.id, or their Supabase
- * user id when they have none.
+ * content store with id = the user's political_figures.id, or
+ * phase1LeaderId(user id) when they have none.
  */
 export async function ensurePoliticianProfile(
   current: AuthSession
@@ -271,7 +343,8 @@ export async function ensurePoliticianProfile(
   if (session.role !== "leader" && session.role !== "aspirant") {
     return fail("Only a politician account can open a profile.", 403);
   }
-  const leaderId = session.leaderId ?? session.userId;
+  // Never the bare user id (see phase1LeaderId).
+  const leaderId = session.leaderId ?? phase1LeaderId(session.userId);
   const content = getRepositories().content;
   if (await content.findLeader(leaderId)) {
     return { ok: true, session: { ...session, leaderId }, leaderId };

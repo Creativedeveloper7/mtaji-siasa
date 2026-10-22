@@ -57,9 +57,19 @@ Supabase Auth replaces Siasa's own password table and HMAC cookie.
   `@supabase/ssr` HttpOnly cookies.
 - When email confirmation is on, sign-up returns no session. The API answers
   `{ ok: true, needsConfirmation: true }` and `/auth/callback` exchanges the
-  emailed code for a session.
+  emailed code for a session. GoTrue confirms the email before the code
+  exchange, so a failed exchange (typically the link opened in another browser,
+  without the PKCE verifier cookie) goes to `/signin?confirmed=maybe`: "If you
+  just confirmed your email, sign in to continue." A `token_hash` link is
+  checked with `verifyOtp` and works on any device.
+- `next` redirect parameters (callback, sign-in, sign-up) go through
+  `safeNext()` in `src/lib/safe-next.ts`: resolved against the site origin,
+  kept only when same-origin, reduced to path + query + hash, else `/`.
 - A session is always checked with `auth.getUser()`, never trusted from the
-  cookie alone.
+  cookie alone. If the account rows cannot be read, the error is logged, a
+  session read returns no session and sign-in answers 503 JSON.
+- Sign-out uses `signOut({ scope: "local" })`: it ends this browser's session
+  only, not the person's Tracker app or other devices.
 
 ### Roles
 
@@ -77,6 +87,21 @@ own `profiles` row, so any user could set it.
 
 `AuthSession.leaderId` is the user's `political_figures.id`, when they have one.
 
+#### Ownership rule
+
+In Tracker mode authorization is by auth user id: a row's owner / author /
+`user_id` compared with `session.userId`, or admin. Never by `leaderId`.
+`leaderId` is for display and linking only. `political_figures.id` is
+client-settable, so a user can create a figure row whose id is any value,
+including another user's auth uid (all uids are public via `profiles`).
+Therefore:
+
+- an auth user id is never used as a leader id (the Phase 1 memory leader is
+  `user-<uid>`, which is not a uuid and cannot collide with a figure id);
+- only `political_figures` rows with `user_id` = the caller count as theirs,
+  and when there are several the oldest (`created_at`, then `id`) wins, so a
+  row added later cannot take over an account's `leaderId`.
+
 The mapping lives in `src/server/tracker/roles.ts` (`siasaRoleFor`,
 `signUpMetadata`), with tests beside it.
 
@@ -90,7 +115,8 @@ sign-up form does not ask for. Siasa does not make those up. So:
   `user_metadata.siasa_role` (`citizen`, `leader`, `aspirant` or
   `organization`) next to `full_name`, `phone` and `user_type`.
 - When a row exists, its `status` decides: `'aspirant'` is an aspirant,
-  anything else is a leader. The newest row wins if there are several.
+  anything else is a leader. The oldest row wins if there are several
+  (`created_at`, then `id`; see Ownership rule).
 - With no row, a `political_figure` is an aspirant when `siasa_role` is
   `'aspirant'`, otherwise a leader. `siasa_role` is user-editable, so it only
   ever chooses between those two and never grants admin.
@@ -99,8 +125,8 @@ sign-up form does not ask for. Siasa does not make those up. So:
 
 Phase 1 only: until leaders move to `political_figures` (Phase 2), the
 politician workspace (`POST /api/auth/profile`) creates the leader profile in
-the memory content store, with id = the user's `political_figures.id`, or their
-Supabase user id when they have none. A session with no `political_figures` row
+the memory content store, with id = the user's `political_figures.id`, or
+`user-<Supabase user id>` when they have none (never the bare uid). A session with no `political_figures` row
 picks up that profile as its `leaderId`. A citizen or organization who opens
 the workspace is switched to `user_type = 'political_figure'` (their own
 `user_profiles` row and `user_metadata`), as the old flow did.
@@ -111,7 +137,11 @@ the workspace is switched to `user_type = 'political_figure'` (their own
 `serviceClient().auth.admin.*` and the `profiles` / `user_profiles` rows.
 Granting admin sets `app_metadata.role = 'admin'`; any other role clears it
 and sets `user_type` (and `siasa_role`). `leaderId` is not editable there: it is
-the `political_figures.id`. Without `SUPABASE_SERVICE_ROLE_KEY` these endpoints
+the `political_figures.id`. When a `political_figures` row's status decides
+leader vs aspirant, asking for the other one saves the rest and answers 409
+with that explanation. The directory reads profile rows per page of
+`listUsers` (`.in()` on the page's ids), and email lookup is an exact
+case-insensitive match (LIKE wildcards escaped). Without `SUPABASE_SERVICE_ROLE_KEY` these endpoints
 answer 503.
 
 #### Memory mode

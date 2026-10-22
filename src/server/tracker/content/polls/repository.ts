@@ -15,7 +15,14 @@ import {
   resolveOwner,
   type ContentClients,
 } from "@/server/tracker/content/media/session";
-import { groupIdsByOwner, isMissingFunctionError, leaderIdForOwner, pickByIds } from "@/server/tracker/content/media/shared";
+import {
+  groupIdsByOwner,
+  isMissingFunctionError,
+  leaderIdForOwner,
+  pickByIds,
+  withOwner,
+  type Owned,
+} from "@/server/tracker/content/media/shared";
 import {
   mapPollRow,
   planOptionChanges,
@@ -92,7 +99,7 @@ export function createPollRepository(clients: ContentClients = defaultContentCli
       const existing = await readRowForWrite<PollRow>(caller, clients, "polls", poll.id);
       const target = await resolveOwner(caller, clients, existing ? { ownerId: existing.owner_id } : null, poll.leaderId);
       const client = target.client;
-      const write = pollWrite(poll);
+      const write = pollWrite(poll, existing);
 
       if (!existing) {
         const inserted = await client
@@ -160,6 +167,17 @@ async function voteCounts(client: SupabaseClient, pollId: string): Promise<Map<s
   return out;
 }
 
+/** Fresh check (owner or service read of poll_votes) that an option has at least one vote. */
+async function optionHasVotes(client: SupabaseClient, pollId: string, optionId: string): Promise<boolean> {
+  const { data, error } = await client
+    .from("poll_votes")
+    .select("id")
+    .eq("poll_id", pollId)
+    .eq("option_id", optionId);
+  if (error) fail("Could not count poll votes", error);
+  return (data ?? []).length > 0;
+}
+
 async function applyOptions(
   client: SupabaseClient,
   pollId: string,
@@ -175,8 +193,21 @@ async function applyOptions(
       `Options with votes cannot be removed: ${names}. Keep them, or close this poll and start a new one.`
     );
   }
-  if (plan.deletes.length) {
-    const { error } = await client.from("poll_options").delete().in("id", plan.deletes);
+  for (const optionId of plan.deletes) {
+    // Deleting an option cascades to its votes. `votes` was read earlier in
+    // this request, so re-check right before each delete and refuse if a vote
+    // arrived since. PostgREST cannot express "delete only if no vote
+    // references it" in one statement, so a vote cast in the few milliseconds
+    // between this read and the delete can still be lost with the option. The
+    // window is one round trip per removed option, and only for options the
+    // editor is removing.
+    if (await optionHasVotes(client, pollId, optionId)) {
+      throw new ContentWriteError(
+        409,
+        "An option you removed has just received a vote, so it cannot be removed. Reload the poll and try again."
+      );
+    }
+    const { error } = await client.from("poll_options").delete().eq("id", optionId).eq("poll_id", pollId);
     if (error) fail("Could not remove poll options", error);
   }
   for (const update of plan.updates) {
@@ -195,7 +226,8 @@ async function applyOptions(
   }
 }
 
-async function mapRows(client: SupabaseClient, rows: PollRow[], slugScope: PollRow[]): Promise<Poll[]> {
+/** Each poll carries `ownerUserId` (polls.owner_id) for user-id authorization. */
+async function mapRows(client: SupabaseClient, rows: PollRow[], slugScope: PollRow[]): Promise<Owned<Poll>[]> {
   if (!rows.length) return [];
   const slugs = assignSlugs(slugScope, (row) => row.title);
   const ids = rows.map((row) => row.id);
@@ -207,11 +239,14 @@ async function mapRows(client: SupabaseClient, rows: PollRow[], slugScope: PollR
   if (optionsResult.error) fail("Could not load poll options", optionsResult.error);
   const options = (optionsResult.data ?? []) as PollOptionRow[];
   return rows.map((row, index) =>
-    mapPollRow(row, options, {
-      slug: slugs.get(row.id) ?? rowSlug(row.title, row.id),
-      leaderId: leaderIdForOwner(row.owner_id, figures),
-      results: results[index],
-    })
+    withOwner(
+      mapPollRow(row, options, {
+        slug: slugs.get(row.id) ?? rowSlug(row.title, row.id),
+        leaderId: leaderIdForOwner(row.owner_id, figures),
+        results: results[index],
+      }),
+      row.owner_id
+    )
   );
 }
 

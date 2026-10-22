@@ -3,6 +3,7 @@ import type { Opportunity, OpportunityApplication } from "@/types";
 import { createApplicationRepository } from "./applications";
 import { createEngagementRepository } from "./engagement";
 import { createOpportunityRepository, opportunityIdsByAuthor } from "./repository";
+import { ownerUserIdOf } from "@/server/tracker/content/media/shared";
 import { fakeClients, type FakeState } from "./fake.test-helpers";
 
 const NOW = () => new Date("2026-10-22T07:00:00Z");
@@ -75,29 +76,112 @@ describe("opportunity repository", () => {
     expect(db.tables.opportunities[0]).toMatchObject({ title: "Road Jobs Phase 2", slots: "5" });
   });
 
-  it("retries without the M5b columns when they are missing", async () => {
-    const db = state({
-      fail: [{ table: "opportunities", op: "insert", error: { code: "PGRST204", message: "column county missing" } }],
-    });
+  const tender: Opportunity = {
+    id: "opp-new",
+    slug: "",
+    title: "Tender for desks",
+    category: "tenders",
+    location: "",
+    county: "",
+    deadline: "",
+    eligibility: "",
+    description: "",
+  };
+  const missingCounty = {
+    table: "opportunities",
+    op: "insert" as const,
+    error: { code: "PGRST204", message: "Could not find the 'county' column of 'opportunities' in the schema cache" },
+  };
+
+  it("retries without the M5b columns when they are missing and carry no data", async () => {
+    const db = state({ fail: [missingCounty] });
     const repo = createOpportunityRepository(fakeClients(db), { now: NOW });
-    const saved = await repo.upsertOpportunity({
-      id: "opp-new",
-      slug: "",
-      title: "Tender for desks",
-      category: "tenders",
-      location: "",
-      county: "Kisumu",
-      deadline: "",
-      eligibility: "",
-      description: "",
-    });
+    const saved = await repo.upsertOpportunity(tender);
     const inserts = db.calls.filter((call) => call.op === "insert");
     expect(inserts).toHaveLength(2);
-    expect(inserts[0].values).toHaveProperty("county", "Kisumu");
+    expect(inserts[0].values).toHaveProperty("county", null);
     expect(inserts[1].values).not.toHaveProperty("county");
+    expect(inserts[1].values).not.toHaveProperty("benefits");
     expect(inserts[1].values).toMatchObject({ author_id: AUTHOR, kind: "call", category: "Tender", deadline: null });
     expect(inserts[1].values).not.toHaveProperty("id");
     expect(saved.title).toBe("Tender for desks");
+  });
+
+  it("refuses with 501, naming the fields, instead of dropping M5b data", async () => {
+    const db = state({ fail: [missingCounty] });
+    const repo = createOpportunityRepository(fakeClients(db), { now: NOW });
+    const error = await repo
+      .upsertOpportunity({ ...tender, county: "Kisumu", requirements: ["KRA PIN"] })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ status: 501, code: "not_implemented" });
+    expect((error as Error).message).toMatch(/county, requirements/);
+    expect((error as Error).message).toMatch(/M5b/);
+    expect(db.calls.filter((call) => call.op === "insert")).toHaveLength(1);
+    expect(db.tables.opportunities).toHaveLength(2);
+  });
+
+  it("re-probes the M5b columns after 60 seconds instead of caching 'missing' forever", async () => {
+    let clock = new Date("2026-10-22T07:00:00Z");
+    const db = state({ fail: [missingCounty] });
+    const repo = createOpportunityRepository(fakeClients(db), { now: () => clock });
+    await repo.upsertOpportunity(tender);
+    // Within 60 s an empty-extra write skips the doomed full attempt.
+    await repo.upsertOpportunity({ ...tender, title: "Tender 2" });
+    expect(db.calls.filter((call) => call.op === "insert").map((call) => "county" in (call.values as object))).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    // After 60 s the migration may have landed: the full payload is tried again.
+    clock = new Date("2026-10-22T07:01:01Z");
+    await repo.upsertOpportunity({ ...tender, title: "Tender 3" });
+    const last = db.calls.filter((call) => call.op === "insert").at(-1);
+    expect(last?.values).toHaveProperty("county", null);
+    // A write that carries data always tries the full payload, even within 60 s.
+    db.fail = [missingCounty];
+    await repo.upsertOpportunity({ ...tender, title: "Tender 4" });
+    await expect(repo.upsertOpportunity({ ...tender, title: "Tender 5", county: "Kisumu" })).resolves.toMatchObject({
+      county: "Kisumu",
+    });
+  });
+
+  it("reopens an expired listing whose deadline is extended (stored row decides)", async () => {
+    const db = state();
+    db.tables.opportunities[0].deadline = "2026-10-01";
+    const repo = createOpportunityRepository(fakeClients(db), { now: NOW });
+    const current = (await repo.findOpportunity(OPP)) as Opportunity;
+    expect(current.status).toBe("closed");
+    const saved = await repo.upsertOpportunity({ ...current, deadline: "2026-12-15" });
+    expect(db.tables.opportunities[0]).toMatchObject({ listing_status: "published", deadline: "2026-12-15" });
+    expect(saved.status).toBe("open");
+  });
+
+  it("gives author and public the same slug for published listings", async () => {
+    const author = state();
+    author.tables.opportunities.push(
+      oppRow("cccccccc-0000-4000-8000-000000000003", "Water Kiosk", { listing_status: "closed" }),
+      oppRow("dddddddd-0000-4000-8000-000000000004", "Water Kiosk")
+    );
+    // The public cannot see the author's closed row.
+    const pub = { ...author, tables: { ...author.tables, opportunities: author.tables.opportunities.filter((row) => row.listing_status === "published") } };
+    const asAuthor = await createOpportunityRepository(fakeClients(author), { now: NOW }).listOpportunities();
+    const asPublic = await createOpportunityRepository(fakeClients(pub), { now: NOW }).listOpportunities();
+    const slugOf = (items: Opportunity[], id: string) => items.find((item) => item.id === id)?.slug;
+    expect(slugOf(asAuthor, "dddddddd-0000-4000-8000-000000000004")).toBe("water-kiosk");
+    expect(slugOf(asPublic, "dddddddd-0000-4000-8000-000000000004")).toBe("water-kiosk");
+    // The closed row never takes the published listing's slug.
+    expect(slugOf(asAuthor, "cccccccc-0000-4000-8000-000000000003")).toBe("water-kiosk-cccccccc");
+    const repo = createOpportunityRepository(fakeClients(author), { now: NOW });
+    expect((await repo.findOpportunityBySlug("water-kiosk"))?.id).toBe("dddddddd-0000-4000-8000-000000000004");
+    expect((await repo.findOpportunityBySlug("water-kiosk-cccccccc"))?.id).toBe("cccccccc-0000-4000-8000-000000000003");
+  });
+
+  it("uses the author's oldest figure as leaderId and exposes ownerUserId", async () => {
+    const db = state();
+    db.tables.political_figures.push({ id: "pf-later", user_id: AUTHOR, created_at: "2026-09-01" });
+    const item = await createOpportunityRepository(fakeClients(db), { now: NOW }).findOpportunity(OPP);
+    expect(item?.leaderId).toBe("pf-1");
+    expect(ownerUserIdOf(item)).toBe(AUTHOR);
   });
 
   it("refuses to edit another author's listing", async () => {
@@ -145,7 +229,7 @@ describe("application repository", () => {
     await expect(createApplicationRepository(fakeClients(db)).upsert(app)).rejects.toThrow(/already applied/);
   });
 
-  it("stores shortlisted as reviewed when the CHECK list lacks it", async () => {
+  it("answers 501 for shortlisted when the CHECK list lacks it, never storing reviewed", async () => {
     const db = state({
       fail: [
         {
@@ -169,10 +253,29 @@ describe("application repository", () => {
     });
     const repo = createApplicationRepository(fakeClients(db), { now: NOW });
     const existing = (await repo.find("cccccccc-0000-4000-8000-000000000001"))!;
-    const saved = await repo.upsert({ ...existing, status: "shortlisted" });
-    expect(saved.status).toBe("reviewing");
+    await expect(repo.upsert({ ...existing, status: "shortlisted" })).rejects.toMatchObject({
+      status: 501,
+      code: "not_implemented",
+    });
     const updates = db.calls.filter((call) => call.op === "update");
-    expect(updates.map((call) => (call.values as { status: string }).status)).toEqual(["shortlisted", "reviewed"]);
+    expect(updates.map((call) => (call.values as { status: string }).status)).toEqual(["shortlisted"]);
+    expect(db.tables.opportunity_applications[0].status).toBe("pending");
+  });
+
+  it("refuses with 501 to drop an applicant's county/attachment before M6", async () => {
+    const missing = { code: "PGRST204", message: "Could not find the 'attachment_url' column of 'opportunity_applications'" };
+    const withM6 = (call: { values?: unknown }) => "attachment_url" in (call.values as object);
+    const db = state({
+      userId: OTHER,
+      fail: [{ table: "opportunity_applications", op: "insert", error: missing, when: withM6 }],
+    });
+    const repo = createApplicationRepository(fakeClients(db), { now: NOW });
+    await expect(repo.upsert({ ...app, county: "Nairobi" })).rejects.toMatchObject({ status: 501 });
+    expect(db.tables.opportunity_applications).toHaveLength(0);
+    // Without M6 data the retry is harmless.
+    db.fail = [{ table: "opportunity_applications", op: "insert", error: missing, when: withM6 }];
+    await expect(repo.upsert(app)).resolves.toMatchObject({ applicantId: OTHER });
+    expect(db.tables.opportunity_applications[0]).not.toHaveProperty("county");
   });
 
   it("reports false when RLS lets nothing be deleted", async () => {
@@ -182,12 +285,21 @@ describe("application repository", () => {
     expect(await repo.delete("app-1")).toBe(false);
   });
 
-  it("listAll uses the service client", async () => {
+  it("listAll checks the admin role, then uses the service client", async () => {
     const service = state();
     service.tables.opportunity_applications.push({ id: "x", opportunity_id: OPP, status: "accepted", created_at: "" });
-    const repo = createApplicationRepository(fakeClients(state(), service));
+    const repo = createApplicationRepository(fakeClients(state({ appRole: "admin" }), service));
     expect((await repo.listAll()).map((item) => item.status)).toEqual(["accepted"]);
     expect(await repo.list()).toEqual([]);
+  });
+
+  it("listAll refuses non-admins (403) and signed-out callers (401) before touching the service client", async () => {
+    const service = state();
+    await expect(createApplicationRepository(fakeClients(state(), service)).listAll()).rejects.toMatchObject({ status: 403 });
+    await expect(
+      createApplicationRepository(fakeClients(state({ userId: undefined }), service)).listAll()
+    ).rejects.toMatchObject({ status: 401 });
+    expect(service.calls).toHaveLength(0);
   });
 });
 
@@ -214,8 +326,16 @@ describe("engagement repository", () => {
     await expect(repo.setSavedOpportunityIds(AUTHOR, [OPP])).rejects.toThrow(/M8/);
   });
 
+  it("refuses to list Adly leads for a non-admin (403)", async () => {
+    const service = state();
+    await expect(createEngagementRepository(fakeClients(state(), service)).listAdlyInterests()).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(service.calls).toHaveLength(0);
+  });
+
   it("adds Adly leads with anon and without RETURNING; lists with service", async () => {
-    const db = state();
+    const db = state({ appRole: "admin" });
     const repo = createEngagementRepository(fakeClients(db));
     const lead = await repo.addAdlyInterest({
       fullName: "Amina",

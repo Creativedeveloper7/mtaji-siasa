@@ -27,15 +27,39 @@ function db(overrides: Partial<FakeDb["tables"]> = {}): FakeDb {
 }
 
 describe("session building from Tracker rows", () => {
-  it("uses the newest political_figures row for role and leaderId", async () => {
+  it("uses the oldest of the user's own political_figures rows for role and leaderId", async () => {
     const rows = await loadAccountRows(fakeSupabase(db()), user);
     expect(toSession(toAccount(rows))).toEqual({
       userId: user.id,
       email: "amina@example.com",
       fullName: "Amina Mohamed",
-      role: "aspirant",
-      leaderId: "pf-new",
+      role: "leader",
+      leaderId: "pf-old",
     });
+  });
+
+  it("breaks a created_at tie by id", async () => {
+    const rows = await loadAccountRows(
+      fakeSupabase(
+        db({
+          political_figures: [
+            { id: "pf-b", user_id: user.id, status: "active", created_at: "2026-01-01" },
+            { id: "pf-a", user_id: user.id, status: "aspirant", created_at: "2026-01-01" },
+          ],
+        })
+      ),
+      user
+    );
+    expect(toAccount(rows)).toMatchObject({ leaderId: "pf-a", role: "aspirant" });
+  });
+
+  it("ignores a figure row that belongs to someone else", () => {
+    const account = toAccount({
+      user,
+      figure: { id: "pf-other", user_id: "someone-else", status: "aspirant" },
+    });
+    expect(account.leaderId).toBeUndefined();
+    expect(account.role).toBe("leader");
   });
 
   it("falls back to user_metadata when profile fields are empty", async () => {
@@ -70,7 +94,7 @@ describe("session building from Tracker rows", () => {
       ),
       user
     );
-    expect(toAccount(rowsWithForgedRole).role).toBe("aspirant");
+    expect(toAccount(rowsWithForgedRole).role).toBe("leader");
   });
 
   it("fails loudly when a profile table cannot be read", async () => {

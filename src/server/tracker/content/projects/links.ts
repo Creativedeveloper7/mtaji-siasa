@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { anonClient, TrackerConfigError, userClient } from "@/server/tracker/clients";
 import { isUuid } from "@/server/tracker/slug";
+import { phase1LeaderId } from "@/server/tracker/content/media/shared";
 import type { ProjectLinks } from "./mapping";
 import type { ChangemakerRow, FigureLinkRow, InitiativeRow } from "./rows";
 
@@ -114,7 +115,12 @@ export function leaderIdsFrom(
   for (const project of projects) {
     result.set(project.id, []);
     const owner = owners.get(project.changemaker_id);
-    if (owner) for (const figure of figures) if (figure.user_id === owner) push(result, project.id, figure.id);
+    if (owner) {
+      for (const figure of figures) if (figure.user_id === owner) push(result, project.id, figure.id);
+      // An owner without a political_figures row: their Phase 1 leader id
+      // (`user-<uid>`, never the bare uid), as media/polls/products do.
+      if (!result.get(project.id)?.length) push(result, project.id, phase1LeaderId(owner));
+    }
   }
   for (const figure of figures) {
     for (const projectId of figure.commissioned_projects ?? []) {

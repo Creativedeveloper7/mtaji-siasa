@@ -83,4 +83,9 @@ describe("objectPathFromPublicUrl", () => {
     expect(objectPathFromPublicUrl(`${base}/storage/v1/object/public/initiative-images/${UID}/../x.jpg`, base)).toBeNull();
     expect(objectPathFromPublicUrl(`${base}/storage/v1/object/public/initiative-images/`, base)).toBeNull();
   });
+  it("treats malformed percent-encoding as not ours instead of throwing", () => {
+    const url = `${base}/storage/v1/object/public/initiative-images/${UID}/2026-10/%E0%A4%A`;
+    expect(() => objectPathFromPublicUrl(url, base)).not.toThrow();
+    expect(objectPathFromPublicUrl(url, base)).toBeNull();
+  });
 });

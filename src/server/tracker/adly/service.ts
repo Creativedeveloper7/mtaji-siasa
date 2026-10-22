@@ -9,24 +9,32 @@ import { visibleAdly } from "@/server/adly/service";
 import { parseCampaign, parseCreative as parseSiasaCreative, parsePolicyReview } from "@/server/adly/parse";
 import { asString, isRecord } from "@/server/content/parse";
 import type { ContentActor, ContentResult } from "@/server/content/service";
-import { serviceClient, userClient } from "@/server/tracker/clients";
+import { serviceClient } from "@/server/tracker/clients";
 import { AD_LIMITS, trackerAdSettings } from "@/server/tracker/adly/config";
-import { callEdge, EdgeError, edgeErrorMessage, userAccessToken } from "@/server/tracker/adly/edge";
+import { callEdge, EdgeError, edgeErrorMessage } from "@/server/tracker/adly/edge";
+import { AdlyError, PUBLISHING_MESSAGE } from "@/server/tracker/adly/errors";
 import {
   adComposerToRow,
   campaignIdFromCreativeId,
   campaignToRow,
+  channelLabel,
   creativeToRow,
+  hasProviderCampaign,
   insightErrorsToInsights,
+  isClaimActive,
   isPaidAdsRow,
   isPublishedTo,
+  providerCampaignChannels,
   readSiasaMeta,
   recommendationToInsight,
   rowToAdCampaign,
   rowToCampaign,
   rowToCreative,
   withSiasaMeta,
+  type SiasaMeta,
+  type SiasaPublishClaim,
   type SiasaReview,
+  type SiasaUnpaid,
 } from "@/server/tracker/adly/mapping";
 import {
   PUBLISH_FUNCTION,
@@ -40,7 +48,12 @@ import {
 } from "@/server/tracker/adly/plan";
 import * as repo from "@/server/tracker/adly/repository";
 import type { AdlyCampaignRow, ChannelPublishResult, TrackerChannel } from "@/server/tracker/adly/rows";
-import { alreadyDebitedKes, debitForAdSpend, debitForAdSpendUpdate, walletBalance } from "@/server/tracker/adly/wallet";
+import {
+  debitWalletForAdSpend,
+  debitWalletForAdSpendUpdate,
+  signedInWalletUser,
+  trackerAvailableBalance,
+} from "@/server/tracker/wallet/service";
 
 /**
  * Adly and paid ads on the Tracker backend.
@@ -62,26 +75,59 @@ function ok(body: Record<string, unknown>, status = 200): Ok {
   return { ok: true, status, body };
 }
 
-interface SignedIn {
+/** The signed-in user as the wallet module knows it. */
+type WalletUser = Parameters<typeof debitWalletForAdSpend>[0];
+type AdSpendProvider = Parameters<typeof debitWalletForAdSpend>[1]["provider"];
+
+export interface SignedIn {
   client: SupabaseClient;
+  /** auth user id, confirmed with auth.getUser() */
   userId: string;
   token: string;
+  wallet: WalletUser;
 }
 
-async function signedIn(): Promise<SignedIn> {
-  const client = await userClient();
-  const { userId, token } = await userAccessToken(client);
-  return { client, userId, token };
+/**
+ * The signed-in Tracker user, confirmed with auth.getUser(). When the Siasa
+ * session's user id is given it must match (ownership is by auth user id).
+ */
+async function signedIn(expectedUserId?: string): Promise<SignedIn> {
+  const res = await signedInWalletUser(expectedUserId);
+  if (!res.ok) throw new AdlyError(res.error, res.status);
+  return { client: res.data.client, userId: res.data.userId, token: res.data.accessToken, wallet: res.data };
 }
 
-/** Run a service body; turn thrown errors into a ContentResult. */
+/** Balance minus pending withdrawals (the wallet module's rule). */
+async function availableBalance(user: SignedIn): Promise<number> {
+  const res = await trackerAvailableBalance(user.wallet);
+  if (!res.ok) throw new AdlyError(res.error, res.status);
+  return res.data;
+}
+
+async function balanceForDisplay(user: SignedIn): Promise<number | undefined> {
+  const res = await trackerAvailableBalance(user.wallet).catch(() => null);
+  return res?.ok ? res.data : undefined;
+}
+
+/**
+ * Run a service body; turn thrown errors into a ContentResult. Only AdlyError
+ * / EdgeError messages (written for users) reach the client; anything else is
+ * logged and answered generically.
+ */
 async function guard(run: () => Promise<ContentResult>): Promise<ContentResult> {
   try {
     return await run();
   } catch (error) {
-    if (error instanceof EdgeError) return fail(error.status, error.message);
-    return fail(500, error instanceof Error ? error.message : "Something went wrong.");
+    if (error instanceof AdlyError || error instanceof EdgeError) return fail(error.status, error.message);
+    console.error("[adly] unexpected error:", error);
+    return fail(500, "Something went wrong. Try again.");
   }
+}
+
+const EDITOR_ROLES = ["leader", "aspirant", "admin"] as const;
+
+function isEditorRole(role: string): boolean {
+  return (EDITOR_ROLES as readonly string[]).includes(role);
 }
 
 function siteOrigin(requestOrigin?: string): string | undefined {
@@ -95,21 +141,121 @@ export interface PublishOutcome {
   ok: boolean;
   results: ChannelPublishResult[];
   row: AdlyCampaignRow | null;
+  /** Networks that accepted the ad but whose wallet debit failed in this publish */
+  unpaid: SiasaUnpaid[];
+}
+
+const ACCEPTED = ["submitted", "success", "live"];
+
+function providerName(provider: string): string {
+  return channelLabel(provider);
+}
+
+function isWalletProvider(provider: TrackerChannel): provider is TrackerChannel & AdSpendProvider {
+  return provider === "google" || provider === "meta" || provider === "tiktok" || provider === "x";
+}
+
+type DebitOutcome = { ok: true; deltaKes: number } | { ok: false; error: string };
+
+/**
+ * First debit on a network. The RPC is idempotent per (campaign, provider):
+ * when it hands back a transaction that already existed, nothing new was
+ * charged, so deltaKes is 0.
+ */
+async function debitFirst(
+  user: SignedIn,
+  campaignId: string,
+  provider: TrackerChannel,
+  amountKes: number,
+  existingTxIds: Set<string>
+): Promise<DebitOutcome> {
+  if (!isWalletProvider(provider)) return { ok: false, error: "That ad network is not supported for wallet payments." };
+  const res = await debitWalletForAdSpend(user.wallet, { campaignId, provider, amountKes });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, deltaKes: existingTxIds.has(String(res.data.transactionId)) ? 0 : amountKes };
+}
+
+async function debitUpdate(user: SignedIn, campaignId: string, provider: TrackerChannel, newTotalKes: number): Promise<DebitOutcome> {
+  if (!isWalletProvider(provider)) return { ok: false, error: "That ad network is not supported for wallet payments." };
+  const res = await debitWalletForAdSpendUpdate(user.wallet, { campaignId, provider, newTotalKes });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, deltaKes: res.data.deltaKes };
+}
+
+/**
+ * Take the campaign's publish claim (metadata.siasa.publishing). The write is
+ * conditional on the updated_at we read, so of two concurrent publishes only
+ * one gets it; the other answers 409. A claim older than PUBLISH_CLAIM_TTL_MS
+ * is treated as abandoned and may be taken over.
+ */
+export async function claimPublish(
+  user: Pick<SignedIn, "client" | "userId">,
+  row: AdlyCampaignRow,
+  now = new Date()
+): Promise<{ row: AdlyCampaignRow; claim: SiasaPublishClaim }> {
+  if (isClaimActive(readSiasaMeta(row.metadata).publishing, now)) throw new AdlyError(PUBLISHING_MESSAGE, 409);
+  const claim: SiasaPublishClaim = { at: now.toISOString(), by: user.userId };
+  const claimed = await repo.updateCampaign(
+    user.client,
+    row,
+    { metadata: withSiasaMeta(row.metadata, { publishing: claim }) },
+    PUBLISHING_MESSAGE
+  );
+  return { row: claimed, claim };
+}
+
+/**
+ * Release our claim and record unpaid networks, on the freshest row (the
+ * publish functions have written provider ids meanwhile). Retries a few times
+ * on a concurrent write; never throws.
+ */
+async function releasePublish(
+  user: Pick<SignedIn, "client">,
+  campaignId: string,
+  claim: SiasaPublishClaim,
+  unpaid: SiasaUnpaid[]
+): Promise<void> {
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const fresh = await repo.findCampaign(user.client, campaignId);
+      if (!fresh) return;
+      const siasa = readSiasaMeta(fresh.metadata);
+      const ours = siasa.publishing?.at === claim.at && siasa.publishing?.by === claim.by;
+      if (!ours && !unpaid.length) return;
+      const patch: Partial<SiasaMeta> = {};
+      if (ours) patch.publishing = undefined;
+      if (unpaid.length) patch.unpaid = [...(siasa.unpaid ?? []), ...unpaid];
+      try {
+        await repo.updateCampaign(user.client, fresh, { metadata: withSiasaMeta(fresh.metadata, patch) });
+        return;
+      } catch (error) {
+        if (error instanceof AdlyError && error.status === 409) continue;
+        throw error;
+      }
+    }
+    throw new Error("still changing after retries");
+  } catch (error) {
+    // The claim expires on its own after PUBLISH_CLAIM_TTL_MS; unpaid entries are also in the response and this log.
+    console.error("[adly] could not release the publish claim / record unpaid debits:", campaignId, error, JSON.stringify(unpaid));
+  }
 }
 
 /**
  * Publish the campaign plan to each selected live network (Google, X), the way
  * the Tracker's adsRepository.publishCampaignPlan does:
+ *  0. claim the campaign (one publish at a time),
  *  1. split the client budget across the networks,
- *  2. check the wallet covers each share (only the increase on a republish),
+ *  2. check the available wallet balance covers each share (only the increase on a republish),
  *  3. call the network's edge function with the user's token,
- *  4. debit the wallet only when the network accepted it (submitted / updated),
- *  5. pull insights once at the end.
+ *  4. debit the wallet only when the network accepted it (submitted / updated);
+ *     a failed debit after acceptance is recorded in metadata.siasa.unpaid,
+ *  5. pull insights once at the end, then release the claim.
+ * Every publish entry point (publish route, campaign action, composer) goes through here.
  */
 export async function publishPlan(
   user: SignedIn,
   row: AdlyCampaignRow,
-  options: { origin?: string; only?: TrackerChannel } = {}
+  options: { origin?: string; only?: TrackerChannel; now?: Date } = {}
 ): Promise<PublishOutcome> {
   const selected = resolvePublishChannels(row.channels);
   const channels = options.only ? selected.filter((c) => c === options.only) : selected;
@@ -117,70 +263,109 @@ export async function publishPlan(
     return {
       ok: false,
       row,
+      unpaid: [],
       results: [{ provider: options.only ?? "google", ok: false, error: "Choose Google or X before publishing." }],
     };
   }
   const plan = normalizePlan(row);
+  if (plan.budgetKes <= 0) {
+    return {
+      ok: false,
+      row,
+      unpaid: [],
+      results: channels.map((provider) => ({ provider, ok: false, error: "Set a budget before publishing." })),
+    };
+  }
+
+  const { row: claimed, claim } = await claimPublish(user, row, options.now);
   const shares = splitBudgetAcrossChannels(plan.budgetKes, selected);
   const settings = trackerAdSettings();
   const origin = siteOrigin(options.origin);
   const results: ChannelPublishResult[] = [];
+  const unpaid: SiasaUnpaid[] = [];
 
-  for (const provider of channels) {
-    const shareKes = shares[provider] ?? plan.budgetKes;
-    const republish = isPublishedTo(row, provider);
-    try {
-      // Wallet gate before any network call: a live ad must be fundable.
-      const required = republish ? Math.max(0, shareKes - (await alreadyDebitedKes(user.client, row.id, provider))) : shareKes;
-      if (required > 0) {
-        const balance = await walletBalance(user.client, user.userId);
-        if (balance < required) {
+  try {
+    for (const provider of channels) {
+      const shareKes = shares[provider] ?? plan.budgetKes;
+      const republish = isPublishedTo(claimed, provider);
+      try {
+        // Wallet gate before any network call: a live ad must be fundable.
+        const debits = await repo.adSpendDebits(user.client, row.id, provider);
+        const required = Math.max(0, shareKes - debits.totalKes);
+        if (required > 0) {
+          const available = await availableBalance(user);
+          if (available < required) {
+            results.push({
+              provider,
+              ok: false,
+              status: "failed",
+              error: `Insufficient wallet balance (KES ${available.toLocaleString()} available, need KES ${required.toLocaleString()}). Top up your wallet first.`,
+            });
+            continue;
+          }
+        }
+
+        const payload =
+          provider === "google"
+            ? buildGooglePublishPayload(claimed, shareKes, origin)
+            : buildXPublishPayload(claimed, shareKes, origin);
+        const res = await callEdge(PUBLISH_FUNCTION[provider], user.token, { ...payload, dry_run: settings.dryRun });
+        const status = typeof res.json.status === "string" ? res.json.status : undefined;
+        if (!res.ok || status === "failed") {
           results.push({
             provider,
             ok: false,
             status: "failed",
-            error: `Insufficient wallet balance (KES ${balance.toLocaleString()} available, need KES ${required.toLocaleString()}). Top up your wallet first.`,
+            error: edgeErrorMessage(res, `${providerName(provider)} did not accept the ad`, `${PUBLISH_FUNCTION[provider]} ${row.id}`),
           });
           continue;
         }
-      }
 
-      const payload =
-        provider === "google" ? buildGooglePublishPayload(row, shareKes, origin) : buildXPublishPayload(row, shareKes, origin);
-      const res = await callEdge(PUBLISH_FUNCTION[provider], user.token, { ...payload, dry_run: settings.dryRun });
-      const status = typeof res.json.status === "string" ? res.json.status : undefined;
-      if (!res.ok || status === "failed") {
-        results.push({ provider, ok: false, status: "failed", error: edgeErrorMessage(res, `${provider} publish failed`) });
-        continue;
+        let walletWarning: string | undefined;
+        let debit: DebitOutcome | null = null;
+        if (status && ACCEPTED.includes(status) && !republish) {
+          debit = await debitFirst(user, row.id, provider, shareKes, debits.ids);
+        } else if (status === "updated" || (status && ACCEPTED.includes(status) && republish)) {
+          // Gross share, the same basis as the first debit (the Tracker UI uses total_budget_kes).
+          debit = await debitUpdate(user, row.id, provider, shareKes);
+          if (debit.ok && debit.deltaKes > 0) walletWarning = `KES ${debit.deltaKes.toLocaleString()} more reserved for the budget increase.`;
+        }
+        if (debit && !debit.ok) {
+          const amountKes = required > 0 ? required : shareKes;
+          console.error("[adly] wallet debit failed after the network accepted the ad:", row.id, provider, amountKes, debit.error);
+          unpaid.push({ provider, amountKes, at: new Date().toISOString(), error: debit.error });
+          walletWarning = `Unpaid: ${providerName(provider)} accepted the ad but your wallet was not charged (${debit.error.replace(/[.\s]+$/, "")}). It is marked unpaid; top up and an admin will settle it.`;
+        }
+        results.push({
+          provider,
+          ok: true,
+          status,
+          message: typeof res.json.message === "string" ? res.json.message : undefined,
+          walletWarning,
+        });
+      } catch (error) {
+        const safe = error instanceof AdlyError || error instanceof EdgeError;
+        if (!safe) console.error("[adly] publish failed:", row.id, provider, error);
+        results.push({ provider, ok: false, error: safe ? (error as Error).message : "Publish failed. Try again." });
       }
-
-      let walletWarning: string | undefined;
-      if (status === "submitted" || status === "success" || status === "live") {
-        const debit = await debitForAdSpend(user.client, row.id, provider, shareKes);
-        if (!debit.ok) walletWarning = debit.error;
-      } else if (status === "updated") {
-        // Gross share, the same basis as the first debit (see report: the Tracker UI uses total_budget_kes).
-        const debit = await debitForAdSpendUpdate(user.client, row.id, provider, shareKes);
-        if (!debit.ok) walletWarning = debit.error;
-        else if (debit.deltaKes > 0) walletWarning = `KES ${debit.deltaKes.toLocaleString()} more reserved for the budget increase.`;
-      }
-      results.push({
-        provider,
-        ok: true,
-        status,
-        message: typeof res.json.message === "string" ? res.json.message : undefined,
-        walletWarning,
-      });
-    } catch (error) {
-      results.push({ provider, ok: false, error: error instanceof Error ? error.message : "Publish failed." });
     }
-  }
 
-  if (results.some((r) => r.ok && r.status !== "dry_run")) {
-    await callEdge("sync-ad-insights", user.token, { campaign_id: row.id }, 45_000).catch(() => null);
+    if (results.some((r) => r.ok && r.status !== "dry_run")) {
+      await callEdge("sync-ad-insights", user.token, { campaign_id: row.id }, 45_000).catch(() => null);
+    }
+  } finally {
+    await releasePublish(user, row.id, claim, unpaid);
   }
   const fresh = await repo.findCampaign(user.client, row.id);
-  return { ok: results.length > 0 && results.every((r) => r.ok), results, row: fresh };
+  return { ok: results.length > 0 && results.every((r) => r.ok), results, row: fresh, unpaid };
+}
+
+/** Warnings to return with a publish: one per network that is live but unpaid. */
+function publishWarnings(outcome: PublishOutcome): string[] {
+  return outcome.unpaid.map(
+    (u) =>
+      `${providerName(u.provider)} accepted the ad but KES ${u.amountKes.toLocaleString()} could not be charged to your wallet. It is marked unpaid.`
+  );
 }
 
 export function summarizePublish(results: ChannelPublishResult[]): string {
@@ -199,23 +384,49 @@ export function summarizePublish(results: ChannelPublishResult[]): string {
 /** sync-ad-insights for one campaign, then the stored stats. */
 export async function syncInsights(user: SignedIn, campaignId: string) {
   const res = await callEdge("sync-ad-insights", user.token, { campaign_id: campaignId }, 45_000);
-  const errors = Array.isArray(res.json.errors) ? (res.json.errors as { provider: string; error: string }[]) : [];
+  const rawErrors = Array.isArray(res.json.errors) ? (res.json.errors as { provider?: unknown; error?: unknown }[]) : [];
+  if (rawErrors.length) console.error("[adly] sync-ad-insights provider errors:", campaignId, JSON.stringify(rawErrors));
+  // Provider text stays in the server log; the client gets which network failed.
+  const errors = rawErrors
+    .filter((e) => typeof e?.provider === "string")
+    .map((e) => ({ provider: String(e.provider), error: `Could not refresh results from ${providerName(String(e.provider))}.` }));
   const stats = (await repo.listStats(user.client, [campaignId])).get(campaignId) ?? [];
   return {
     live: res.ok,
-    message: res.ok ? undefined : edgeErrorMessage(res, "Insights sync failed"),
+    message: res.ok ? undefined : edgeErrorMessage(res, "Results could not be refreshed", `sync-ad-insights ${campaignId}`),
     errors,
     stats,
   };
 }
 
-function approvalBlocks(row: AdlyCampaignRow): string | null {
+/**
+ * Why this campaign cannot be published yet, or null. With
+ * ADS_REQUIRE_APPROVAL on, publishing needs review.state === "approved" —
+ * whatever the row status says. The one exception is a campaign published from
+ * the Tracker (no Siasa review) whose every selected network already has a
+ * provider campaign id: that publish updates the campaign in place. Edits
+ * after approval reset the review to pending (applyEditReview), so they need a
+ * new approval.
+ */
+export function approvalBlocks(row: AdlyCampaignRow, channels: TrackerChannel[] = resolvePublishChannels(row.channels)): string | null {
   if (!trackerAdSettings().requireApproval) return null;
-  if (row.status !== "draft") return null; // already live: republish updates in place
   const review = readSiasaMeta(row.metadata).review;
   if (review?.state === "approved") return null;
   if (review?.state === "rejected" || review?.state === "cancelled") return "This ad was not approved.";
+  if (!review && channels.length > 0 && channels.every((c) => isPublishedTo(row, c))) return null;
+  if (review?.state === "pending" && hasProviderCampaign(row)) {
+    return "Your changes have to be approved by an admin before they can be republished.";
+  }
   return "An admin has to approve this ad before it can be published.";
+}
+
+/** Admins may look at any campaign but only the owner edits or publishes it. */
+async function notOwned(session: { role: string }, id: string, verb: string): Promise<ContentResult> {
+  if (session.role === "admin" && repo.isUuid(id)) {
+    const other = await repo.findCampaign(serviceClient(), id);
+    if (other) return fail(403, `Admins can review but not ${verb} others' campaigns.`);
+  }
+  return fail(404, "Campaign not found.");
 }
 
 /** POST /api/ads/publish/[id]: owner publishes (or republishes) a campaign. */
@@ -225,13 +436,15 @@ export async function publishCampaign(
   body: unknown,
   requestOrigin?: string
 ): Promise<ContentResult> {
+  if (!isEditorRole(session.role)) return fail(403, "Only leaders, aspirants and admins can publish ads.");
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(session.userId);
     const row = await repo.findCampaign(user.client, id);
-    if (!row) return fail(404, "Campaign not found.");
-    const blocked = approvalBlocks(row);
-    if (blocked) return fail(409, blocked);
+    if (!row) return notOwned(session, id, "publish");
     const only = isRecord(body) && (body.channel === "google" || body.channel === "x") ? body.channel : undefined;
+    const channels = resolvePublishChannels(row.channels).filter((c) => !only || c === only);
+    const blocked = approvalBlocks(row, channels);
+    if (blocked) return fail(409, blocked);
     const outcome = await publishPlan(user, row, { origin: requestOrigin, only });
     const current = outcome.row ?? row;
     const stats = (await repo.listStats(user.client, [current.id])).get(current.id) ?? [];
@@ -240,9 +453,10 @@ export async function publishCampaign(
         ok: outcome.ok,
         results: outcome.results,
         summary: summarizePublish(outcome.results),
+        warnings: publishWarnings(outcome),
         item: rowToAdCampaign(current, { stats, fallbackLeaderId: session.leaderId, reachPerKes: trackerAdSettings().reachPerKes }),
         campaign: rowToCampaign(current, { stats, fallbackLeaderId: session.leaderId }),
-        walletBalance: await walletBalance(user.client, user.userId).catch(() => undefined),
+        walletBalance: await balanceForDisplay(user),
       },
       outcome.ok ? 200 : 207
     );
@@ -296,12 +510,12 @@ export async function listTrackerAds(session: AuthSession, scope: "mine" | "all"
       return ok({ ok: true, items, quote: trackerAdQuote() });
     }
     if (!session.leaderId) return fail(403, "Your account is not linked to a leader profile.");
-    const user = await signedIn();
+    const user = await signedIn(session.userId);
     const rows = (await repo.listOwnCampaigns(user.client, user.userId)).filter(isPaidAdsRow);
     const [stats, thumbs, balance, audits] = await Promise.all([
       repo.listStats(user.client, rows.map((r) => r.id)),
       repo.thumbnailUrls(user.client, rows),
-      walletBalance(user.client, user.userId).catch(() => undefined),
+      balanceForDisplay(user),
       repo.latestAudits(user.client, rows.map((r) => r.id)),
     ]);
     const items = rows.map((row) =>
@@ -371,10 +585,10 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   const landingUrl = `${origin.replace(/\/$/, "")}/projects/${project.slug}`;
 
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(session.userId);
     if (!settings.requireApproval) {
-      const balance = await walletBalance(user.client, user.userId);
-      if (balance < budgetKes) return fail(402, `Your wallet has KES ${balance.toLocaleString()}. Top up or lower the budget.`);
+      const balance = await availableBalance(user);
+      if (balance < budgetKes) return fail(402, `Your wallet has KES ${balance.toLocaleString()} available. Top up or lower the budget.`);
     }
     let row = await repo.insertCampaign(
       user.client,
@@ -404,7 +618,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
       const asset = await repo.uploadImageFromUrl(user.client, user.userId, row.id, project.image);
       const creative = obj(row.creative);
       const xShape = obj(obj(creative.platforms).x);
-      row = await repo.updateCampaign(user.client, row.id, {
+      row = await repo.updateCampaign(user.client, row, {
         creative: {
           ...creative,
           media: [asset],
@@ -412,20 +626,23 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
           platforms: { ...obj(creative.platforms), x: { ...xShape, asset_ids: [asset.id] } },
         },
       });
-    } catch {
+    } catch (error) {
       // X runs text-only; Google search ads take no image.
+      console.warn("[adly] project image not copied:", row.id, error instanceof Error ? error.message : error);
     }
 
     let summary: string | undefined;
+    let warnings: string[] = [];
     if (!settings.requireApproval) {
       const outcome = await publishPlan(user, row, { origin: requestOrigin });
       row = outcome.row ?? row;
       summary = summarizePublish(outcome.results);
+      warnings = publishWarnings(outcome);
     }
     const stats = (await repo.listStats(user.client, [row.id])).get(row.id) ?? [];
     const item = rowToAdCampaign(row, { stats, fallbackLeaderId: leaderId, reachPerKes: settings.reachPerKes });
     if (summary) item.statusNote = summary;
-    return ok({ ok: true, item, walletBalance: await walletBalance(user.client, user.userId).catch(() => undefined) }, 201);
+    return ok({ ok: true, item, warnings, walletBalance: await balanceForDisplay(user) }, 201);
   });
 }
 
@@ -456,11 +673,16 @@ export async function actOnTrackerAd(
       );
     }
 
+    if ((action === "publish" || action === "sync") && !isEditorRole(session.role)) {
+      return fail(403, "Only leaders, aspirants and admins can publish or refresh ads.");
+    }
+
     if (session.role === "admin" && (action === "approve" || action === "reject")) {
       const service = serviceClient();
       const row = await repo.findCampaign(service, id);
       if (!row) return fail(404, "Campaign not found.");
-      if (row.status !== "draft" || readSiasaMeta(row.metadata).review?.state !== "pending") {
+      // Drafts waiting for a first approval, and published campaigns whose edits wait for one.
+      if (row.status === "archived" || readSiasaMeta(row.metadata).review?.state !== "pending") {
         return fail(400, "This ad is not waiting for approval.");
       }
       const review: SiasaReview = {
@@ -469,12 +691,12 @@ export async function actOnTrackerAd(
         at: new Date().toISOString(),
         by: session.userId,
       };
-      const saved = await repo.adminUpdateMetadata(service, id, withSiasaMeta(row.metadata, { review }));
+      const saved = await repo.adminUpdateMetadata(service, row, withSiasaMeta(row.metadata, { review }));
       const leaders = await repo.leaderIdsForUsers(service, [saved.user_id]);
       return ok({ ok: true, item: view(saved, undefined, leaders.get(saved.user_id)) });
     }
 
-    const user = await signedIn();
+    const user = await signedIn(session.userId);
     const row = await repo.findCampaign(user.client, id);
     if (!row && session.role === "admin" && action === "sync") {
       // Admin viewing someone else's ad: sync-ad-insights only runs for the owner,
@@ -494,8 +716,10 @@ export async function actOnTrackerAd(
 
     if (action === "reject") {
       // Owner cancels before publishing. Nothing was charged: the Tracker debits on publish.
-      if (row.status !== "draft") return fail(400, "Only ads that have not been published can be cancelled.");
-      const saved = await repo.updateCampaign(user.client, id, {
+      if (row.status !== "draft" || hasProviderCampaign(row)) {
+        return fail(400, "Only ads that have not been published can be cancelled.");
+      }
+      const saved = await repo.updateCampaign(user.client, row, {
         status: "archived",
         metadata: withSiasaMeta(row.metadata, {
           review: { state: "cancelled", at: new Date().toISOString(), by: user.userId },
@@ -511,8 +735,14 @@ export async function actOnTrackerAd(
       const current = outcome.row ?? row;
       const stats = await repo.listStats(user.client, [current.id]);
       const item = view(current, stats, session.leaderId);
-      item.statusNote = summarizePublish(outcome.results);
-      return ok({ ok: true, item, results: outcome.results, walletBalance: await walletBalance(user.client, user.userId).catch(() => undefined) });
+      item.statusNote = [summarizePublish(outcome.results), item.statusNote].filter(Boolean).join(" ");
+      return ok({
+        ok: true,
+        item,
+        results: outcome.results,
+        warnings: publishWarnings(outcome),
+        walletBalance: await balanceForDisplay(user),
+      });
     }
 
     // sync
@@ -521,7 +751,7 @@ export async function actOnTrackerAd(
     const current = (await repo.findCampaign(user.client, id)) ?? row;
     const item = view(current, new Map([[id, synced.stats]]), session.leaderId);
     if (synced.message) item.statusNote = synced.message;
-    return ok({ ok: true, item, errors: synced.errors, walletBalance: await walletBalance(user.client, user.userId).catch(() => undefined) });
+    return ok({ ok: true, item, errors: synced.errors, walletBalance: await balanceForDisplay(user) });
   });
 }
 
@@ -546,7 +776,7 @@ export async function readTrackerWorkspace(actor: ContentActor): Promise<Content
       const leaders = await repo.leaderIdsForUsers(client, rows.map((r) => r.user_id));
       leaderFor = (row) => leaders.get(row.user_id);
     } else {
-      const user = await signedIn();
+      const user = await signedIn(actor.userId);
       client = user.client;
       rows = await repo.listOwnCampaigns(client, user.userId);
       leaderFor = () => actor.leaderId;
@@ -602,34 +832,41 @@ export async function saveTrackerPlan(actor: ContentActor, body: unknown): Promi
   if (!isRecord(body) || !isRecord(body.campaign)) return fail(400, "campaign is required.");
   const campaignBody = body.campaign;
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(actor.userId);
+    const settings = trackerAdSettings();
     const requestedId = asString(campaignBody.id);
-    const existing = requestedId ? await repo.findCampaign(user.client, requestedId) : null;
+    // A uuid names a stored row: it has to be the caller's. Other ids are client
+    // placeholders for a new campaign (the Tracker assigns the uuid).
+    const existing = requestedId && repo.isUuid(requestedId) ? await repo.findCampaign(user.client, requestedId) : null;
+    if (requestedId && repo.isUuid(requestedId) && !existing) return notOwned(actor, requestedId, "edit");
     const stamped = actor.role === "admin" ? campaignBody : { ...campaignBody, leaderId: actor.leaderId };
     const parsed = parseCampaign(stamped, existing ? rowToCampaign(existing) : undefined);
     if (typeof parsed === "string") return fail(400, parsed);
     if (actor.role !== "admin") parsed.leaderId = actor.leaderId;
+    let projectTitle: string | undefined;
     if (parsed.projectId) {
       const project = await getRepositories().content.findProject(parsed.projectId);
       if (!project) return fail(400, "That project was not found.");
       if (actor.role !== "admin" && !project.leaderIds.includes(actor.leaderId)) {
         return fail(403, "That project is not on your profile.");
       }
+      projectTitle = project.name;
     }
+    const writeOptions = { projectTitle, requireApproval: settings.requireApproval };
 
     let row = existing
-      ? await repo.updateCampaign(user.client, existing.id, campaignToRow(parsed, existing))
-      : await repo.insertCampaign(user.client, { ...campaignToRow(parsed, null), user_id: user.userId });
+      ? await repo.updateCampaign(user.client, existing, campaignToRow(parsed, existing, writeOptions))
+      : await repo.insertCampaign(user.client, { ...campaignToRow(parsed, null, writeOptions), user_id: user.userId });
 
     if (isRecord(body.creative)) {
       const creative = parseSiasaCreative({ ...body.creative, id: `cr_${row.id}` });
       if (typeof creative === "string") return fail(400, creative);
-      row = await repo.updateCampaign(user.client, row.id, creativeToRow(creative, row));
+      row = await repo.updateCampaign(user.client, row, creativeToRow(creative, row, writeOptions));
     }
     if (isRecord(body.policyReview)) {
       const review = parsePolicyReview({ ...body.policyReview, campaignId: row.id });
       if (typeof review === "string") return fail(400, review);
-      row = await repo.updateCampaign(user.client, row.id, { metadata: withSiasaMeta(row.metadata, { policy_review: review }) });
+      row = await repo.updateCampaign(user.client, row, { metadata: withSiasaMeta(row.metadata, { policy_review: review }) });
     }
     const stats = (await repo.listStats(user.client, [row.id])).get(row.id);
     return ok(
@@ -644,30 +881,50 @@ export async function saveTrackerPlan(actor: ContentActor, body: unknown): Promi
 }
 
 /** Save one creative (id cr_<campaign uuid>) into its campaign's creative jsonb. */
-export async function saveTrackerCreative(body: unknown): Promise<ContentResult> {
+export async function saveTrackerCreative(actor: ContentActor, body: unknown): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Creative body must be an object.");
   const campaignId = campaignIdFromCreativeId(asString(body.id) ?? "");
   if (!campaignId) return fail(400, "Save the creative together with its campaign.");
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(actor.userId);
     const row = await repo.findCampaign(user.client, campaignId);
-    if (!row) return fail(404, "Campaign not found.");
+    if (!row) return notOwned(actor, campaignId, "edit");
     const parsed = parseSiasaCreative(body, rowToCreative(row) ?? undefined);
     if (typeof parsed === "string") return fail(400, parsed);
-    const saved = await repo.updateCampaign(user.client, row.id, creativeToRow(parsed, row));
+    const saved = await repo.updateCampaign(
+      user.client,
+      row,
+      creativeToRow(parsed, row, { requireApproval: trackerAdSettings().requireApproval })
+    );
     return ok({ ok: true, item: rowToCreative(saved) });
   });
 }
 
-/** Drafts are deleted; anything that reached a network is archived to keep its audit trail. */
-export async function deleteTrackerCampaign(id: string): Promise<ContentResult> {
+const RUNNING_STATUSES = ["live", "submitted", "paused"];
+
+/**
+ * Drafts are deleted; anything that reached a network is archived to keep its
+ * audit trail. A campaign that is running on a network is refused: archiving
+ * in Siasa does not stop it there.
+ */
+export async function deleteTrackerCampaign(actor: ContentActor, id: string): Promise<ContentResult> {
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(actor.userId);
     const row = await repo.findCampaign(user.client, id);
-    if (!row) return fail(404, "Campaign not found.");
-    const touchedNetwork = Object.keys(obj(row.metadata)).some((k) => k.endsWith("_campaign_id")) || row.status !== "draft";
-    if (touchedNetwork) await repo.updateCampaign(user.client, id, { status: "archived" });
-    else await repo.deleteCampaign(user.client, id);
+    if (!row) return notOwned(actor, id, "delete");
+    if (isClaimActive(readSiasaMeta(row.metadata).publishing)) return fail(409, PUBLISHING_MESSAGE);
+    const onNetwork = providerCampaignChannels(row);
+    if (onNetwork.length && RUNNING_STATUSES.includes(row.status)) {
+      const where = onNetwork.map(providerName).join(" and ");
+      return fail(
+        409,
+        `This campaign is running on ${where}. Stop it in ${onNetwork.length > 1 ? "each network's" : `${where}'s`} Ads Manager first, then archive it here.`
+      );
+    }
+    const touchedNetwork =
+      onNetwork.length > 0 || Object.keys(obj(row.metadata)).some((k) => k.endsWith("_campaign_id")) || row.status !== "draft";
+    if (touchedNetwork) await repo.updateCampaign(user.client, row, { status: "archived" });
+    else await repo.deleteCampaign(user.client, row);
     return ok({ ok: true, archived: touchedNetwork });
   });
 }
@@ -675,9 +932,9 @@ export async function deleteTrackerCampaign(id: string): Promise<ContentResult> 
 // ===========================================================================
 // Adly agent (chat)
 
-export async function readConversation(campaignId: string): Promise<ContentResult> {
+export async function readConversation(campaignId: string, expectedUserId?: string): Promise<ContentResult> {
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(expectedUserId);
     const row = await repo.findCampaign(user.client, campaignId);
     if (!row) return fail(404, "Campaign not found.");
     const [messages, recommendations, stats] = await Promise.all([
@@ -707,6 +964,8 @@ export async function readConversation(campaignId: string): Promise<ContentResul
       })),
       publishable: resolvePublishChannels(row.channels),
       awaitingApproval: approvalBlocks(row),
+      publishing: isClaimActive(readSiasaMeta(row.metadata).publishing),
+      unpaid: readSiasaMeta(row.metadata).unpaid ?? [],
       status: row.status,
       hasCreative: Boolean(parseCreative(row.creative).headline || parseCreative(row.creative).body),
     });
@@ -718,16 +977,16 @@ export async function readConversation(campaignId: string): Promise<ContentResul
  * the user message and the reply in ad_campaign_messages, and may add rows to
  * ad_recommendations.
  */
-export async function chatWithAdly(campaignId: string, body: unknown): Promise<ContentResult> {
+export async function chatWithAdly(campaignId: string, body: unknown, expectedUserId?: string): Promise<ContentResult> {
   const message = isRecord(body) ? asString(body.message) : undefined;
   if (!message) return fail(400, "Type a message for Adly.");
   if (message.length > 4000) return fail(400, "Keep the message under 4,000 characters.");
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(expectedUserId);
     const res = await callEdge("adly-agent", user.token, { campaignId, message, stream: false }, 115_000);
     if (!res.ok || res.json.ok === false) {
       if (res.status === 503) return fail(503, "Adly is not switched on for this project yet.");
-      return fail(res.status >= 400 ? res.status : 502, edgeErrorMessage(res, "Adly could not answer"));
+      return fail(res.status >= 400 && res.status < 500 ? res.status : 502, edgeErrorMessage(res, "Adly could not answer", `adly-agent ${campaignId}`));
     }
     return ok({
       ok: true,
@@ -739,13 +998,13 @@ export async function chatWithAdly(campaignId: string, body: unknown): Promise<C
 }
 
 /** Dismiss or mark applied an Adly recommendation (applying to the plan stays in the Tracker UI for now). */
-export async function setRecommendation(campaignId: string, body: unknown): Promise<ContentResult> {
+export async function setRecommendation(campaignId: string, body: unknown, expectedUserId?: string): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Body must be an object.");
   const id = asString(body.id);
   const status = body.status === "dismissed" || body.status === "applied" ? body.status : null;
   if (!id || !status) return fail(400, "id and status (dismissed | applied) are required.");
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(expectedUserId);
     const owned = await repo.listRecommendations(user.client, [campaignId]);
     if (!owned.some((r) => r.id === id)) return fail(404, "Recommendation not found.");
     await repo.setRecommendationStatus(user.client, id, status);
@@ -756,7 +1015,7 @@ export async function setRecommendation(campaignId: string, body: unknown): Prom
 /** POST /api/adly/insights/[id]: refresh network results for one campaign. */
 export async function syncCampaignInsights(session: AuthSession, campaignId: string): Promise<ContentResult> {
   return guard(async () => {
-    const user = await signedIn();
+    const user = await signedIn(session.userId);
     const row = await repo.findCampaign(user.client, campaignId);
     if (!row) return fail(404, "Campaign not found.");
     const synced = await syncInsights(user, campaignId);

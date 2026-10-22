@@ -5,6 +5,7 @@ import { ShareButton } from "@/components/ui/ShareButton";
 import { SafeImage } from "@/components/ui/SafeImage";
 import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
+import { projectTypeLabel } from "@/lib/projects";
 import type { Project } from "@/types";
 
 interface ProjectHeroProps {
@@ -53,7 +54,7 @@ export function ProjectHero({ project }: ProjectHeroProps) {
 
 export function ProjectStats({ project }: { project: Project }) {
   const items = [
-    { label: "Project type", value: project.subcategory },
+    { label: "Project type", value: projectTypeLabel(project.subcategory) },
     { label: "Location", value: project.location },
     { label: "Status", value: PROJECT_STATUS_LABELS[project.status] },
     { label: "Start date", value: formatDate(project.startDate) },

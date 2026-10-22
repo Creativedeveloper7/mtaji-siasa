@@ -221,20 +221,38 @@ export function opportunityStatusFromTracker(
 }
 
 /**
- * Doc rule: closed → `closed`, anything else → `published`. One refinement:
- * a status of `closed` whose deadline has already passed is what every read
- * returns for an expired listing, so it does not by itself close the row.
- * Otherwise saving an expired listing with a new deadline would hide it.
- * The existing listing_status is kept in that case.
+ * Doc rule: closed → `closed`, anything else → `published`. Refinement: a
+ * Siasa status of `closed` is often only what a read DERIVED from the stored
+ * row (listing_status `published` whose stored deadline has passed), echoed
+ * back by the editor. That echo must not close the row, or extending the
+ * deadline of an expired listing would hide it. So the decision is based on
+ * the STORED row:
+ *
+ * - stored row is `closed` → `closed` stays.
+ * - stored row is `published` and its stored deadline has passed → the
+ *   incoming `closed` is the derived value → `published` is kept (with a new
+ *   future deadline the listing reopens). An author who really wants to close
+ *   an already-expired listing gets the same result on the site: it reads as
+ *   closed until the deadline moves.
+ * - stored row is `published` with a current deadline → `closed` (an explicit close).
+ * - new row: `closed` with a past deadline is the expired echo → `published`;
+ *   otherwise `closed`.
  */
 export function listingStatusToTracker(
   status: OpportunityStatus | undefined,
   deadline: string | null,
-  existing?: string | null,
+  existing?: Pick<OpportunityRow, "listing_status" | "deadline"> | null,
   now: Date = new Date()
 ): ListingStatus {
   if (status !== "closed") return "published";
-  if (deadline && deadline < nairobiToday(now)) return existing === "closed" ? "closed" : "published";
+  const today = nairobiToday(now);
+  if (existing) {
+    if (existing.listing_status === "closed") return "closed";
+    const storedDeadline = toDateOnly(existing.deadline);
+    if (storedDeadline && storedDeadline < today) return "published";
+    return "closed";
+  }
+  if (deadline && deadline < today) return "published";
   return "closed";
 }
 
@@ -389,7 +407,7 @@ export function opportunityToRow(
       deadline,
       location: text(item.location) ?? null,
       initiative_id: projectId ?? null,
-      listing_status: listingStatusToTracker(item.status, deadline, existing?.listing_status, now),
+      listing_status: listingStatusToTracker(item.status, deadline, existing ?? null, now),
     },
     extra: {
       county: text(item.county) ?? null,
@@ -425,15 +443,12 @@ export function applicationStatusFromTracker(status: string | null | undefined):
 }
 
 /**
- * Siasa status → Tracker status. `shortlisted` needs M6; pass
- * `shortlistSupported: false` to get `reviewed` (the live CHECK list).
+ * Siasa status → Tracker status. `shortlisted` needs M6; before it the CHECK
+ * constraint refuses the write and the repository answers 501. It is never
+ * downgraded to `reviewed`.
  */
-export function applicationStatusToTracker(
-  status: ApplicationStatus,
-  shortlistSupported = true
-): TrackerApplicationStatus {
-  const mapped = APPLICATION_WRITE[status] ?? "pending";
-  return mapped === "shortlisted" && !shortlistSupported ? "reviewed" : mapped;
+export function applicationStatusToTracker(status: ApplicationStatus): TrackerApplicationStatus {
+  return APPLICATION_WRITE[status] ?? "pending";
 }
 
 export function applicationFromRow(row: ApplicationRow): OpportunityApplication {
@@ -476,9 +491,9 @@ export function applicationInsertRow(item: OpportunityApplication, applicantId: 
 }
 
 /** Review update (the only update RLS allows: the opportunity author). */
-export function applicationReviewPatch(item: OpportunityApplication, shortlistSupported = true) {
+export function applicationReviewPatch(item: OpportunityApplication) {
   return {
-    base: { status: applicationStatusToTracker(item.status, shortlistSupported) },
+    base: { status: applicationStatusToTracker(item.status) },
     extra: { review_note: text(item.reviewNote) ?? null },
   };
 }

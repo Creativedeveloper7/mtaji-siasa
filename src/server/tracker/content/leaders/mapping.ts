@@ -179,12 +179,19 @@ export function isPubliclyListed(status: string | null | undefined): boolean {
 }
 
 /**
- * aspirant -> 'aspirant'. elected -> keep 'active' / 'seeking_reelection',
- * anything else (new row, 'aspirant', 'inactive', 'former') becomes 'active'.
+ * aspirant -> 'aspirant'. elected -> keep 'active' / 'seeking_reelection';
+ * a new row or an 'aspirant' becomes 'active'. 'inactive' and 'former' both
+ * read as elected, so saving them back must not reactivate the row: they are
+ * kept unless `canReactivate` (admins only).
  */
-export function statusFromType(type: LeaderType, current?: string | null): FigureStatus {
+export function statusFromType(
+  type: LeaderType,
+  current?: string | null,
+  options: { canReactivate?: boolean } = {}
+): FigureStatus {
   if (type === "aspirant") return "aspirant";
   if (current === "active" || current === "seeking_reelection") return current;
+  if ((current === "inactive" || current === "former") && !options.canReactivate) return current;
   return "active";
 }
 
@@ -271,8 +278,13 @@ export function writeManifesto(
   if (!sameList(splitManifesto(base.text), textList(vision.manifesto))) {
     base.text = joinManifesto(vision.manifesto);
   }
-  if (typeof base.text !== "string") base.text = "";
+  // A new manifesto gets text ''; an existing one without text keeps it absent.
+  if (typeof base.text !== "string" && (!isRecord(existing) || vision.manifesto?.length)) base.text = "";
   return base;
+}
+
+function visionHasContent(vision: { priorities: unknown[]; proposedProjects: unknown[]; expectedImpact: unknown[] }): boolean {
+  return vision.priorities.length > 0 || vision.proposedProjects.length > 0 || vision.expectedImpact.length > 0;
 }
 
 function writeVision(vision: Vision, existing: Record<string, unknown> | null | undefined) {
@@ -327,16 +339,25 @@ export interface RowToLeaderOptions {
   profileBio?: string | null;
 }
 
-export function rowToLeader(row: FigureRow, options: RowToLeaderOptions = {}): Leader {
+/** The office text Siasa shows for a row: office_title, manifesto.office_label, else the formatted position. */
+export function readOffice(row: Pick<FigureRow, "office_title" | "manifesto" | "position">): string {
   const manifesto = isRecord(row.manifesto) ? row.manifesto : {};
+  return text(row.office_title) || text(manifesto.office_label) || formatPosition(row.position);
+}
+
+/** The bio Siasa shows for a row: its own bio, else profiles.bio. */
+export function readBio(row: Pick<FigureRow, "bio">, profileBio?: string | null): string {
+  return text(row.bio) || text(profileBio);
+}
+
+export function rowToLeader(row: FigureRow, options: RowToLeaderOptions = {}): Leader {
   const links = options.links ?? NO_LINKS;
   const leader: Leader = {
     id: row.id,
     slug: options.slug || rowSlug(row.name, row.id),
     name: row.name ?? "",
     honorific: text(row.honorific),
-    position:
-      text(row.office_title) || text(manifesto.office_label) || formatPosition(row.position),
+    position: readOffice(row),
     type: typeFromStatus(row.status),
     county: text(row.county),
     constituency: optionalText(row.constituency),
@@ -345,7 +366,7 @@ export function rowToLeader(row: FigureRow, options: RowToLeaderOptions = {}): L
     photo: text(row.profile_image_url),
     coverImage: optionalText(row.cover_image_url),
     shortBio: text(row.short_bio),
-    bio: text(row.bio) || text(options.profileBio),
+    bio: readBio(row, options.profileBio),
     achievements: textList(row.achievements),
     social: readSocial(row.social_links),
     projectIds: [...links.projectIds],
@@ -368,6 +389,10 @@ export interface LeaderToRowOptions {
   now?: Date;
   /** False drops NEW_FIGURE_COLUMNS from the write, for a database without §17 M3/M5. */
   newColumns?: boolean;
+  /** profiles.bio of existing.user_id, as the read used it (bio fallback). */
+  profileBio?: string | null;
+  /** May an 'inactive' / 'former' row become 'active' again? Admins only. */
+  canReactivate?: boolean;
 }
 
 function isoDate(date: Date): string {
@@ -389,33 +414,43 @@ export function leaderToRow(
   if (!name) return { ok: false, error: "Leader name is required." };
 
   const officeTitle = text(leader.position);
+  // The office the read showed (office_title, else manifesto.office_label, else
+  // the formatted position) is sent back unchanged on most saves: then neither
+  // office_title nor position is written.
+  const officeUnchanged = Boolean(existing) && officeTitle === readOffice(existing!);
   const derived = positionFromOffice(officeTitle);
   let position: FigurePosition;
-  if (derived) position = derived;
+  if (officeUnchanged && isFigurePosition(existing!.position)) position = existing!.position;
+  else if (derived) position = derived;
   else if (existing && isFigurePosition(existing.position)) position = existing.position;
   else return { ok: false, error: OFFICE_REQUIRED_MESSAGE };
 
   const row: FigureWrite = {
     name,
     position,
-    status: statusFromType(leader.type, existing?.status),
+    status: statusFromType(leader.type, existing?.status, { canReactivate: options.canReactivate }),
     county: nullableText(leader.county),
     constituency: nullableText(leader.constituency),
     ward: nullableText(leader.ward),
     // §17 M3
     honorific: nullableText(leader.honorific),
-    office_title: officeTitle || null,
     profile_image_url: nullableText(leader.photo),
     cover_image_url: nullableText(leader.coverImage),
     short_bio: nullableText(leader.shortBio),
-    bio: nullableText(leader.bio),
     achievements: textList(leader.achievements),
     social_links: writeSocial(leader.social, existing?.social_links),
   };
+  if (!officeUnchanged) row.office_title = officeTitle || null;
+  // The read falls back to profiles.bio; that fallback is never copied into
+  // political_figures.bio. Only a bio the user changed is written.
+  const bio = text(leader.bio);
+  if (!existing || bio !== readBio(existing, options.profileBio)) row.bio = bio || null;
 
   if (leader.vision) {
     row.manifesto = writeManifesto(leader.vision, existing?.manifesto, now);
-    row.vision = writeVision(leader.vision, existing?.vision); // §17 M5
+    // §17 M5. Written when the row already has one or there is something to store.
+    const vision = writeVision(leader.vision, existing?.vision);
+    if (isRecord(existing?.vision) || visionHasContent(vision)) row.vision = vision;
   } else if (!existing) {
     row.manifesto = { text: "", focus_areas: [], targets: [], uploaded_at: now.toISOString() };
   }
@@ -436,14 +471,26 @@ export function leaderToRow(
   return { ok: true, row };
 }
 
-/** True when writing `patch` would leave `existing` unchanged (null and undefined count as equal). */
+/**
+ * True when writing `patch` would leave `existing` unchanged in meaning: null,
+ * undefined (a column the database does not have yet), [] and {} count as equal.
+ */
 export function isNoopWrite(patch: FigureWrite, existing: FigureRow): boolean {
   return Object.entries(patch).every(([key, value]) =>
-    deepEqual(value ?? null, (existing as unknown as Record<string, unknown>)[key] ?? null)
+    deepEqual(value, (existing as unknown as Record<string, unknown>)[key])
   );
 }
 
-function deepEqual(a: unknown, b: unknown): boolean {
+function blank(value: unknown): unknown {
+  if (value === undefined) return null;
+  if (Array.isArray(value) && value.length === 0) return null;
+  if (isRecord(value) && Object.keys(value).length === 0) return null;
+  return value;
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  const a = blank(left);
+  const b = blank(right);
   if (a === b) return true;
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
@@ -455,7 +502,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
   }
   if (isRecord(a) && isRecord(b)) {
     const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-    return [...keys].every((key) => deepEqual(a[key] ?? null, b[key] ?? null));
+    return [...keys].every((key) => deepEqual(a[key], b[key]));
   }
   return false;
 }

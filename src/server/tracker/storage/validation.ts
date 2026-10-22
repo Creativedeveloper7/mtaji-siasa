@@ -82,7 +82,13 @@ export function imageObjectPath(userId: string, mime: ImageMime, random: string,
 export function objectPathFromPublicUrl(url: string, baseUrl: string): string | null {
   const prefix = `${baseUrl.replace(/\/$/, "")}/storage/v1/object/public/${IMAGE_BUCKET}/`;
   if (!url.startsWith(prefix)) return null;
-  const path = decodeURIComponent(url.slice(prefix.length).split(/[?#]/)[0]);
+  let path: string;
+  try {
+    path = decodeURIComponent(url.slice(prefix.length).split(/[?#]/)[0]);
+  } catch {
+    // Malformed percent-encoding (URIError) is not one of our object URLs.
+    return null;
+  }
   if (!path || path.split("/").some((part) => part === "" || part === "." || part === "..")) return null;
   return path;
 }

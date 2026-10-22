@@ -24,10 +24,10 @@ import {
   parseSatelliteSnapshots,
   ProjectInputError,
   todayDate,
-  withoutColumns,
   type Json,
   type SatelliteSnapshot,
 } from "./mapping";
+import { droppedColumnsWarning, writeAdaptive, type DbError } from "./adaptive";
 import {
   NEW_INITIATIVE_COLUMNS,
   NEW_MILESTONE_COLUMNS,
@@ -51,8 +51,23 @@ export type ProjectRepository = Pick<
   | "deleteMilestone"
 >;
 
-/** The signed-in user is not allowed to change this record (RLS refused or not the owner). */
-export class ProjectAccessError extends Error {}
+/** The signed-in user is not allowed to change this record (RLS refused or not the owner). HTTP 403. */
+export class ProjectAccessError extends Error {
+  readonly status = 403 as const;
+}
+
+/** The record changed elsewhere since it was read, or the id is already taken. HTTP 409. */
+export class ProjectConflictError extends Error {
+  readonly status = 409 as const;
+}
+
+export interface ProjectRepositoryOptions {
+  /**
+   * Told when a write had to leave out data (a §17 NEW column the database
+   * does not have yet). Default: console.warn on the server.
+   */
+  onWarning?: (message: string) => void;
+}
 
 // ---------------------------------------------------------------------------
 // Clients for writes
@@ -87,46 +102,72 @@ function readerFor(ctx: WriteContext): SupabaseClient {
   return ctx.isAdmin ? serviceClient() : ctx.client;
 }
 
-function isMissingColumn(error: { code?: string; message?: string } | null): boolean {
-  if (!error) return false;
-  return error.code === "PGRST204" || error.code === "42703" || /column .* does not exist|Could not find the '.*' column/i.test(error.message ?? "");
-}
-
 /**
- * Insert, and when a §17 NEW column has not shipped yet, insert again
- * without the NEW columns.
+ * Insert, and when the database reports one of the §17 NEW columns missing
+ * (the migration has not shipped), insert once more without them. Data that
+ * could not be stored is reported through `warn`.
  */
 async function insertAdaptive<T>(
   client: SupabaseClient,
   table: string,
   payload: Json,
-  newColumns: readonly string[]
+  newColumns: readonly string[],
+  warn: (message: string) => void
 ): Promise<T> {
-  const first = await client.from(table).insert(payload).select("*").single();
-  if (!first.error) return first.data as T;
-  if (isMissingColumn(first.error) && newColumns.some((c) => c in payload)) {
-    const retry = await client.from(table).insert(withoutColumns(payload, newColumns)).select("*").single();
-    if (!retry.error) return retry.data as T;
-    throw writeError(retry.error, table);
-  }
-  throw writeError(first.error, table);
+  const { result, lost } = await writeAdaptive<T>(
+    async (body) => (await client.from(table).insert(body).select("*").single()) as { data: T | null; error: DbError | null },
+    payload,
+    newColumns
+  );
+  if (result.error) throw writeError(result.error, table);
+  if (lost.length > 0) warn(droppedColumnsWarning(table, lost));
+  return result.data as T;
+}
+
+function noun(table: string): string {
+  return table === "milestones" ? "milestone" : table === "political_figures" ? "leader link" : "project";
 }
 
 function writeError(error: { code?: string; message: string }, table: string): Error {
   if (error.code === "42501" || /row-level security/i.test(error.message)) {
-    return new ProjectAccessError(`You cannot change this ${table === "milestones" ? "milestone" : "project"}.`);
+    return new ProjectAccessError(`You cannot change this ${noun(table)}.`);
   }
+  // A hidden or foreign row already has this id (or another unique value).
+  if (error.code === "23505") return new ProjectConflictError(`This ${noun(table)} already exists.`);
   if (error.code === "23514") return new ProjectInputError(`The Tracker rejected a value: ${error.message}`);
   return new Error(`Tracker ${table} write failed: ${error.message}`);
 }
 
-/** Update that must touch exactly one row; RLS silently matching nothing is an access error. */
-async function updateOne(client: SupabaseClient, table: string, id: string, patch: Json): Promise<void> {
-  const { data, error } = await client.from(table).update(patch).eq("id", id).select("id");
+/**
+ * Update that must touch exactly one row. With `expectedUpdatedAt` the row
+ * must still carry the updated_at it was read with (optimistic concurrency;
+ * initiatives and milestones have an updated_at trigger). Matching nothing is
+ * a 409 when the row is still there with a newer updated_at, else RLS refused
+ * it (403).
+ */
+async function updateOne(
+  client: SupabaseClient,
+  reader: SupabaseClient,
+  table: string,
+  id: string,
+  patch: Json,
+  expectedUpdatedAt?: string | null
+): Promise<void> {
+  let query = client.from(table).update(patch).eq("id", id);
+  if (expectedUpdatedAt) query = query.eq("updated_at", expectedUpdatedAt);
+  const { data, error } = await query.select("id");
   if (error) throw writeError(error, table);
-  if (!data || data.length === 0) {
-    throw new ProjectAccessError(`You cannot change this ${table === "milestones" ? "milestone" : "project"}.`);
+  if (data && data.length > 0) return;
+  if (expectedUpdatedAt) {
+    const now = mustOne<{ id: string; updated_at: string | null }>(
+      await reader.from(table).select("id, updated_at").eq("id", id).maybeSingle(),
+      `${table} read`
+    );
+    if (now && now.updated_at !== expectedUpdatedAt) {
+      throw new ProjectConflictError(`This ${noun(table)} was changed elsewhere. Reload it and try again.`);
+    }
   }
+  throw new ProjectAccessError(`You cannot change this ${noun(table)}.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -174,16 +215,31 @@ async function findWith(client: SupabaseClient, id: string): Promise<Project | u
   return (await mapRows(client, [row]))[0];
 }
 
-/** Exact route slug, then `<base>-<8 hex>` against base slug + id prefix (§2). */
-function resolveSlug(rows: { id: string; title: string }[], slugs: Map<string, string>, slug: string): string | undefined {
+/**
+ * Route slug lookup (§2), `slug` already lower-cased:
+ * - the exact collision-aware route slug;
+ * - `<base>-<8 hex>` after the collision went away: base slug + id prefix;
+ * - the bare base slug of a collided title, as the Tracker links it: the
+ *   oldest such project (rows are newest first), so a newer project with the
+ *   same title never takes over an existing link. Same rule as the leaders slice.
+ */
+export function resolveSlug(
+  rows: { id: string; title: string }[],
+  slugs: Map<string, string>,
+  slug: string
+): string | undefined {
   const exact = rows.find((row) => slugs.get(row.id) === slug);
   if (exact) return exact.id;
-  const match = /^(.*)-([0-9a-f]{8})$/i.exec(slug);
-  if (!match) return undefined;
-  const [, base, prefix] = match;
-  return rows.find(
-    (row) => row.id.toLowerCase().startsWith(prefix.toLowerCase()) && rowSlug(row.title, row.id, "full-id") === base
-  )?.id;
+  const match = /^(.*)-([0-9a-f]{8})$/.exec(slug);
+  if (match) {
+    const [, base, prefix] = match;
+    const hit = rows.find(
+      (row) => row.id.toLowerCase().startsWith(prefix) && rowSlug(row.title, row.id, "full-id") === base
+    );
+    if (hit) return hit.id;
+  }
+  const bare = rows.filter((row) => rowSlug(row.title, row.id, "full-id") === slug);
+  return bare[bare.length - 1]?.id;
 }
 
 async function milestoneRowsFor(client: SupabaseClient, projectIds?: string[]): Promise<MilestoneRow[]> {
@@ -270,50 +326,107 @@ async function newProjectOwner(ctx: WriteContext, leaderIds: string[]): Promise<
   return { userId: ctx.user.id, name: metaName || "Changemaker" };
 }
 
+interface CoLeaderChange {
+  figure: FigureLinkRow;
+  op: "add" | "remove";
+  client: SupabaseClient;
+}
+
 /**
- * Co-leaders live in political_figures.commissioned_projects (§4). The owner's
- * own figure is implied and never stored. A leader can add or remove only
- * themself; an admin can link anyone (service client). Other changes are
- * skipped, never forced.
+ * Co-leaders live in political_figures.commissioned_projects (§4). The
+ * owner's own figure is implied and never stored. Who may change what
+ * (authorization by auth user id, never by leaderId; tracker-backend.md
+ * Ownership rule):
+ * - an admin may add or remove any figure (service client: B's row is
+ *   writable only by B, §4);
+ * - anyone else may only REMOVE their own figure (user_id = caller). Adding a
+ *   figure, even one's own, to a project is admin-only: otherwise a leader
+ *   could attach themself to someone else's project (the commissioned_projects
+ *   write needs no access to the initiative).
+ *
+ * `baseline` are the leaderIds the project has now (they are not adds).
+ * mode "strict" throws ProjectAccessError on a change that is not permitted;
+ * "best-effort" (cleanup after a delete) skips it. Nothing is written here, so
+ * a refusal happens before the project itself is changed.
  */
-async function syncCoLeaders(
+async function planCoLeaders(
   ctx: WriteContext,
-  projectId: string,
+  projectId: string | null,
   ownerUserId: string | null,
-  leaderIds: string[]
-): Promise<void> {
+  leaderIds: string[],
+  baseline: string[],
+  mode: "strict" | "best-effort"
+): Promise<CoLeaderChange[]> {
   const reader = readerFor(ctx);
   const desired = new Set(leaderIds.filter(isUuid));
-  const current = mustRows<FigureLinkRow>(
-    await reader
-      .from("political_figures")
-      .select("id, user_id, commissioned_projects")
-      .contains("commissioned_projects", [projectId]),
-    "political_figures read"
-  );
-  const wanted = (await figuresByIds(reader, [...desired])).filter((f) => !ownerUserId || f.user_id !== ownerUserId);
-  const changes: { figure: FigureLinkRow; next: string[] }[] = [];
-  for (const figure of wanted) {
-    const list = figure.commissioned_projects ?? [];
-    if (!list.includes(projectId)) changes.push({ figure, next: [...list, projectId] });
+  const current = projectId
+    ? mustRows<FigureLinkRow>(
+        await reader
+          .from("political_figures")
+          .select("id, user_id, commissioned_projects")
+          .contains("commissioned_projects", [projectId]),
+        "political_figures read"
+      )
+    : [];
+  const currentIds = new Set(current.map((f) => f.id));
+  const known = new Set([...baseline, ...currentIds]);
+  const additions = [...desired].filter((id) => !known.has(id));
+  const figures = await figuresByIds(reader, additions);
+  const changes: CoLeaderChange[] = [];
+  const refuse = (message: string) => {
+    if (mode === "strict") throw new ProjectAccessError(message);
+  };
+
+  for (const id of additions) {
+    const figure = figures.find((f) => f.id === id);
+    // The owner's own figure is already a leader of the project.
+    if (figure && ownerUserId && figure.user_id === ownerUserId) continue;
+    if (!ctx.isAdmin) {
+      refuse("Only an admin can add a leader to a project.");
+      continue;
+    }
+    if (!figure) continue; // unknown id: nothing to link
+    changes.push({ figure, op: "add", client: figure.user_id === ctx.user.id ? ctx.client : serviceClient() });
   }
+
   for (const figure of current) {
-    if (!desired.has(figure.id)) {
-      changes.push({ figure, next: (figure.commissioned_projects ?? []).filter((id) => id !== projectId) });
+    if (desired.has(figure.id)) continue;
+    if (figure.user_id && figure.user_id === ctx.user.id) {
+      changes.push({ figure, op: "remove", client: ctx.client });
+    } else if (ctx.isAdmin) {
+      changes.push({ figure, op: "remove", client: serviceClient() });
+    } else {
+      refuse("You can only remove yourself from a project.");
     }
   }
-  for (const { figure, next } of changes) {
-    const client = figure.user_id === ctx.user.id ? ctx.client : ctx.isAdmin ? serviceClient() : undefined;
-    if (!client) continue;
-    const { error } = await client.from("political_figures").update({ commissioned_projects: next }).eq("id", figure.id);
+  return changes;
+}
+
+/**
+ * Writes the planned commissioned_projects changes. Read-modify-write of the
+ * array: two concurrent edits of the same figure can lose one link (an atomic
+ * array_append / array_remove RPC would fix that; not done, see report).
+ */
+async function applyCoLeaders(projectId: string, changes: CoLeaderChange[]): Promise<void> {
+  for (const { figure, op, client } of changes) {
+    const list = figure.commissioned_projects ?? [];
+    const next = op === "add" ? (list.includes(projectId) ? list : [...list, projectId]) : list.filter((id) => id !== projectId);
+    if (next === list) continue;
+    const { data, error } = await client
+      .from("political_figures")
+      .update({ commissioned_projects: next })
+      .eq("id", figure.id)
+      .select("id");
     if (error) throw writeError(error, "political_figures");
+    if (!data || data.length === 0) throw new ProjectAccessError("You cannot change this leader link.");
   }
 }
 
 // ---------------------------------------------------------------------------
 // Repository
 
-export function createProjectRepository(): ProjectRepository {
+export function createProjectRepository(options: ProjectRepositoryOptions = {}): ProjectRepository {
+  const warn = options.onWarning ?? ((message: string) => console.warn(message));
   return {
     async listProjects() {
       const client = await readClient();
@@ -327,10 +440,12 @@ export function createProjectRepository(): ProjectRepository {
     },
 
     async findProjectBySlug(slug) {
+      const input = slug.trim().toLowerCase();
+      if (!input) return undefined;
       const client = await readClient();
-      if (isUuid(slug)) return findWith(client, slug);
+      if (isUuid(input)) return findWith(client, input);
       const { rows, slugs } = await slugIndex(client);
-      const id = resolveSlug(rows, slugs, slug);
+      const id = resolveSlug(rows, slugs, input);
       if (!id) return undefined;
       const row = await initiativeRow(client, id);
       return row ? (await mapRows(client, [row], slugs))[0] : undefined;
@@ -358,20 +473,25 @@ export function createProjectRepository(): ProjectRepository {
         const client = clientFor(ctx, ownerUserId);
         const links = (await loadProjectLinks(reader, [existing])).get(existing.id) ?? EMPTY_LINKS;
         const patch = buildInitiativeUpdate(existing, item, { links, today: todayDate() });
-        if (Object.keys(patch).length > 0) await updateOne(client, "initiatives", existing.id, patch);
-        if (!sameIds(item.leaderIds, links.leaderIds)) {
-          await syncCoLeaders(ctx, existing.id, ownerUserId, item.leaderIds);
+        // Checked before anything is written: a refused co-leader change is a 403, not a partial save.
+        const coLeaders = sameIds(item.leaderIds, links.leaderIds)
+          ? []
+          : await planCoLeaders(ctx, existing.id, ownerUserId, item.leaderIds, links.leaderIds, "strict");
+        if (Object.keys(patch).length > 0) {
+          await updateOne(client, reader, "initiatives", existing.id, patch, existing.updated_at);
         }
+        await applyCoLeaders(existing.id, coLeaders);
         return (await findWith(client, existing.id)) ?? item;
       }
 
       const owner = await newProjectOwner(ctx, item.leaderIds);
+      const coLeaders = await planCoLeaders(ctx, null, owner.userId, item.leaderIds, [], "strict");
       const client = clientFor(ctx, owner.userId);
       const changemakerId = await ensureChangemaker(client, owner.userId, owner.name);
       const payload = buildInitiativeInsert(item, { changemakerId });
       if (isUuid(item.id)) payload.id = item.id;
-      const created = await insertAdaptive<InitiativeRow>(client, "initiatives", payload, NEW_INITIATIVE_COLUMNS);
-      await syncCoLeaders(ctx, created.id, owner.userId, item.leaderIds);
+      const created = await insertAdaptive<InitiativeRow>(client, "initiatives", payload, NEW_INITIATIVE_COLUMNS, warn);
+      await applyCoLeaders(created.id, coLeaders);
       return (await findWith(client, created.id)) ?? (await mapRows(client, [created]))[0];
     },
 
@@ -386,7 +506,7 @@ export function createProjectRepository(): ProjectRepository {
       if (error) throw writeError(error, "initiatives");
       if (!data || data.length === 0) return false;
       // commissioned_projects has no FK: drop the stale ids where the caller may write.
-      await syncCoLeaders(ctx, id, ownerUserId, []);
+      await applyCoLeaders(id, await planCoLeaders(ctx, id, ownerUserId, [], [], "best-effort"));
       return true;
     },
 
@@ -432,12 +552,14 @@ export function createProjectRepository(): ProjectRepository {
           }
         }
         const patch = buildMilestoneUpdate(existing, item, now);
-        if (Object.keys(patch).length > 0) await updateOne(client, "milestones", existing.id, patch);
+        if (Object.keys(patch).length > 0) {
+          await updateOne(client, reader, "milestones", existing.id, patch, existing.updated_at);
+        }
         id = existing.id;
       } else {
         const payload = buildMilestoneInsert(item, now);
         if (isUuid(item.id)) payload.id = item.id;
-        id = (await insertAdaptive<MilestoneRow>(client, "milestones", payload, NEW_MILESTONE_COLUMNS)).id;
+        id = (await insertAdaptive<MilestoneRow>(client, "milestones", payload, NEW_MILESTONE_COLUMNS, warn)).id;
       }
       const saved = (await milestonesOf(client, project.id)).find((m) => m.id === id);
       // A milestone saved as cancelled elsewhere cannot come back through Siasa's three statuses.

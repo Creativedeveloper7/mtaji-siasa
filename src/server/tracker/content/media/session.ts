@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { anonClient, serviceClient, userClient } from "@/server/tracker/clients";
 import { isUuid } from "@/server/tracker/slug";
-import { indexFiguresByUser, type FigureRef } from "./shared";
+import { indexFiguresByUser, phase1LeaderId, type FigureRef } from "./shared";
 
 /**
  * Client plumbing and write ownership shared by the media, polls and products
@@ -68,7 +68,7 @@ export async function optionalUserClient(clients: ContentClients): Promise<Supab
   }
 }
 
-/** user id -> newest political_figures row. Failures give an empty map (leaderId then falls back to the user id). */
+/** user id -> oldest political_figures row (the session's rule, compareFigures). Failures give an empty map (leaderId then falls back to the user id). */
 export async function figuresForUsers(client: SupabaseClient, userIds: string[]): Promise<Map<string, FigureRef>> {
   const ids = [...new Set(userIds.filter((id) => id && isUuid(id)))];
   if (!ids.length) return new Map();
@@ -117,8 +117,8 @@ export interface WriteTarget {
  * - update: the existing row's owner. Ownership never moves on update. A row
  *   with no owner (products only) can be changed by an admin only.
  * - insert: the auth user behind `leaderId` (political_figures.user_id), or the
- *   caller when leaderId is empty or is the caller's own user id (Phase 1
- *   sessions without a figure use their user id as leaderId).
+ *   caller when leaderId is empty, the caller's own user id, or the caller's
+ *   Phase 1 leader id `user-<uid>` (sessions without a figure).
  *
  * Client:
  * - owner = caller: the caller's session (RLS: author/owner = auth.uid()).
@@ -145,7 +145,7 @@ export async function resolveOwner(
   }
   if (existing?.ownerId) {
     ownerId = existing.ownerId;
-  } else if (leaderId && leaderId !== caller.user.id) {
+  } else if (leaderId && leaderId !== caller.user.id && leaderId !== phase1LeaderId(caller.user.id)) {
     if (!isUuid(leaderId)) {
       throw new ContentWriteError(400, "Leader was not found.");
     }

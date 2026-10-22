@@ -79,12 +79,24 @@ export function mapPollRow(row: PollRow, options: PollOptionRow[], rel: PollRela
   };
 }
 
-/** polls columns Siasa writes. owner_id and status = 'open' are added on insert only. */
-export function pollWrite(poll: Poll, now = new Date()): Record<string, unknown> {
+/**
+ * polls columns Siasa writes. owner_id and status = 'open' are added on insert only.
+ *
+ * Siasa only knows the closing DATE (closingDate = ends_at's date in Nairobi).
+ * When an edit leaves that date unchanged, the stored ends_at is kept as is,
+ * so a poll the Tracker set to close at e.g. 18:00 does not move to 23:59:59.
+ */
+export function pollWrite(
+  poll: Poll,
+  existing: Pick<PollRow, "ends_at"> | null = null,
+  now = new Date()
+): Record<string, unknown> {
+  const stored = existing?.ends_at ?? null;
+  const keepEnds = Boolean(stored) && (poll.closingDate ?? "").trim() === eatDate(stored);
   return {
     title: poll.question.trim(),
     // A date-only closingDate closes at the end of that day in Nairobi.
-    ends_at: eatTimestamp(poll.closingDate, "23:59:59"),
+    ends_at: keepEnds ? stored : eatTimestamp(poll.closingDate, "23:59:59"),
     updated_at: now.toISOString(),
   };
 }
@@ -145,14 +157,24 @@ export interface VoteFailure {
   message: string;
 }
 
-/** cast_poll_vote / insert errors -> HTTP status and a message for people. */
+/**
+ * cast_poll_vote errors -> HTTP status and a message for people. The RPC
+ * (Tracker migration 20261022200000_siasa_polls.sql) raises exactly:
+ *   not_authenticated / SQLSTATE 28000 -> 401
+ *   poll_not_open     / P0001          -> 409 (closed, draft, past ends_at, or unknown poll)
+ *   invalid_option    / P0001          -> 400
+ *   already_voted     / 23505          -> 409
+ * A raw 23505 (unique (poll_id, voter_user_id)) also means a second vote.
+ */
 export function voteErrorFor(error: { code?: string; message?: string }): VoteFailure {
-  const message = error.message ?? "";
-  if (error.code === "23505" || /duplicate key|poll_votes_poll_id_voter_user_id_key/i.test(message)) {
+  const message = (error.message ?? "").trim();
+  if (message === "already_voted" || error.code === "23505") {
     return { status: 409, message: "You have already voted in this poll." };
   }
-  if (/not authenticated/i.test(message)) return { status: 401, message: "Sign in to vote." };
-  if (/poll closed/i.test(message)) return { status: 409, message: "This poll is closed." };
-  if (/invalid option/i.test(message)) return { status: 400, message: "That option is not part of this poll." };
+  if (message === "not_authenticated" || error.code === "28000") {
+    return { status: 401, message: "Sign in to vote." };
+  }
+  if (message === "poll_not_open") return { status: 409, message: "This poll is closed." };
+  if (message === "invalid_option") return { status: 400, message: "That option is not part of this poll." };
   return { status: 500, message: "Could not record your vote. Please try again." };
 }

@@ -5,7 +5,7 @@ const P1 = "11111111-1111-4111-8111-111111111111";
 const P2 = "22222222-2222-4222-8222-222222222222";
 
 describe("leaderIdsFrom", () => {
-  it("puts the owner's figure first, then commissioned figures, and allows none", () => {
+  it("puts the owner's figure first, then commissioned figures; an owner without a figure gets their user-<uid> leader id", () => {
     const owners = new Map<string, string | null>([
       ["cm-politician", "user-a"],
       ["cm-org", "user-org"],
@@ -24,7 +24,7 @@ describe("leaderIdsFrom", () => {
       figures
     );
     expect(result.get(P1)).toEqual(["fig-a", "fig-b", "fig-seeded"]);
-    expect(result.get(P2)).toEqual([]);
+    expect(result.get(P2)).toEqual(["user-user-org"]);
     expect(result.has("33333333-3333-4333-8333-333333333333")).toBe(false);
   });
 });

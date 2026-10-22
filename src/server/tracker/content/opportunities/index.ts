@@ -8,4 +8,4 @@ export {
 export { createApplicationRepository, type TrackerApplicationRepository } from "./applications";
 export { createEngagementRepository } from "./engagement";
 export * from "./mapping";
-export { defaultClients, TrackerWriteError, type OpportunityClients } from "./support";
+export { defaultClients, requireAdmin, TrackerWriteError, type OpportunityClients } from "./support";

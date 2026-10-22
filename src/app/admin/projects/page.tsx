@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ImageField } from "@/components/ui/ImageField";
 import { CoordinatePickerMap } from "@/components/gis/CoordinatePickerMap";
+import { ProjectCategoryField } from "@/components/admin/ProjectCategoryField";
+import { DEFAULT_MAP_CENTER } from "@/lib/projects";
 import {
   AdminDrawer,
   AdminField,
@@ -24,18 +26,17 @@ const emptyProject = (): Project => ({
   slug: "",
   name: "",
   category: "infrastructure",
-  subcategory: "Road Rehabilitation",
+  subcategory: "roads",
   location: "",
   county: "Nairobi",
   status: "planned",
   progress: 0,
-  image:
-    "https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=1400&q=80",
+  image: "",
   description: "",
   startDate: new Date().toISOString().slice(0, 10),
   expectedCompletion: new Date().toISOString().slice(0, 10),
   leaderIds: [],
-  geo: { center: { lat: -1.2864, lng: 36.8172 } },
+  geo: { center: { ...DEFAULT_MAP_CENTER } },
   milestoneIds: [],
   opportunityIds: [],
   mediaIds: [],
@@ -256,14 +257,7 @@ export default function AdminProjectsPage() {
                 </AdminSelect>
               </AdminField>
             </div>
-            <AdminField label="Subcategory">
-              <AdminInput
-                value={editing.subcategory}
-                onChange={(e) =>
-                  setEditing({ ...editing, subcategory: e.target.value })
-                }
-              />
-            </AdminField>
+            <ProjectCategoryField project={editing} onChange={setEditing} />
             <AdminField label="Location">
               <AdminInput
                 value={editing.location}
@@ -328,14 +322,14 @@ export default function AdminProjectsPage() {
                 <AdminInput
                   type="number"
                   step="any"
-                  value={editing.geo.center.lat}
+                  value={editing.geo.center?.lat ?? ""}
                   onChange={(e) =>
                     setEditing({
                       ...editing,
                       geo: {
                         ...editing.geo,
                         center: {
-                          ...editing.geo.center,
+                          ...(editing.geo.center ?? DEFAULT_MAP_CENTER),
                           lat: Number(e.target.value),
                         },
                       },
@@ -347,14 +341,14 @@ export default function AdminProjectsPage() {
                 <AdminInput
                   type="number"
                   step="any"
-                  value={editing.geo.center.lng}
+                  value={editing.geo.center?.lng ?? ""}
                   onChange={(e) =>
                     setEditing({
                       ...editing,
                       geo: {
                         ...editing.geo,
                         center: {
-                          ...editing.geo.center,
+                          ...(editing.geo.center ?? DEFAULT_MAP_CENTER),
                           lng: Number(e.target.value),
                         },
                       },
@@ -365,7 +359,7 @@ export default function AdminProjectsPage() {
             </div>
             <CoordinatePickerMap
               key={editing.id}
-              center={editing.geo.center}
+              center={editing.geo.center ?? DEFAULT_MAP_CENTER}
               label={editing.name || editing.location || "Project location"}
               onChange={(point) =>
                 setEditing({

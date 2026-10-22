@@ -104,17 +104,30 @@ describe("pollWrite", () => {
   };
   const now = new Date("2026-10-22T08:00:00Z");
   it("writes title and an end-of-day ends_at", () => {
-    expect(pollWrite(base, now)).toEqual({
+    expect(pollWrite(base, null, now)).toEqual({
       title: "Which first?",
       ends_at: "2026-11-30T20:59:59.000Z",
       updated_at: now.toISOString(),
     });
   });
   it("writes a null ends_at for no closing date", () => {
-    expect(pollWrite({ ...base, closingDate: "" }, now).ends_at).toBeNull();
+    expect(pollWrite({ ...base, closingDate: "" }, null, now).ends_at).toBeNull();
+  });
+  it("keeps the stored ends_at when the Nairobi date is unchanged", () => {
+    // 18:00 EAT on 30 Nov, set in the Tracker.
+    const existing = { ends_at: "2026-11-30T15:00:00+00:00" };
+    expect(pollWrite(base, existing, now).ends_at).toBe("2026-11-30T15:00:00+00:00");
+    // A different date moves it to the end of the new day.
+    expect(pollWrite({ ...base, closingDate: "2026-12-01" }, existing, now).ends_at).toBe("2026-12-01T20:59:59.000Z");
+    // Clearing the date clears ends_at.
+    expect(pollWrite({ ...base, closingDate: "" }, existing, now).ends_at).toBeNull();
+    // 22:30 UTC on 30 Nov is already 1 Dec in Nairobi: same EAT date "2026-12-01" keeps it.
+    const late = { ends_at: "2026-11-30T22:30:00Z" };
+    expect(pollWrite({ ...base, closingDate: "2026-12-01" }, late, now).ends_at).toBe("2026-11-30T22:30:00Z");
+    expect(pollWrite(base, late, now).ends_at).toBe("2026-11-30T20:59:59.000Z");
   });
   it("never writes owner_id, status or votes", () => {
-    const write = pollWrite(base, now);
+    const write = pollWrite(base, null, now);
     expect(write).not.toHaveProperty("owner_id");
     expect(write).not.toHaveProperty("status");
   });
@@ -168,10 +181,22 @@ describe("planOptionChanges", () => {
 
 describe("voteErrorFor", () => {
   it("maps RPC and constraint errors", () => {
+    // Exact messages / SQLSTATEs raised by cast_poll_vote (20261022200000_siasa_polls.sql).
+    expect(voteErrorFor({ code: "28000", message: "not_authenticated" })).toEqual({ status: 401, message: "Sign in to vote." });
+    expect(voteErrorFor({ code: "P0001", message: "poll_not_open" })).toEqual({ status: 409, message: "This poll is closed." });
+    expect(voteErrorFor({ code: "P0001", message: "invalid_option" })).toEqual({
+      status: 400,
+      message: "That option is not part of this poll.",
+    });
+    expect(voteErrorFor({ code: "23505", message: "already_voted" })).toEqual({
+      status: 409,
+      message: "You have already voted in this poll.",
+    });
+    // Code alone is enough for the two with dedicated SQLSTATEs.
+    expect(voteErrorFor({ code: "28000" }).status).toBe(401);
     expect(voteErrorFor({ code: "23505", message: "duplicate key value violates unique constraint" }).status).toBe(409);
-    expect(voteErrorFor({ code: "P0001", message: "not authenticated" }).status).toBe(401);
-    expect(voteErrorFor({ code: "P0001", message: "poll closed" })).toEqual({ status: 409, message: "This poll is closed." });
-    expect(voteErrorFor({ code: "P0001", message: "invalid option" }).status).toBe(400);
+    // A P0001 with some other message is not guessed at.
+    expect(voteErrorFor({ code: "P0001", message: "poll closed" }).status).toBe(500);
     expect(voteErrorFor({ message: "boom" }).status).toBe(500);
   });
 });

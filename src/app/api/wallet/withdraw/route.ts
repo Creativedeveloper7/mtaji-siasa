@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { usesTracker } from "@/server";
 import { requireRoles } from "@/server/auth/http";
 import { actorFromSession, type ContentResult } from "@/server/content/service";
 import { withdrawWallet } from "@/server/wallet/service";
@@ -7,6 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  if (usesTracker()) return gone();
   const gate = await requireRoles(["admin", "leader", "aspirant"]);
   if (gate.response || !gate.session) {
     return gate.response ?? NextResponse.json({ ok: false, error: "Sign in required." }, { status: 401 });
@@ -29,4 +31,9 @@ function send(result: ContentResult) {
     return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
   }
   return NextResponse.json(result.body, { status: result.status });
+}
+
+/** Superseded by /api/wallet/payments on the Tracker backend; kept for the memory store only. */
+function gone() {
+  return NextResponse.json({ ok: false, error: "Use /api/wallet/payments." }, { status: 410 });
 }

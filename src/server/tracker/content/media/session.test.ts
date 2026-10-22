@@ -68,6 +68,13 @@ describe("resolveOwner", () => {
     const { caller, clients } = setup(false);
     expect((await resolveOwner(caller, clients, null, ME)).ownerId).toBe(ME);
   });
+  it("accepts the caller's Phase 1 leader id user-<uid>, but not another user's", async () => {
+    const { caller, clients } = setup(false);
+    const target = await resolveOwner(caller, clients, null, `user-${ME}`);
+    expect(target.ownerId).toBe(ME);
+    expect(labelOf(target.client)).toBe("user");
+    await expect(resolveOwner(caller, clients, null, `user-${OTHER}`)).rejects.toMatchObject({ status: 400 });
+  });
   it("refuses a non-admin writing for another leader", async () => {
     const { caller, clients } = setup(false);
     await expect(resolveOwner(caller, clients, null, FIG)).rejects.toMatchObject({ status: 403 });

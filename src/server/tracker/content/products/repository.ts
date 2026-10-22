@@ -14,7 +14,13 @@ import {
   resolveOwner,
   type ContentClients,
 } from "@/server/tracker/content/media/session";
-import { groupIdsByOwner, leaderIdForOwner, pickByIds } from "@/server/tracker/content/media/shared";
+import {
+  groupIdsByOwner,
+  leaderIdForOwner,
+  pickByIds,
+  withOwner,
+  type Owned,
+} from "@/server/tracker/content/media/shared";
 import { mapProductRow, productWrite, type ProductRow } from "./mapping";
 
 export type ProductRepository = Pick<
@@ -67,7 +73,7 @@ export function createProductRepository(clients: ContentClients = defaultContent
       return findBySlug(products, new Map(products.map((product) => [product.id, product.slug])), slug);
     },
     async listProductsByLeader(leaderId) {
-      // leaderId is political_figures.id, or the author's user id when they have no figure (leaderIdForOwner).
+      // leaderId is political_figures.id, or `user-<uid>` when the author has no figure (leaderIdForOwner).
       return (await loadPublic()).filter((product) => product.leaderId === leaderId);
     },
     async upsertProduct(product) {
@@ -94,14 +100,18 @@ export function createProductRepository(clients: ContentClients = defaultContent
   };
 }
 
-async function mapRows(client: SupabaseClient, rows: ProductRow[], slugScope: ProductRow[]): Promise<Product[]> {
+/** Each product carries `ownerUserId` (products.author_id) when the row has an author. */
+async function mapRows(client: SupabaseClient, rows: ProductRow[], slugScope: ProductRow[]): Promise<Owned<Product>[]> {
   const slugs = assignSlugs(slugScope, (row) => row.name);
   const figures = await figuresForUsers(client, rows.map((row) => row.author_id ?? ""));
   return rows.map((row) =>
-    mapProductRow(row, {
-      slug: slugs.get(row.id) ?? rowSlug(row.name, row.id),
-      leaderId: leaderIdForOwner(row.author_id, figures),
-    })
+    withOwner(
+      mapProductRow(row, {
+        slug: slugs.get(row.id) ?? rowSlug(row.name, row.id),
+        leaderId: leaderIdForOwner(row.author_id, figures),
+      }),
+      row.author_id
+    )
   );
 }
 

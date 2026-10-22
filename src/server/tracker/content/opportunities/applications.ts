@@ -15,8 +15,10 @@ import {
   defaultClients,
   isCheckViolation,
   isUniqueViolation,
+  requireAdmin,
   TrackerWriteError,
   writeWithExtra,
+  type ExtraColumnsState,
   type OpportunityClients,
 } from "./support";
 
@@ -33,7 +35,7 @@ export interface TrackerApplicationRepository extends Promisified<ApplicationRep
   listForAuthor(authorId: string): Promise<OpportunityApplication[]>;
   /** Applications on one listing. RLS returns rows only to its author (and each applicant their own). */
   listForOpportunity(opportunityId: string): Promise<OpportunityApplication[]>;
-  /** Admin only: every application. Uses the service role. */
+  /** Admin only (checked here with auth.getUser(), else 403): every application. Uses the service role. */
   listAll(): Promise<OpportunityApplication[]>;
 }
 
@@ -47,8 +49,14 @@ export function createApplicationRepository(
   clients: OpportunityClients = defaultClients(),
   options: { now?: () => Date } = {}
 ): TrackerApplicationRepository {
-  const state = { extraMissing: false, shortlistMissing: false };
+  const state: ExtraColumnsState = {};
   const now = options.now ?? (() => new Date());
+  const m6 = (values: Record<string, unknown>, droppable: string[] = []) => ({
+    values,
+    droppable,
+    migration: "Tracker migration M6",
+    now: () => now().getTime(),
+  });
 
   async function scoped(apply?: (client: SupabaseClient) => PromiseLike<{ data: unknown; error: { message: string } | null }>) {
     const client = await clients.user();
@@ -74,7 +82,7 @@ export function createApplicationRepository(
     }
     if (!isUuid(item.opportunityId)) throw new TrackerWriteError("Opportunity not found.", "not_found");
     const values = applicationInsertRow(item, userId);
-    const { data, error } = await writeWithExtra(state, (withExtra) =>
+    const { data, error } = await writeWithExtra(state, m6(values.extra), (withExtra) =>
       client
         .from("opportunity_applications")
         .insert({
@@ -100,24 +108,24 @@ export function createApplicationRepository(
 
   async function review(client: SupabaseClient, item: OpportunityApplication): Promise<OpportunityApplication> {
     // Only status and review note change. RLS lets only the listing author update.
-    const run = (shortlist: boolean) =>
-      writeWithExtra(state, (withExtra) => {
-        const patch = applicationReviewPatch(item, shortlist);
-        return client
-          .from("opportunity_applications")
-          .update({
-            ...patch.base,
-            ...(withExtra ? { ...patch.extra, updated_at: now().toISOString() } : {}),
-          })
-          .eq("id", item.id)
-          .select("*");
-      });
-    let result = await run(!state.shortlistMissing);
-    if (isCheckViolation(result.error) && !state.shortlistMissing) {
-      // Before M6 the CHECK list has no 'shortlisted': store 'reviewed'.
-      // The shortlist is then lost (review_note also arrives with M6).
-      state.shortlistMissing = true;
-      result = await run(false);
+    // review_note is M6 data (never dropped silently); updated_at is only a stamp.
+    const patch = applicationReviewPatch(item);
+    const extra = { ...patch.extra, updated_at: now().toISOString() };
+    const result = await writeWithExtra(state, m6(extra, ["updated_at"]), (withExtra) =>
+      client
+        .from("opportunity_applications")
+        .update({ ...patch.base, ...(withExtra ? extra : {}) })
+        .eq("id", item.id)
+        .select("*")
+    );
+    if (isCheckViolation(result.error) && patch.base.status === "shortlisted") {
+      // Before M6 the status CHECK list has no 'shortlisted'. Never store
+      // 'reviewed' instead: the reviewer would lose the shortlist silently.
+      throw new TrackerWriteError(
+        "Shortlisting cannot be saved until Tracker migration M6 is applied to the Tracker database.",
+        "not_implemented",
+        501
+      );
     }
     check(result.error, "Could not update the application");
     const updated = (result.data ?? []) as ApplicationRow[];
@@ -161,7 +169,9 @@ export function createApplicationRepository(
 
     listAll: async () => {
       // Service role: no RLS policy grants admins read access to applications.
-      // Callers must check session.role === 'admin' first.
+      // So the caller's admin role is verified here too (auth.getUser(),
+      // app_metadata.role), not only by the route: 401/403 otherwise.
+      await requireAdmin(clients);
       const admin = await clients.service();
       const { data, error } = await admin.from("opportunity_applications").select("*").order("created_at", ORDER);
       check(error, "Could not load applications");

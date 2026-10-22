@@ -44,12 +44,39 @@ export interface DbError {
   hint?: string | null;
 }
 
+/**
+ * A write or read the API layer should answer with `status`. When no status
+ * is given it follows from `code`: forbidden 403, not_authenticated 401,
+ * not_found 404, not_implemented 501, 23505 409, otherwise 500.
+ */
 export class TrackerWriteError extends Error {
+  readonly status: number;
   constructor(
     message: string,
-    readonly code?: string
+    readonly code?: string,
+    status?: number
   ) {
     super(message);
+    this.name = "TrackerWriteError";
+    this.status = status ?? statusForCode(code);
+  }
+}
+
+function statusForCode(code: string | undefined): number {
+  switch (code) {
+    case "forbidden":
+    case "42501":
+      return 403;
+    case "not_authenticated":
+      return 401;
+    case "not_found":
+      return 404;
+    case "not_implemented":
+      return 501;
+    case "23505":
+      return 409;
+    default:
+      return 500;
   }
 }
 
@@ -86,18 +113,95 @@ export async function currentUserId(client: SupabaseClient): Promise<string> {
 }
 
 /**
- * Runs a write with the M5b/M6 columns, and once more without them when the
- * live schema does not have them yet. `state.extraMissing` remembers the
- * answer for the life of the repository so later writes skip the retry.
+ * Verifies the signed-in user is an admin (app_metadata.role = 'admin', which
+ * only the service role can set) with auth.getUser(), before a call site uses
+ * the service role. Same check as media's requireCaller/resolveOwner.
+ */
+export async function requireAdmin(clients: OpportunityClients): Promise<void> {
+  let client: SupabaseClient;
+  try {
+    client = await clients.user();
+  } catch {
+    throw new TrackerWriteError("Sign in to continue.", "not_authenticated");
+  }
+  const { data, error } = await client.auth.getUser();
+  if (error || !data?.user) throw new TrackerWriteError("Sign in to continue.", "not_authenticated");
+  if (data.user.app_metadata?.role !== "admin") {
+    throw new TrackerWriteError("Only admins can see this.", "forbidden");
+  }
+}
+
+/** How long a "columns missing" answer is trusted before the full write is tried again. */
+export const EXTRA_REPROBE_MS = 60_000;
+
+/** Per-repository memory of the last time the pending-migration columns were missing. */
+export interface ExtraColumnsState {
+  missingAt?: number;
+}
+
+/** True when a column value carries user data (not null, not blank, not an empty list). */
+export function carriesData(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim() !== "";
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
+/** The PostgREST/Postgres "unknown column" error names one of `columns`. */
+function missingOneOf(error: DbError | null, columns: string[]): boolean {
+  if (!isMissingColumn(error)) return false;
+  const text = `${error?.message ?? ""} ${error?.details ?? ""}`;
+  // Without a message we cannot tell which column; assume it is a pending one.
+  return !text.trim() || columns.some((column) => text.includes(column));
+}
+
+export interface ExtraColumns {
+  /** The values of the columns a pending migration adds (as they would be written). */
+  values: Record<string, unknown>;
+  /** Columns in `values` whose loss is acceptable (e.g. updated_at). They never block the retry. */
+  droppable?: string[];
+  /** For the 501 message, e.g. "Tracker migration M5b". */
+  migration: string;
+  now?: () => number;
+}
+
+/**
+ * Runs a write with the columns of a pending migration, and once more without
+ * them when the live schema does not have them yet, but ONLY if those columns
+ * carry no data. If they do, it throws a 501 TrackerWriteError naming the
+ * fields instead of silently dropping what the user entered (same rule as
+ * media's writeBlog).
+ *
+ * The "missing" answer is remembered for EXTRA_REPROBE_MS only, and only to
+ * skip the doomed first attempt for writes that carry no extra data; a write
+ * that carries data always tries the full payload, so it succeeds as soon as
+ * the migration lands.
  */
 export async function writeWithExtra<T>(
-  state: { extraMissing: boolean },
+  state: ExtraColumnsState,
+  extra: ExtraColumns,
   run: (includeExtra: boolean) => PromiseLike<{ data: T | null; error: DbError | null }>
 ): Promise<{ data: T | null; error: DbError | null }> {
-  if (!state.extraMissing) {
-    const first = await run(true);
-    if (!isMissingColumn(first.error)) return first;
-    state.extraMissing = true;
+  const clock = extra.now ?? Date.now;
+  const columns = Object.keys(extra.values);
+  const droppable = new Set(extra.droppable ?? []);
+  const withData = columns.filter((column) => !droppable.has(column) && carriesData(extra.values[column]));
+  const recentlyMissing = state.missingAt !== undefined && clock() - state.missingAt < EXTRA_REPROBE_MS;
+
+  if (!withData.length && recentlyMissing) return run(false);
+
+  const first = await run(true);
+  if (!missingOneOf(first.error, columns)) {
+    if (!first.error) state.missingAt = undefined;
+    return first;
+  }
+  state.missingAt = clock();
+  if (withData.length) {
+    throw new TrackerWriteError(
+      `These fields cannot be saved until ${extra.migration} is applied to the Tracker database: ${withData.join(", ")}.`,
+      "not_implemented",
+      501
+    );
   }
   return run(false);
 }

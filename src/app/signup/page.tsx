@@ -9,6 +9,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { cn } from "@/lib/utils";
 import type { AuthSession, UserRole } from "@/types/auth";
 import { LoadingState } from "@/components/ui/EmptyState";
+import { safeNext } from "@/lib/safe-next";
 
 const roles: Array<{
   id: Exclude<UserRole, "admin">;
@@ -40,8 +41,8 @@ const roles: Array<{
 function SignupForm() {
   const { signUp, ready } = useAuth();
   const params = useSearchParams();
-  const next =
-    params.get("next") || params.get("redirect") || "";
+  // Same-site paths only; "/" means no destination was asked for.
+  const next = safeNext(params.get("next") || params.get("redirect"));
   const [role, setRole] = useState<Exclude<UserRole, "admin">>("citizen");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -90,7 +91,7 @@ function SignupForm() {
           account, then sign in.
         </p>
         <Button
-          href={next.startsWith("/") ? `/signin?next=${encodeURIComponent(next)}` : "/signin"}
+          href={next !== "/" ? `/signin?next=${encodeURIComponent(next)}` : "/signin"}
           size="lg"
           fullWidth
           className="mt-8"
@@ -191,7 +192,7 @@ function SignupForm() {
           Already have an account?{" "}
           <Link
             href={
-              next.startsWith("/")
+              next !== "/"
                 ? `/signin?next=${encodeURIComponent(next)}`
                 : "/signin"
             }
@@ -214,7 +215,7 @@ export default function SignupPage() {
 }
 
 function workspaceFor(role: UserRole, next: string): { href: string; label: string } {
-  if (next.startsWith("/") && next !== "/") return { href: next, label: "Continue" };
+  if (next !== "/") return { href: next, label: "Continue" };
   if (role === "admin") return { href: "/admin", label: "Go to admin" };
   return { href: "/dashboard", label: "Go to dashboard" };
 }

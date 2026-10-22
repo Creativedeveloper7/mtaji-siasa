@@ -64,16 +64,28 @@ export async function callEdge(
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     return { status: res.status, ok: res.ok, json };
   } catch (error) {
+    // Log the transport error; the client gets a generic message.
+    console.error(`[adly] edge ${name} failed:`, error instanceof Error ? `${error.name}: ${error.message}` : error);
+    if (error instanceof EdgeError) throw error;
     if (error instanceof Error && error.name === "AbortError") {
-      throw new EdgeError(`${name} timed out.`, 504);
+      throw new EdgeError("The ad service took too long to answer. Try again shortly.", 504);
     }
-    throw new EdgeError(error instanceof Error ? error.message : `${name} could not be reached.`, 502);
+    throw new EdgeError("The ad service could not be reached. Try again shortly.", 502);
   } finally {
     clearTimeout(timer);
   }
 }
 
-export function edgeErrorMessage(res: EdgeResponse, fallback: string): string {
+/**
+ * A client-safe message for a failed edge call. The raw edge / provider /
+ * Postgres text is logged server-side and never returned.
+ */
+export function edgeErrorMessage(res: EdgeResponse, fallback: string, context = ""): string {
   const raw = res.json.error ?? res.json.message;
-  return typeof raw === "string" && raw.trim() ? raw : `${fallback} (${res.status})`;
+  console.error(`[adly] edge error${context ? ` (${context})` : ""}:`, res.status, typeof raw === "string" ? raw : JSON.stringify(raw ?? null));
+  if (res.status === 401) return "Your session has expired. Sign in again.";
+  if (res.status === 403) return "You can only manage your own campaigns.";
+  if (res.status === 404) return "Campaign not found.";
+  if (res.status === 429) return "The ad network is busy. Try again in a minute.";
+  return `${fallback}. Try again shortly or contact support if it keeps happening.`;
 }

@@ -22,6 +22,7 @@ export interface FigureRow {
   id: string;
   user_id?: string | null;
   status: string | null;
+  created_at?: string | null;
 }
 
 /** The Tracker records one Siasa account is built from. */
@@ -36,7 +37,28 @@ function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function toAccount({ user, profile, userProfile, figure }: AccountRows): PublicUser {
+/**
+ * The political_figures row that belongs to this user, if any. Only a row whose
+ * user_id is the user counts: a figure id is never trusted on its own.
+ */
+function ownFigure(user: AuthUser, figure: FigureRow | null | undefined): FigureRow | undefined {
+  return figure && figure.user_id === user.id ? figure : undefined;
+}
+
+/**
+ * Pick one figure row per user: the oldest (created_at, then id). Oldest, not
+ * newest, so a row inserted later cannot take over an existing account's
+ * leaderId.
+ */
+export function compareFigures(
+  a: { created_at?: string | null; id: string },
+  b: { created_at?: string | null; id: string }
+): number {
+  return String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")) || a.id.localeCompare(b.id);
+}
+
+export function toAccount({ user, profile, userProfile, figure: row }: AccountRows): PublicUser {
+  const figure = ownFigure(user, row);
   const meta = user.user_metadata ?? {};
   const email = text(user.email) || text(profile?.email);
   return {
@@ -80,9 +102,11 @@ export async function loadAccountRows(client: SupabaseClient, user: AuthUser): P
       .maybeSingle(),
     client
       .from("political_figures")
-      .select("id, user_id, status")
+      .select("id, user_id, status, created_at")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
+      // Oldest first, ties by id, so the pick is stable and a later row cannot hijack it.
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
       .limit(1)
       .maybeSingle(),
   ]);

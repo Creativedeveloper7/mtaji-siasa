@@ -9,8 +9,11 @@ import {
   type AdlyCampaignRow,
   type AdRecommendationRow,
 } from "@/server/tracker/adly/rows";
-import type { RowWrite } from "@/server/tracker/adly/mapping";
-import { isAdNetworkLandingUrl, parseCreative, type AdlyMediaAsset } from "@/server/tracker/adly/plan";
+import { AdlyError, CHANGED_MESSAGE } from "@/server/tracker/adly/errors";
+import { preserveProviderIds, type RowWrite } from "@/server/tracker/adly/mapping";
+import { isAdNetworkLandingUrl, obj, parseCreative, type AdlyMediaAsset } from "@/server/tracker/adly/plan";
+import { fetchPublicImage, IMAGE_MAX_BYTES, UnsafeUrlError } from "@/server/tracker/adly/safe-fetch";
+import type { TrackerChannel } from "@/server/tracker/adly/rows";
 
 /**
  * Data access for the Tracker's Adly tables. Every function takes the client
@@ -20,8 +23,10 @@ import { isAdNetworkLandingUrl, parseCreative, type AdlyMediaAsset } from "@/ser
 
 export const CREATIVE_BUCKET = "adly-creative-media";
 
-function fail(what: string, error: { message: string }): never {
-  throw new Error(`${what}: ${error.message}`);
+/** Log the database error server-side; the caller only sees `what`. */
+function fail(what: string, error: { message: string; code?: string }): never {
+  console.error(`[adly] ${what}:`, error.code ?? "", error.message);
+  throw new AdlyError(`${what}. Try again.`, 502);
 }
 
 export async function listOwnCampaigns(client: SupabaseClient, userId: string): Promise<AdlyCampaignRow[]> {
@@ -50,21 +55,70 @@ export async function insertCampaign(
   return data as AdlyCampaignRow;
 }
 
-export async function updateCampaign(client: SupabaseClient, id: string, write: RowWrite): Promise<AdlyCampaignRow> {
-  const { data, error } = await client
-    .from("adly_campaigns")
-    .update({ ...write, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select(CAMPAIGN_COLUMNS)
-    .single();
+/**
+ * Update a campaign the caller read as `existing`. Optimistic concurrency: the
+ * update only applies while the row still has `existing.updated_at`, so a
+ * publish function (which writes provider ids into metadata) or another tab
+ * cannot be overwritten with stale jsonb. 0 rows -> 409.
+ * Provider ids on the stored row are never dropped by a metadata write.
+ */
+export async function updateCampaign(
+  client: SupabaseClient,
+  existing: Pick<AdlyCampaignRow, "id" | "updated_at" | "metadata">,
+  write: RowWrite,
+  conflictMessage = CHANGED_MESSAGE
+): Promise<AdlyCampaignRow> {
+  const patch: Record<string, unknown> = { ...write, updated_at: nextUpdatedAt(existing.updated_at) };
+  if (write.metadata) patch.metadata = preserveProviderIds(existing.metadata, write.metadata);
+  let query = client.from("adly_campaigns").update(patch).eq("id", existing.id);
+  if (existing.updated_at) query = query.eq("updated_at", existing.updated_at);
+  const { data, error } = await query.select(CAMPAIGN_COLUMNS);
   if (error) fail("Could not save the campaign", error);
-  return data as AdlyCampaignRow;
+  const rows = (data ?? []) as AdlyCampaignRow[];
+  if (!rows.length) throw new AdlyError(conflictMessage, 409);
+  return rows[0];
 }
 
-/** Hard delete. Only used for drafts that never reached a network. */
-export async function deleteCampaign(client: SupabaseClient, id: string): Promise<void> {
-  const { error } = await client.from("adly_campaigns").delete().eq("id", id);
+/** A new updated_at that always differs from the old one (two writes in the same millisecond). */
+function nextUpdatedAt(previous?: string): string {
+  const now = Date.now();
+  const before = previous ? Date.parse(previous) : NaN;
+  return new Date(Number.isFinite(before) && before >= now ? before + 1 : now).toISOString();
+}
+
+/** Hard delete. Only used for drafts that never reached a network (guarded by updated_at). */
+export async function deleteCampaign(client: SupabaseClient, existing: Pick<AdlyCampaignRow, "id" | "updated_at">): Promise<void> {
+  let query = client.from("adly_campaigns").delete().eq("id", existing.id);
+  if (existing.updated_at) query = query.eq("updated_at", existing.updated_at);
+  const { data, error } = await query.select("id");
   if (error) fail("Could not delete the campaign", error);
+  if (!(data ?? []).length) throw new AdlyError(CHANGED_MESSAGE, 409);
+}
+
+/**
+ * Ad-spend debits already on the wallet for this campaign on one network.
+ * Read with the user's client (RLS: own wallet only).
+ */
+export async function adSpendDebits(
+  client: SupabaseClient,
+  campaignId: string,
+  provider: TrackerChannel
+): Promise<{ totalKes: number; ids: Set<string> }> {
+  const { data, error } = await client
+    .from("wallet_transactions")
+    .select("id, amount, metadata")
+    .eq("reference_type", "adly_campaign")
+    .eq("reference_id", campaignId)
+    .eq("direction", "debit")
+    .eq("source", "ads");
+  const out = { totalKes: 0, ids: new Set<string>() };
+  if (error || !data) return out;
+  for (const row of data as { id: string; amount: number | string; metadata: unknown }[]) {
+    if (obj(row.metadata).provider !== provider) continue;
+    out.totalKes += Number(row.amount || 0);
+    out.ids.add(String(row.id));
+  }
+  return out;
 }
 
 export async function listStats(client: SupabaseClient, campaignIds: string[]): Promise<Map<string, AdChannelStatRow[]>> {
@@ -183,15 +237,12 @@ export async function uploadImageFromUrl(
 ): Promise<AdlyMediaAsset> {
   // Only public https hosts: the URL comes from user content (project images).
   if (!url.startsWith("https://") || !isAdNetworkLandingUrl(url)) {
-    throw new Error("The ad image must be a public https URL.");
+    throw new UnsafeUrlError("The ad image must be a public https URL.");
   }
-  const res = await fetch(url, { cache: "no-store", redirect: "error" });
-  if (!res.ok) throw new Error(`Could not download the ad image (${res.status}).`);
-  const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim();
+  // DNS-vetted, IP-pinned, 10 s timeout, streamed with a 5 MB cap (see safe-fetch.ts).
+  const { bytes, contentType } = await fetchPublicImage(url, { maxBytes: IMAGE_MAX_BYTES });
   const ext = IMAGE_TYPES[contentType];
   if (!ext) throw new Error("The ad image must be a JPEG, PNG, WebP or GIF.");
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("The ad image is larger than 5 MB.");
   const id = crypto.randomUUID();
   const filename = `siasa-${id.slice(0, 8)}.${ext}`;
   const path = `${userId}/${campaignId}/${filename}`;
@@ -234,18 +285,12 @@ export async function leaderIdsForUsers(service: SupabaseClient, userIds: string
  */
 export async function adminUpdateMetadata(
   service: SupabaseClient,
-  id: string,
+  existing: Pick<AdlyCampaignRow, "id" | "updated_at" | "metadata">,
   metadata: Record<string, unknown>,
   status?: string
 ): Promise<AdlyCampaignRow> {
-  const { data, error } = await service
-    .from("adly_campaigns")
-    .update({ metadata, ...(status ? { status } : {}), updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select(CAMPAIGN_COLUMNS)
-    .single();
-  if (error) fail("Could not update the campaign", error);
-  return data as AdlyCampaignRow;
+  // Same optimistic-concurrency and provider-id rules as updateCampaign.
+  return updateCampaign(service, existing, { metadata, ...(status ? { status } : {}) });
 }
 
 export function isUuid(value: string): boolean {
