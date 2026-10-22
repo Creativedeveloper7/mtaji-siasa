@@ -114,8 +114,11 @@ export default function AdlyTimelapsePage() {
     setSaving(true);
     setSaveError("");
     setPreviewNote("");
+    // Reuse the stored timelapse only for the same project; another project
+    // gets a new one instead of overwriting the first match.
+    const current = existing?.projectId === project.id ? existing : undefined;
     const item: Timelapse = {
-      id: existing?.id || createId("tl"),
+      id: current?.id || createId("tl"),
       name: title || `${project.name} — Progress Story`,
       projectId: project.id,
       location: project.location,
@@ -124,10 +127,10 @@ export default function AdlyTimelapsePage() {
       progress: project.progress,
       aspect,
       media: ordered,
-      milestones: existing?.milestones || ["Planning", "Works", "Completion"],
+      milestones: current?.milestones || ["Planning", "Works", "Completion"],
       captionsEnabled: true,
       brandingEnabled: true,
-      createdAt: existing?.createdAt || new Date().toISOString(),
+      createdAt: current?.createdAt || new Date().toISOString(),
     };
     const result = await upsertTimelapse(item);
     if (!result.ok) {
