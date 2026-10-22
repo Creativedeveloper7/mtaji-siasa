@@ -227,12 +227,13 @@ export function createLeaderStore(options: LeaderStoreOptions = {}): LeaderStore
 
       if (existing) {
         const owner = existing.user_id !== null && existing.user_id === actor.userId;
+        const patch = write(leader, existing);
+        // Link arrays and slug are derived, so a save that changes only them
+        // writes nothing (this keeps the service's relinkLeaders() harmless).
+        if (isNoopWrite(patch, existing)) return one(existing);
         if (!owner && !actor.isAdmin) {
           throw new LeaderStoreError(403, "You can only edit your own leader profile.");
         }
-        const patch = write(leader, existing);
-        // Link arrays are derived, so a save that only changes them writes nothing.
-        if (isNoopWrite(patch, existing)) return one(existing);
         // Owner: user client under RLS. Admin editing another account's row or a
         // leader with no account: service, because no RLS rule lets an admin write it.
         const client = owner ? await clients.user() : clients.service();
