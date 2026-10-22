@@ -16,8 +16,38 @@ import { signUpMetadata, userTypeForRole } from "@/server/tracker/roles";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PAGE = 1000;
 
-function check(error: { message: string } | null, action: string) {
-  if (error) throw new Error(`${action}: ${error.message}`);
+/**
+ * A user directory call failed. `status` drives the API answer through
+ * failureFromError (src/server/http-errors.ts): a 409 message is written for
+ * people and is shown; a 502 is logged and answered with a generic message, so
+ * Auth and database text never reach the browser.
+ */
+export class TrackerUserError extends Error {
+  constructor(
+    readonly status: 409 | 502,
+    message: string
+  ) {
+    super(message);
+    this.name = "TrackerUserError";
+  }
+}
+
+type DirectoryError = { message: string; code?: string; status?: number };
+
+/** Duplicate email: GoTrue email_exists / user_already_exists, or a Postgres unique violation. */
+function isConflict(error: DirectoryError): boolean {
+  return (
+    error.code === "email_exists" ||
+    error.code === "user_already_exists" ||
+    error.code === "23505" ||
+    /already (been )?(registered|exists)|duplicate key/i.test(error.message)
+  );
+}
+
+function check(error: DirectoryError | null, action: string) {
+  if (!error) return;
+  if (isConflict(error)) throw new TrackerUserError(409, "An account with this email already exists.");
+  throw new TrackerUserError(502, `${action}: ${error.message}`);
 }
 
 /** Ids per `.in()` filter: keeps each PostgREST request URL well under proxy limits. */
@@ -170,7 +200,7 @@ export function createTrackerUserRepository(): UserRepository {
       const phone = await admin.from("profiles").update({ phone: metadata.phone }).eq("id", id);
       check(phone.error, "Could not save the phone number");
       const created = await findById(id);
-      if (!created) throw new Error("The new user could not be read back.");
+      if (!created) throw new TrackerUserError(502, "The new user could not be read back.");
       return created;
     },
 

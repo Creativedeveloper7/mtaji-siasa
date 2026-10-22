@@ -1,6 +1,6 @@
 import { computeAdlyStats } from "@/data/adly";
 import { slugify } from "@/lib/store";
-import { getRepositories } from "@/server";
+import { getRepositories, usesTracker } from "@/server";
 import {
   parseCampaign,
   parseCreative,
@@ -47,6 +47,14 @@ function civic() {
   return getRepositories().content;
 }
 
+/*
+ * Project ownership. Tracker mode follows the Ownership rule
+ * (docs/tracker-backend.md): the project's owner auth user id
+ * (changemakers.user_id) against the verified session, or admin. Project
+ * leaderIds / Leader.projectIds are not used there: they come from
+ * political_figures.commissioned_projects, which a leader can write on their
+ * own row. Memory mode keeps the leaderId links of the demo data.
+ */
 function projectOwned(
   actor: ContentActor,
   project: Project | undefined,
@@ -58,16 +66,43 @@ function projectOwned(
   return Boolean(leader?.projectIds.includes(project.id));
 }
 
+async function ownsProjectByUser(actor: ContentActor, projectId: string): Promise<boolean> {
+  const owner = await civic().projectOwnerUserId?.(projectId);
+  return Boolean(owner && owner === actor.userId);
+}
+
 async function ownsProject(actor: ContentActor, projectId: string | undefined): Promise<boolean> {
   if (!projectId) return true;
+  if (usesTracker()) {
+    if (!(await civic().findProject(projectId))) return false;
+    return isAdmin(actor) || ownsProjectByUser(actor, projectId);
+  }
   const project = await civic().findProject(projectId);
   if (!project) return false;
   const leader = isAdmin(actor) ? undefined : await civic().findLeader(actor.leaderId);
   return projectOwned(actor, project, leader);
 }
 
-/** Ownership check for many projects at once, loading projects and the leader a single time. */
-async function projectScope(actor: ContentActor): Promise<(projectId: string | undefined) => boolean> {
+/**
+ * Ownership check for many projects at once. Memory mode loads projects and
+ * the leader a single time; Tracker mode resolves the owner user id of each
+ * project in `projectIds` (the projects the studio items point at) once.
+ */
+async function projectScope(
+  actor: ContentActor,
+  projectIds: Iterable<string | undefined>
+): Promise<(projectId: string | undefined) => boolean> {
+  if (usesTracker()) {
+    if (isAdmin(actor)) return () => true;
+    const owned = new Set<string>();
+    const wanted = [...new Set([...projectIds].filter((id): id is string => Boolean(id)))];
+    await Promise.all(
+      wanted.map(async (id) => {
+        if (await ownsProjectByUser(actor, id)) owned.add(id);
+      })
+    );
+    return (projectId) => !projectId || owned.has(projectId);
+  }
   const [projects, leader] = await Promise.all([
     civic().listProjects(),
     isAdmin(actor) ? undefined : civic().findLeader(actor.leaderId),
@@ -105,7 +140,10 @@ function ownsInsight(actor: ContentActor, campaigns: Campaign[], insight: AdlyIn
 export async function visibleAdly(actor: ContentActor): Promise<AdlyContent> {
   const all = await adly().snapshot();
   if (isAdmin(actor)) return all;
-  const owns = await projectScope(actor);
+  const owns = await projectScope(actor, [
+    ...all.timelapses.map((item) => item.projectId),
+    ...all.simulations.map((item) => item.projectId),
+  ]);
   const campaigns = all.campaigns.filter((item) => item.leaderId === actor.leaderId);
   const campaignIds = new Set(campaigns.map((item) => item.id));
   const creativeIds = new Set(campaigns.flatMap((item) => item.creativeIds));

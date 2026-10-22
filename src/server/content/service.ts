@@ -4,6 +4,7 @@ import { slugify } from "@/lib/store";
 import { getRepositories, usesTracker } from "@/server";
 import { failureFromError } from "@/server/http-errors";
 import { ownerUserIdOf } from "@/server/tracker/content/media/shared";
+import { isUuid } from "@/server/tracker/slug";
 import { collectWarnings } from "@/server/tracker/warnings";
 import {
   isRecord,
@@ -243,6 +244,7 @@ async function saveProject(actor: ContentActor, body: unknown): Promise<ContentR
   const tracker = usesTracker();
   const requestedId = isId(body);
   const existing = requestedId ? await store.findProject(requestedId) : undefined;
+  if (hiddenRecord(requestedId, existing)) return fail(404, "Project not found.");
   if (existing && !(await ownsProject(actor, existing))) {
     return fail(403, "You can only edit projects linked to your profile.");
   }
@@ -282,6 +284,7 @@ async function saveMilestone(actor: ContentActor, body: unknown): Promise<Conten
   const store = content();
   const requestedId = isId(body);
   const existing = requestedId ? await store.findMilestone(requestedId) : undefined;
+  if (hiddenRecord(requestedId, existing)) return fail(404, "Milestone not found.");
   if (existing && !(await ownsProjectId(actor, existing.projectId))) {
     return fail(403, "You can only edit milestones on your projects.");
   }
@@ -315,6 +318,7 @@ type OwnedKind = "opportunity" | "media" | "poll" | "product";
 async function saveOwned(actor: ContentActor, body: unknown, kind: OwnedKind): Promise<ContentResult> {
   const requestedId = isId(body);
   const existing = requestedId ? await findOwned(kind, requestedId) : undefined;
+  if (hiddenRecord(requestedId, existing)) return fail(404, "Record not found.");
   if (requestedId && existing && !ownsRecord(actor, existing)) {
     return fail(403, "You can only edit records linked to your profile.");
   }
@@ -360,10 +364,19 @@ async function deleteProject(actor: ContentActor, id: string): Promise<ContentRe
   const project = await store.findProject(id);
   if (!project) return fail(404, "Project not found.");
   if (!(await ownsProject(actor, project))) return fail(403, "You can only delete projects linked to your profile.");
-  for (const milestone of await store.listMilestonesByProject(id)) {
-    await store.deleteMilestone(milestone.id);
+  if (usesTracker()) {
+    // initiatives deletes cascade to donations (and milestones, volunteer and
+    // job applications...): never drop money records with a project.
+    if (((await store.projectDonationCount?.(id)) ?? 0) > 0) {
+      return fail(409, "This project has donations; it can't be deleted.");
+    }
+  } else {
+    // Memory mode has no cascade.
+    for (const milestone of await store.listMilestonesByProject(id)) {
+      await store.deleteMilestone(milestone.id);
+    }
+    await relinkLeaders("projectIds", id, []);
   }
-  if (!usesTracker()) await relinkLeaders("projectIds", id, []);
   if (!(await store.deleteProject(id))) return fail(403, "You can only delete projects linked to your profile.");
   return ok({ ok: true });
 }
@@ -540,6 +553,16 @@ async function uniqueSlug(
     if (!takenBy || takenBy === id) return candidate;
     n += 1;
   }
+}
+
+/**
+ * Tracker: a body id that is a uuid names a stored row (new records from the
+ * forms carry a local `prefix-xxxx` id, or none). When the caller cannot read
+ * that row (row-level security, or it does not exist) the save is refused
+ * instead of creating a new row in its place.
+ */
+function hiddenRecord(requestedId: string | undefined, existing: unknown): boolean {
+  return usesTracker() && existing === undefined && requestedId !== undefined && isUuid(requestedId);
 }
 
 function isId(body: unknown): string | undefined {

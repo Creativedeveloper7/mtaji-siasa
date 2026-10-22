@@ -30,7 +30,8 @@ Repositories are async. Every method returns a Promise.
 - Tracker adapter when `NEXT_PUBLIC_SUPABASE_URL` and
   `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set, unless `MTAJI_STORE=memory`.
 - Memory adapter otherwise. It holds the sample data in `src/data` and is lost
-  on restart. It is for local demos only.
+  on restart. It is for local demos only: read-only sample data with no
+  sign-in (see Memory mode under Auth).
 
 ## Supabase clients (server only)
 
@@ -147,12 +148,20 @@ leader vs aspirant, asking for the other one saves the rest and answers 409
 with that explanation. The directory reads profile rows per page of
 `listUsers` (`.in()` on the page's ids), and email lookup is an exact
 case-insensitive match (LIKE wildcards escaped). Without `SUPABASE_SERVICE_ROLE_KEY` these endpoints
-answer 503.
+answer 503. A duplicate email (GoTrue `email_exists`, Postgres 23505) answers
+409; any other Auth or database failure is logged and answered with a
+generic 502 (`TrackerUserError` through `failureFromError`), never its text.
+Sign-up passes through only weak password (400), invalid email (400) and
+rate limit (429); anything else gets a generic message.
 
 #### Memory mode
 
 Accounts exist only in Supabase Auth. In memory mode the public pages work on
-sample data, but sign-in and sign-up answer 503 and there is no session.
+sample data, but sign-in and sign-up answer 503 and there is no session
+(`currentSession()` returns null). Memory mode is therefore read-only sample
+data: every route that needs a signed-in role (content and Adly writes,
+`/api/uploads`, `/api/content/reset`, the dashboards, admin and the Adly
+studio) answers 401. There is no demo sign-in.
 
 ## Content
 
@@ -184,7 +193,15 @@ the content slices (field mapping: `docs/content-mapping.md`):
   and milestones, and with the figure's `user_id` for leaders. Row-level
   security checks the same thing again on every write.
 - `content.reset()` and `resetAll()` answer 403: Tracker data is never reset
-  from Siasa. `POST /api/content/reset` works in memory mode only.
+  from Siasa. `POST /api/content/reset` is refused in Tracker mode; it needs
+  an admin session, so with no sign-in in memory mode it is not reachable
+  there either (restart the server to get fresh sample data).
+- Deleting a project: an `initiatives` delete cascades to its `donations`,
+  milestones, volunteer and job applications, `initiative_*` rows and
+  `job_opportunities`. The content service refuses (409 "This project has
+  donations; it can't be deleted") when any `donations` row exists for the
+  initiative (`projectDonationCount()`; `donations` is publicly readable).
+  Milestones are left to the cascade.
 - Writes that had to leave out data (a Tracker migration not applied yet)
   return `warnings: string[]` next to `item`; the forms show them.
 - Repository errors carry an HTTP `status` (`LeaderStoreError`,
@@ -236,7 +253,12 @@ Adly campaigns and dashboard paid ads are both `adly_campaigns` rows
   owner can publish. `ADS_DRY_RUN=true` asks the edge functions for a dry run:
   an audit row only, nothing is created on a network or charged.
 - The Adly studio's posters, simulations and creatives still use the memory
-  adapter.
+  adapter. In Tracker mode a studio item tied to a project (timelapses,
+  simulations, and the project on a poster or campaign) follows the Ownership
+  rule: the project's owner user id (`projectOwnerUserId()`) or admin.
+  `Project.leaderIds` / `Leader.projectIds` are not used, because they include
+  `political_figures.commissioned_projects`, which a leader can write on their
+  own row.
 - Memory mode keeps a simulated paid-ads flow (`src/server/ads/service.ts`)
   that never contacts a network.
 
@@ -272,5 +294,9 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...        # publishable key
 SUPABASE_SERVICE_ROLE_KEY=...            # server only; admin pages need it
 ```
 
-Leave them unset, or set `MTAJI_STORE=memory`, to run on sample data. The
-other settings (ads, site URL) are listed in the README.
+Leave them unset, or set `MTAJI_STORE=memory`, to browse read-only sample
+data. Memory mode has no sign-in (sign-in and sign-up answer 503), so the
+dashboards, admin pages, Adly studio and every write or upload route answer
+401 there; restart the server to get fresh sample data. To try signed-in
+flows, point the variables at a Supabase project. The other settings (ads,
+site URL) are listed in the README.

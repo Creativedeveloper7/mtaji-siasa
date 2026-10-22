@@ -178,6 +178,8 @@ export default function AdlyCampaignMonitorPage({
       )}
 
       <AdlyCampaignLive
+        // Remount per campaign so no conversation, notice or draft carries over.
+        key={campaign.id}
         campaignId={campaign.id}
         onChanged={() => void reload()}
         fallback={

@@ -293,6 +293,45 @@ describe("application repository", () => {
     expect(await repo.list()).toEqual([]);
   });
 
+  it("findAsAdmin / reviewAsAdmin check the admin role, then use the service client", async () => {
+    const ID = "cccccccc-0000-4000-8000-000000000002";
+    const service = state();
+    service.tables.opportunity_applications.push({
+      id: ID,
+      opportunity_id: OPP,
+      applicant_id: OTHER,
+      full_name: "Jane",
+      email: "jane@example.com",
+      status: "pending",
+      created_at: "2026-10-20T00:00:00Z",
+    });
+    const user = state({ appRole: "admin", userId: OTHER });
+    const repo = createApplicationRepository(fakeClients(user, service), { now: NOW });
+    // RLS: the admin's own client sees nothing.
+    expect(await repo.find(ID)).toBeUndefined();
+    const found = await repo.findAsAdmin(ID);
+    expect(found).toMatchObject({ id: ID, applicantId: OTHER });
+    const saved = await repo.reviewAsAdmin({ ...found!, status: "accepted" });
+    expect(saved.status).toBe("accepted");
+    expect(service.tables.opportunity_applications[0].status).toBe("accepted");
+    expect(user.calls.filter((call) => call.table === "opportunity_applications" && call.op !== "select")).toEqual([]);
+    // Review only: an unknown id is never inserted.
+    await expect(repo.reviewAsAdmin({ ...found!, id: "cccccccc-0000-4000-8000-000000000099" })).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(service.tables.opportunity_applications).toHaveLength(1);
+  });
+
+  it("findAsAdmin / reviewAsAdmin refuse non-admins before touching the service client", async () => {
+    const service = state();
+    const repo = createApplicationRepository(fakeClients(state(), service));
+    await expect(repo.findAsAdmin("cccccccc-0000-4000-8000-000000000002")).rejects.toMatchObject({ status: 403 });
+    await expect(repo.reviewAsAdmin({ ...app, id: "cccccccc-0000-4000-8000-000000000002" })).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(service.calls).toHaveLength(0);
+  });
+
   it("listAll refuses non-admins (403) and signed-out callers (401) before touching the service client", async () => {
     const service = state();
     await expect(createApplicationRepository(fakeClients(state(), service)).listAll()).rejects.toMatchObject({ status: 403 });

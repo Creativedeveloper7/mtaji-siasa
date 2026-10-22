@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AdminField,
   AdminHeader,
@@ -26,6 +26,9 @@ export default function PoliticianProfilePage() {
   const [form, setForm] = useState<Leader | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Guards clicks that land before the disabled button re-renders: a draft's
+  // first save creates the leader, so a second one would create another.
+  const savingRef = useRef(false);
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
 
@@ -36,20 +39,27 @@ export default function PoliticianProfilePage() {
   if (!form) return null;
 
   const save = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setError("");
     setWarnings([]);
     setSaving(true);
-    const result = await upsertLeader({
-      ...form,
-      slug: form.slug || slugify(form.name),
-      achievements: form.achievements.filter(Boolean),
-    });
-    if (result.ok && isDraft) {
-      // The first save created the leader profile: the session now carries its id.
-      const session = await apiJson<{ user?: AuthSession | null }>("/api/auth/session");
-      if (session.ok && session.data.user) applySession(session.data.user);
+    let result: Awaited<ReturnType<typeof upsertLeader>>;
+    try {
+      result = await upsertLeader({
+        ...form,
+        slug: form.slug || slugify(form.name),
+        achievements: form.achievements.filter(Boolean),
+      });
+      if (result.ok && isDraft) {
+        // The first save created the leader profile: the session now carries its id.
+        const session = await apiJson<{ user?: AuthSession | null }>("/api/auth/session");
+        if (session.ok && session.data.user) applySession(session.data.user);
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-    setSaving(false);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -208,8 +218,8 @@ export default function PoliticianProfilePage() {
           </AdminField>
         ))}
 
-        <Button type="button" onClick={save} fullWidth>
-          {saved ? "Saved" : "Save profile"}
+        <Button type="button" onClick={() => void save()} disabled={saving} fullWidth>
+          {saving ? "Saving…" : saved ? "Saved" : isDraft ? "Create profile" : "Save profile"}
         </Button>
       </div>
     </div>

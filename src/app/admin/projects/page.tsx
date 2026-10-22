@@ -136,7 +136,7 @@ export default function AdminProjectsPage() {
         getMilestonesByProject(project.id).map((m) => deleteMilestone(m.id))
       );
       const failed = milestoneResults.find((r) => !r.ok);
-      if (failed && !failed.ok) return failed;
+      if (failed) return failed;
       return deleteProject(project.id);
     });
 

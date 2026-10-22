@@ -6,6 +6,7 @@ import type {
   OpportunityStatus,
 } from "@/types";
 import type { AdlyInterestLead } from "@/server/domain";
+import { safeHttpUrl } from "@/lib/safe-url";
 
 /**
  * Pure mappers between Siasa's opportunity model and the Tracker tables
@@ -337,7 +338,8 @@ export function opportunityFromRow(row: OpportunityRow, context: OpportunityRead
     requirements: textList(row.requirements),
     applicationSteps: steps.length ? steps : undefined,
     organization: text(row.organization),
-    applicationUrl: text(row.apply_url),
+    // Only an http(s) link is passed to the page.
+    applicationUrl: safeHttpUrl(text(row.apply_url)),
     relatedMediaIds: context.relatedMediaIds?.length ? context.relatedMediaIds : undefined,
   };
 }

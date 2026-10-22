@@ -70,8 +70,10 @@ export function AdlyCampaignLive({
   const [message, setMessage] = useState("");
   const bottom = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async () => {
+  /** `isCancelled` lets the mount effect drop an answer that arrives after it was torn down. */
+  const load = useCallback(async (isCancelled: () => boolean = () => false) => {
     const result = await apiJson<Conversation & { error?: string }>(`/api/adly/agent/${encodeURIComponent(campaignId)}`);
+    if (isCancelled()) return;
     if (result.status === 501) {
       setUnavailable(true);
       return;
@@ -85,7 +87,11 @@ export function AdlyCampaignLive({
   }, [campaignId]);
 
   useEffect(() => {
-    void load();
+    let cancel = false;
+    void load(() => cancel);
+    return () => {
+      cancel = true;
+    };
   }, [load]);
 
   useEffect(() => {
@@ -95,6 +101,7 @@ export function AdlyCampaignLive({
   if (unavailable) return <>{fallback}</>;
 
   const publish = async () => {
+    if (busy) return;
     if (!confirm("Publish this campaign to the selected networks? Your wallet pays each network that accepts it.")) return;
     setBusy("publish");
     setNotice("");
@@ -115,6 +122,7 @@ export function AdlyCampaignLive({
   };
 
   const sync = async () => {
+    if (busy) return;
     setBusy("sync");
     const result = await apiJson<{ message?: string; error?: string }>(`/api/adly/sync/${encodeURIComponent(campaignId)}`, {
       method: "POST",
@@ -127,6 +135,8 @@ export function AdlyCampaignLive({
   };
 
   const send = async () => {
+    // Enter can fire while a reply is pending (the textarea stays enabled).
+    if (busy) return;
     const text = message.trim();
     if (!text) return;
     setBusy("chat");

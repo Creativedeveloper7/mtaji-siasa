@@ -4,6 +4,7 @@ import { AlertTriangle, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-url";
 import type { AdCampaign, AdCampaignStatus, AdPlatformRun } from "@/types";
 import type { TrackerAdExtras } from "@/server/tracker/adly/mapping";
 
@@ -143,9 +144,13 @@ export function AdCampaignCard({
               <p className="mt-2 font-medium text-ink">{campaign.headline}</p>
               <p className="mt-1 whitespace-pre-wrap">{campaign.body}</p>
               <p className="mt-2">Keywords: {campaign.keywords.join(", ")}</p>
-              <a href={campaign.landingUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-accent">
-                {campaign.landingUrl} <ExternalLink className="h-3 w-3" />
-              </a>
+              {safeHttpUrl(campaign.landingUrl) ? (
+                <a href={safeHttpUrl(campaign.landingUrl)} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-accent">
+                  {campaign.landingUrl} <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                campaign.landingUrl && <p className="mt-1 break-all">{campaign.landingUrl}</p>
+              )}
             </details>
           )}
         </div>

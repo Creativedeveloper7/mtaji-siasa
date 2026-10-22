@@ -182,6 +182,39 @@ describe("signUp", () => {
     expect(await signUp(input, "https://siasa.example")).toMatchObject({ ok: false, status: 409 });
   });
 
+  it("passes through only known Supabase sign-up errors", async () => {
+    const answer = async (error: Record<string, unknown>) => {
+      clients.current = fakeSupabase(trackerDb(), {
+        signUp: async () => ({ data: { user: null, session: null }, error }),
+      });
+      return signUp(input, "https://siasa.example");
+    };
+    expect(
+      await answer({ code: "weak_password", status: 422, message: "Password should contain at least one number." })
+    ).toEqual({ ok: false, status: 400, error: "Password should contain at least one number." });
+    expect(await answer({ code: "email_address_invalid", status: 400, message: "Email address is invalid" })).toEqual({
+      ok: false,
+      status: 400,
+      error: "Enter a valid email address.",
+    });
+    expect(await answer({ code: "over_email_send_rate_limit", status: 429, message: "email rate limit exceeded" })).toMatchObject({
+      ok: false,
+      status: 429,
+    });
+    expect(await answer({ code: "user_already_exists", status: 422, message: "User already registered" })).toMatchObject({
+      ok: false,
+      status: 409,
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const hidden = await answer({ status: 500, message: 'Database error saving new user: relation "profiles"' });
+      expect(hidden).toMatchObject({ ok: false, status: 502 });
+      expect(!hidden.ok && hidden.error).not.toMatch(/Database|relation|profiles/);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("rejects a short password before calling Supabase", async () => {
     expect(await signUp({ ...input, password: "123" }, "https://siasa.example")).toMatchObject({
       ok: false,

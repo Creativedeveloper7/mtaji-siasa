@@ -10,6 +10,7 @@ import { reportWarning } from "@/server/tracker/warnings";
 import { createLeaderRepository, type LeaderLinksProvider } from "@/server/tracker/content/leaders";
 import {
   createProjectRepository,
+  projectDonationCount,
   projectIdsForFigures,
   projectOwnerUserId,
 } from "@/server/tracker/content/projects";
@@ -104,6 +105,7 @@ export function createTrackerContentRepository(): ContentRepository {
       unavailable("Content lives in the M-Taji Tracker database and is never reset from Siasa.", 403);
     },
     projectOwnerUserId: (projectId: string) => projectOwnerUserId(projectId),
+    projectDonationCount: (projectId: string) => projectDonationCount(projectId),
   };
 }
 

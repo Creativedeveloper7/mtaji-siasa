@@ -16,6 +16,7 @@ import type {
   SocialLinks,
 } from "@/types";
 import { createId, slugify } from "@/lib/store";
+import { safeHttpUrl } from "@/lib/safe-url";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -46,16 +47,34 @@ const MEDIA_CATEGORIES = ["news", "project-updates", "leader-updates", "videos",
 const MEDIA_TYPES = ["image", "video", "article"] as const;
 export const MAX_GALLERY_IMAGES = 12;
 
-function social(value: unknown, existing?: SocialLinks): SocialLinks {
+const SOCIAL_LABELS = {
+  x: "X",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  tiktok: "TikTok",
+  whatsapp: "WhatsApp",
+  website: "Website",
+} as const;
+
+/** Social links, or an error message when a link is not an http(s) URL. */
+function social(value: unknown, existing?: SocialLinks): SocialLinks | string {
   const source = isRecord(value) ? value : {};
   const base = existing ?? {};
   const next: SocialLinks = { ...base };
   for (const key of ["x", "instagram", "facebook", "tiktok", "whatsapp", "website"] as const) {
-    if (isRecord(value) && key in source) {
-      const text = asString(source[key]);
-      if (text) next[key] = text;
-      else delete next[key];
+    if (!(isRecord(value) && key in source)) {
+      // A link stored before this check that is not http(s) is dropped, not kept.
+      if (next[key] && !safeHttpUrl(next[key])) delete next[key];
+      continue;
     }
+    const text = asString(source[key]);
+    if (!text) {
+      delete next[key];
+      continue;
+    }
+    const link = safeHttpUrl(text);
+    if (!link) return `The ${SOCIAL_LABELS[key]} link must be a full web address starting with http:// or https://.`;
+    next[key] = link;
   }
   return next;
 }
@@ -108,6 +127,8 @@ export function parseLeader(body: unknown, existing?: Leader, options: ParseLead
   if (!name) return "Leader name is required.";
   const id = asString(body.id) ?? existing?.id ?? createId("ldr");
   const slugSource = "slug" in body ? asString(body.slug) : existing?.slug;
+  const socialLinks = "social" in body ? social(body.social, existing?.social) : existing?.social ?? {};
+  if (typeof socialLinks === "string") return socialLinks;
   return {
     id,
     slug: slugSource || slugify(name) || id,
@@ -124,7 +145,7 @@ export function parseLeader(body: unknown, existing?: Leader, options: ParseLead
     shortBio: ("shortBio" in body ? asString(body.shortBio) : existing?.shortBio) ?? "",
     bio: ("bio" in body ? asString(body.bio) : existing?.bio) ?? "",
     achievements: "achievements" in body ? stringList(body.achievements) : existing?.achievements ?? [],
-    social: "social" in body ? social(body.social, existing?.social) : existing?.social ?? {},
+    social: socialLinks,
     projectIds: "projectIds" in body ? stringList(body.projectIds) : existing?.projectIds ?? [],
     opportunityIds: "opportunityIds" in body ? stringList(body.opportunityIds) : existing?.opportunityIds ?? [],
     mediaIds: "mediaIds" in body ? stringList(body.mediaIds) : existing?.mediaIds ?? [],
@@ -230,6 +251,11 @@ export function parseOpportunity(body: unknown, existing?: Opportunity): Opportu
   if (!title) return "Opportunity title is required.";
   const id = asString(body.id) ?? existing?.id ?? createId("opp");
   const slugSource = "slug" in body ? asString(body.slug) : existing?.slug;
+  const applicationUrlText = "applicationUrl" in body ? asString(body.applicationUrl) : existing?.applicationUrl;
+  const applicationUrl = safeHttpUrl(applicationUrlText);
+  if ("applicationUrl" in body && applicationUrlText && !applicationUrl) {
+    return "The application link must start with http:// or https://.";
+  }
   return {
     id,
     slug: slugSource || slugify(title) || id,
@@ -253,7 +279,7 @@ export function parseOpportunity(body: unknown, existing?: Opportunity): Opportu
     requirements: "requirements" in body ? stringList(body.requirements) : existing?.requirements,
     applicationSteps: "applicationSteps" in body ? stringList(body.applicationSteps) : existing?.applicationSteps,
     organization: "organization" in body ? asString(body.organization) : existing?.organization,
-    applicationUrl: "applicationUrl" in body ? asString(body.applicationUrl) : existing?.applicationUrl,
+    applicationUrl,
     relatedMediaIds: "relatedMediaIds" in body ? stringList(body.relatedMediaIds) : existing?.relatedMediaIds,
   };
 }

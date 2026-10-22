@@ -37,6 +37,10 @@ export interface TrackerApplicationRepository extends Promisified<ApplicationRep
   listForOpportunity(opportunityId: string): Promise<OpportunityApplication[]>;
   /** Admin only (checked here with auth.getUser(), else 403): every application. Uses the service role. */
   listAll(): Promise<OpportunityApplication[]>;
+  /** Admin only (checked like listAll()): one application by id, on the service client. */
+  findAsAdmin(id: string): Promise<OpportunityApplication | undefined>;
+  /** Admin only (checked like listAll()): status / review note change on the service client. */
+  reviewAsAdmin(item: OpportunityApplication): Promise<OpportunityApplication>;
 }
 
 const ORDER = { ascending: false } as const;
@@ -176,6 +180,21 @@ export function createApplicationRepository(
       const { data, error } = await admin.from("opportunity_applications").select("*").order("created_at", ORDER);
       check(error, "Could not load applications");
       return rows(data);
+    },
+
+    findAsAdmin: async (id) => {
+      // No RLS policy lets an admin read applications on others' listings.
+      await requireAdmin(clients);
+      const row = await findRow(await clients.service(), id);
+      return row ? applicationFromRow(row) : undefined;
+    },
+
+    reviewAsAdmin: async (item) => {
+      // Review only: never inserts. RLS lets only the listing author update.
+      await requireAdmin(clients);
+      const admin = await clients.service();
+      if (!(await findRow(admin, item.id))) throw new TrackerWriteError("Application not found.", "not_found");
+      return review(admin, item);
     },
 
     find: async (id) => {

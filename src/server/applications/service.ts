@@ -204,7 +204,12 @@ export async function reviewApplication(
 async function review(session: AuthSession, id: string, body: unknown): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Review body must be an object.");
   const repos = getRepositories();
-  const existing = await repos.applications.find(id);
+  const apps = repos.applications;
+  // Tracker: RLS gives an admin no access to other people's applications, so
+  // an admin reads and reviews through the store's admin methods (which
+  // re-check the admin role and use the service client).
+  const asAdmin = usesTracker() && session.role === "admin" && Boolean(apps.findAsAdmin && apps.reviewAsAdmin);
+  const existing = asAdmin ? await apps.findAsAdmin!(id) : await apps.find(id);
   if (!existing) return fail(404, "Application not found.");
   const opportunity = await repos.content.findOpportunity(existing.opportunityId);
   if (!canReview(session, opportunity)) {
@@ -216,16 +221,15 @@ async function review(session: AuthSession, id: string, body: unknown): Promise<
       : existing.status;
   if (!status) return fail(400, "Choose a valid application status.");
   const reviewNote = "reviewNote" in body ? asString(body.reviewNote) : existing.reviewNote;
-  const saved = await repos.applications.upsert({
-    ...existing,
-    status,
-    reviewNote,
-    updatedAt: new Date().toISOString(),
-  });
+  const next = { ...existing, status, reviewNote, updatedAt: new Date().toISOString() };
+  const saved = asAdmin ? await apps.reviewAsAdmin!(next) : await apps.upsert(next);
   return ok({ ok: true, item: view(saved, opportunity) });
 }
 
-/** The applicant may withdraw while the application has not been reviewed yet. */
+/**
+ * The applicant may withdraw while the application has not been reviewed yet.
+ * Applicant only: a publisher or admin reviews (rejects) instead.
+ */
 export async function withdrawApplication(session: AuthSession, id: string): Promise<ContentResult> {
   return guarded("withdraw application", () => withdraw(session, id));
 }
@@ -234,10 +238,10 @@ async function withdraw(session: AuthSession, id: string): Promise<ContentResult
   const repos = getRepositories();
   const existing = await repos.applications.find(id);
   if (!existing) return fail(404, "Application not found.");
-  if (existing.applicantId !== session.userId && session.role !== "admin") {
+  if (existing.applicantId !== session.userId) {
     return fail(403, "You can only withdraw your own application.");
   }
-  if (existing.status !== "submitted" && session.role !== "admin") {
+  if (existing.status !== "submitted") {
     return fail(400, "This application is already being reviewed and can no longer be withdrawn.");
   }
   if (!(await repos.applications.delete(id))) {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MediaItem, Poll, Project, ProjectMilestone } from "@/types";
+import type { MediaItem, Opportunity, Poll, Product, Project, ProjectMilestone } from "@/types";
 import type { ContentRepository } from "@/server/repositories";
 
 /**
@@ -19,6 +19,10 @@ const OTHER_PROJECT = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const MEDIA = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const POLL = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const MILESTONE = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+const OPPORTUNITY = "abababab-abab-4bab-8bab-abababababab";
+const PRODUCT = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+/** A row that exists but row-level security hides from the caller. */
+const HIDDEN = "efefefef-efef-4fef-8fef-efefefefefef";
 
 type Owned<T> = T & { ownerUserId?: string };
 
@@ -34,6 +38,7 @@ vi.mock("@/server", () => ({
 
 const { saveCollection, deleteCollection } = await import("@/server/content/service");
 const { ProjectAccessError } = await import("@/server/tracker/content/projects/repository");
+const { reportWarning } = await import("@/server/tracker/warnings");
 
 const owner = { role: "leader" as const, userId: OWNER, leaderId: FIGURE };
 /** Another user whose session leaderId equals the owner's figure id: must not matter. */
@@ -96,6 +101,39 @@ function poll(over: Partial<Owned<Poll>> = {}): Owned<Poll> {
   };
 }
 
+function opportunity(over: Partial<Owned<Opportunity>> = {}): Owned<Opportunity> {
+  return {
+    id: OPPORTUNITY,
+    slug: "road-jobs",
+    title: "Road jobs",
+    category: "jobs" as Opportunity["category"],
+    location: "Githurai",
+    county: "Nairobi",
+    deadline: "2026-12-01",
+    eligibility: "",
+    description: "Casual work",
+    leaderId: FIGURE,
+    ownerUserId: OWNER,
+    ...over,
+  };
+}
+
+function product(over: Partial<Owned<Product>> = {}): Owned<Product> {
+  return {
+    id: PRODUCT,
+    slug: "cap",
+    name: "Cap",
+    price: 500,
+    currency: "KES",
+    image: "",
+    description: "",
+    stock: 10,
+    leaderId: FIGURE,
+    ownerUserId: OWNER,
+    ...over,
+  };
+}
+
 interface Fake {
   repo: ContentRepository;
   projects: Map<string, Owned<Project>>;
@@ -103,6 +141,9 @@ interface Fake {
   media: Map<string, Owned<MediaItem>>;
   polls: Map<string, Owned<Poll>>;
   milestones: Map<string, ProjectMilestone>;
+  opportunities: Map<string, Owned<Opportunity>>;
+  products: Map<string, Owned<Product>>;
+  donations: Map<string, number>;
   calls: string[];
 }
 
@@ -115,6 +156,9 @@ function fakeContent(): Fake {
   const milestones = new Map<string, ProjectMilestone>([
     [MILESTONE, { id: MILESTONE, projectId: OTHER_PROJECT, number: 1, date: "2026-11-01", title: "Survey", description: "", status: "upcoming" }],
   ]);
+  const opportunities = new Map([[OPPORTUNITY, opportunity()]]);
+  const products = new Map([[PRODUCT, product()]]);
+  const donations = new Map<string, number>();
   const calls: string[] = [];
   const unused = async () => {
     throw new Error("not used in this test");
@@ -155,18 +199,25 @@ function fakeContent(): Fake {
       calls.push(`deleteMilestone:${id}`);
       return true;
     },
-    listOpportunities: async () => [],
-    findOpportunity: async () => undefined,
+    listOpportunities: async () => [...opportunities.values()],
+    findOpportunity: async (id: string) => opportunities.get(id),
     findOpportunityBySlug: async () => undefined,
     listOpportunitiesByIds: unused,
-    upsertOpportunity: unused,
-    deleteOpportunity: unused,
+    upsertOpportunity: async (item: Opportunity) => {
+      calls.push(`upsertOpportunity:${item.id}`);
+      return { ...item, ownerUserId: opportunities.get(item.id)?.ownerUserId };
+    },
+    deleteOpportunity: async (id: string) => {
+      calls.push(`deleteOpportunity:${id}`);
+      return true;
+    },
     listMedia: async () => [...mediaItems.values()],
     findMedia: async (id: string) => mediaItems.get(id),
     findMediaBySlug: async () => undefined,
     listMediaByIds: unused,
     upsertMedia: async (item: MediaItem) => {
       calls.push(`upsertMedia:${item.leaderId}`);
+      if (item.title === "With gallery") reportWarning("Gallery photos were not saved: Tracker migration M3 is not applied.");
       return { ...item, ownerUserId: mediaItems.get(item.id)?.ownerUserId };
     },
     deleteMedia: async (id: string) => {
@@ -185,15 +236,22 @@ function fakeContent(): Fake {
       calls.push(`deletePoll:${id}`);
       return true;
     },
-    listProducts: async () => [],
-    findProduct: async () => undefined,
+    listProducts: async () => [...products.values()],
+    findProduct: async (id: string) => products.get(id),
     findProductBySlug: async () => undefined,
     listProductsByLeader: async () => [],
-    upsertProduct: unused,
-    deleteProduct: unused,
+    upsertProduct: async (item: Product) => {
+      calls.push(`upsertProduct:${item.id}`);
+      return { ...item, ownerUserId: products.get(item.id)?.ownerUserId };
+    },
+    deleteProduct: async (id: string) => {
+      calls.push(`deleteProduct:${id}`);
+      return true;
+    },
     projectOwnerUserId: async (id: string) => owners.get(id),
+    projectDonationCount: async (id: string) => donations.get(id) ?? 0,
   } as unknown as ContentRepository;
-  return { repo, projects, owners, media: mediaItems, polls, milestones, calls };
+  return { repo, projects, owners, media: mediaItems, polls, milestones, opportunities, products, donations, calls };
 }
 
 let fake: Fake;
@@ -320,6 +378,112 @@ describe("Tracker mode: projects and milestones", () => {
     log.mockRestore();
     expect(broken).toMatchObject({ ok: false, status: 500 });
     if (!broken.ok) expect(broken.error).not.toMatch(/initiatives|violates/);
+  });
+});
+
+describe("Tracker mode: opportunities and products follow the owner user id", () => {
+  it("lets the owner edit and delete, and an admin too", async () => {
+    expect(await saveCollection(owner, "opportunities", { ...opportunity(), title: "Road jobs 2" })).toMatchObject({
+      ok: true,
+      status: 200,
+    });
+    expect(await saveCollection(owner, "products", { ...product(), name: "Blue cap" })).toMatchObject({
+      ok: true,
+      status: 200,
+    });
+    expect(await deleteCollection(owner, "opportunities", OPPORTUNITY)).toMatchObject({ ok: true });
+    expect(await saveCollection(admin, "products", { ...product(), name: "Admin cap" })).toMatchObject({ ok: true });
+    expect(await deleteCollection(admin, "products", PRODUCT)).toMatchObject({ ok: true });
+    expect(fake.calls).toEqual([
+      `upsertOpportunity:${OPPORTUNITY}`,
+      `upsertProduct:${PRODUCT}`,
+      `deleteOpportunity:${OPPORTUNITY}`,
+      `upsertProduct:${PRODUCT}`,
+      `deleteProduct:${PRODUCT}`,
+    ]);
+  });
+
+  it("refuses another user even with the owner's figure id as their session leaderId", async () => {
+    expect(await saveCollection(impostor, "opportunities", { ...opportunity(), title: "Mine" })).toMatchObject({
+      ok: false,
+      status: 403,
+    });
+    expect(await deleteCollection(impostor, "opportunities", OPPORTUNITY)).toMatchObject({ ok: false, status: 403 });
+    expect(await saveCollection(impostor, "products", { ...product(), price: 1 })).toMatchObject({ ok: false, status: 403 });
+    expect(await deleteCollection(impostor, "products", PRODUCT)).toMatchObject({ ok: false, status: 403 });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("refuses linking an opportunity to a project the caller does not own", async () => {
+    expect(
+      await saveCollection(owner, "opportunities", { ...opportunity(), projectId: OTHER_PROJECT })
+    ).toMatchObject({ ok: false, status: 403 });
+    expect(await saveCollection(owner, "opportunities", { ...opportunity(), projectId: PROJECT })).toMatchObject({
+      ok: true,
+    });
+  });
+});
+
+describe("Tracker mode: saving an id the caller cannot see", () => {
+  it("answers 404 and never creates a new row in its place", async () => {
+    expect(await saveCollection(impostor, "opportunities", { ...opportunity({ id: HIDDEN }), title: "Overwrite" })).toMatchObject({
+      ok: false,
+      status: 404,
+    });
+    expect(await saveCollection(impostor, "products", { ...product({ id: HIDDEN }) })).toMatchObject({ ok: false, status: 404 });
+    expect(await saveCollection(impostor, "media", { ...media({ id: HIDDEN }) })).toMatchObject({ ok: false, status: 404 });
+    expect(await saveCollection(owner, "projects", project({ id: HIDDEN }))).toMatchObject({ ok: false, status: 404 });
+    expect(
+      await saveCollection(owner, "milestones", { id: HIDDEN, projectId: PROJECT, title: "Survey", date: "2026-11-01" })
+    ).toMatchObject({ ok: false, status: 404 });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("still creates a record sent with a local (non-uuid) id", async () => {
+    const created = await saveCollection(owner, "products", { ...product({ id: "prd-local1" }), name: "New cap" });
+    expect(created).toMatchObject({ ok: true, status: 201 });
+  });
+});
+
+describe("Tracker mode: warnings", () => {
+  it("returns repository warnings next to the saved item", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await saveCollection(owner, "media", { ...media(), title: "With gallery" });
+    warn.mockRestore();
+    expect(result).toMatchObject({
+      ok: true,
+      status: 200,
+      body: { warnings: ["Gallery photos were not saved: Tracker migration M3 is not applied."] },
+    });
+    const plain = await saveCollection(owner, "media", { ...media(), title: "Plain" });
+    expect(plain.ok && "warnings" in plain.body).toBe(false);
+  });
+});
+
+describe("Tracker mode: deleting a project", () => {
+  it("refuses with 409 when the project has donations", async () => {
+    fake.donations.set(PROJECT, 2);
+    expect(await deleteCollection(owner, "projects", PROJECT)).toEqual({
+      ok: false,
+      status: 409,
+      error: "This project has donations; it can't be deleted.",
+    });
+    expect(await deleteCollection(admin, "projects", PROJECT)).toMatchObject({ ok: false, status: 409 });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("deletes the project alone and leaves milestones to the database cascade", async () => {
+    fake.owners.set(OTHER_PROJECT, OWNER);
+    expect(await deleteCollection(owner, "projects", OTHER_PROJECT)).toMatchObject({ ok: true, status: 200 });
+    // OTHER_PROJECT has MILESTONE: no per-milestone delete in Tracker mode.
+    expect(fake.calls).toEqual([`deleteProject:${OTHER_PROJECT}`]);
+  });
+
+  it("still deletes milestones one by one in memory mode", async () => {
+    state.tracker = false;
+    fake.donations.set(OTHER_PROJECT, 5); // ignored: memory mode has no donations table
+    expect(await deleteCollection(owner, "projects", OTHER_PROJECT)).toMatchObject({ ok: true });
+    expect(fake.calls).toEqual([`deleteMilestone:${MILESTONE}`, `deleteProject:${OTHER_PROJECT}`]);
   });
 });
 

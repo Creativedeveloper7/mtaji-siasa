@@ -1,5 +1,6 @@
 import { rowSlug } from "@/server/tracker/slug";
 import type { Leader, LeaderType, ProjectCategory, ProposedProject, SocialLinks, Vision } from "@/types";
+import { safeHttpUrl } from "@/lib/safe-url";
 
 /**
  * Leader <-> political_figures mapping (docs/content-mapping.md §3).
@@ -311,7 +312,8 @@ function readSocial(value: unknown): SocialLinks {
   const social: SocialLinks = {};
   if (!isRecord(value)) return social;
   for (const key of SOCIAL_KEYS) {
-    const link = text(value[key]);
+    // Only http(s) links reach the page; anything else stored on the Tracker is left out.
+    const link = safeHttpUrl(text(value[key]));
     if (link) social[key] = link;
   }
   return social;

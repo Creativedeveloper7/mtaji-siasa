@@ -13,6 +13,11 @@ export interface PollVoteState {
   results?: Record<string, number>;
   busy?: boolean;
   error?: string;
+  /**
+   * This poll's vote state has loaded. Vote buttons stay off until then, so a
+   * user who already voted is not offered a second vote. Absent counts as loaded.
+   */
+  loaded?: boolean;
   /** Absent when voting is not possible here (signed out, memory store). */
   onVote?: (optionId: string) => void;
   /** Shown instead of vote buttons when onVote is absent. */
@@ -38,7 +43,11 @@ export function PollCard({ poll, vote }: PollCardProps) {
   const total = sum || 1;
   const closed = isPollClosed(poll);
   const voted = Boolean(vote?.myOptionId);
-  const canVote = Boolean(vote?.onVote) && !voted && !closed && !vote?.busy;
+  const loading = Boolean(vote?.onVote) && vote?.loaded === false;
+  // Buttons stay mounted while a vote is recorded (disabled + aria-busy) so focus is not lost.
+  const showButtons = Boolean(vote?.onVote) && !voted && !closed && !loading;
+  const busy = Boolean(vote?.busy);
+  const canVote = showButtons && !busy;
   const participants = vote?.results ? sum : poll.participationCount;
 
   return (
@@ -68,11 +77,15 @@ export function PollCard({ poll, vote }: PollCardProps) {
           );
           return (
             <li key={option.id}>
-              {canVote ? (
+              {showButtons ? (
                 <button
                   type="button"
-                  onClick={() => vote?.onVote?.(option.id)}
-                  className="block w-full rounded-md p-1 -m-1 text-left transition-colors duration-fast hover:bg-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  disabled={busy}
+                  aria-busy={busy || undefined}
+                  onClick={() => {
+                    if (canVote) vote?.onVote?.(option.id);
+                  }}
+                  className="block w-full rounded-md p-1 -m-1 text-left transition-colors duration-fast hover:bg-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-70 disabled:hover:bg-transparent"
                   aria-label={`Vote for ${option.label}`}
                 >
                   {row}
@@ -84,23 +97,28 @@ export function PollCard({ poll, vote }: PollCardProps) {
           );
         })}
       </ul>
-      {(vote?.error || vote?.hint || canVote || voted) && (
-        <p
-          className={cn("mt-4 text-caption", vote?.error ? "text-error" : "text-ink-subtle")}
-          role={vote?.error ? "alert" : undefined}
-        >
-          {vote?.error ||
-            (voted
-              ? "Thanks, your vote is counted."
-              : vote?.busy
+      {/* Always mounted so screen readers announce changes (recording, counted, errors). */}
+      <p
+        role="status"
+        className={cn(
+          "text-caption empty:hidden",
+          vote?.error ? "text-error" : "text-ink-subtle",
+          vote && "mt-4"
+        )}
+      >
+        {vote?.error ||
+          (voted
+            ? "Thanks, your vote is counted."
+            : closed
+              ? ""
+              : busy
                 ? "Recording your vote…"
-                : canVote
-                  ? "Tap an option to vote. One vote per account."
-                  : closed
-                    ? ""
+                : loading
+                  ? "Checking your vote…"
+                  : canVote
+                    ? "Tap an option to vote. One vote per account."
                     : vote?.hint)}
-        </p>
-      )}
+      </p>
       <div className="mt-6 flex items-center justify-between border-t border-border pt-4 text-caption text-ink-subtle">
         <span>{participants.toLocaleString()} participants</span>
         <span>{closed ? `Closed ${formatDate(poll.closingDate)}` : poll.closingDate ? `Closes ${formatDate(poll.closingDate, "soon")}` : "Open"}</span>

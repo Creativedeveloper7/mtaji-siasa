@@ -13,7 +13,7 @@ vi.mock("@/server/tracker/clients", () => ({
 }));
 
 const { createTrackerUserRepository } = await import("@/server/tracker/users");
-const { adminUpsertUser } = await import("@/server/auth/service");
+const { adminUpsertUser, listDirectory } = await import("@/server/auth/service");
 
 type FakeUser = {
   id: string;
@@ -186,5 +186,56 @@ describe("adminUpsertUser role that does not stick", () => {
     expect(adminUpdates.map((u) => (u.attrs.app_metadata as Record<string, unknown>).role)).toEqual([
       "admin",
     ]);
+  });
+});
+
+describe("admin directory errors", () => {
+  const newUser = {
+    fullName: "Wanjiru K",
+    email: "wanjiru@example.com",
+    phone: "+254733000003",
+    password: "secret-pass",
+    role: "citizen",
+  };
+
+  it("answers 409 only for a duplicate email, with a message for people", async () => {
+    clients.admin = fakeSupabase(db, {
+      admin: {
+        ...adminApi(),
+        createUser: async () => ({
+          data: { user: null },
+          error: { message: "A user with this email address has already been registered", code: "email_exists", status: 422 },
+        }),
+      } as never,
+    });
+    expect(await adminUpsertUser(newUser)).toEqual({
+      ok: false,
+      status: 409,
+      error: "An account with this email already exists.",
+    });
+  });
+
+  it("hides Auth and database text behind a generic 502, not a 409", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    clients.admin = fakeSupabase(db, {
+      admin: {
+        ...adminApi(),
+        createUser: async () => ({
+          data: { user: null },
+          error: { message: 'Database error saving new user: relation "user_profiles" violates check', status: 500 },
+        }),
+        listUsers: async () => ({ data: { users: [] }, error: { message: "permission denied for schema auth" } }),
+      } as never,
+    });
+    try {
+      const created = await adminUpsertUser(newUser);
+      expect(created).toMatchObject({ ok: false, status: 502 });
+      expect(!created.ok && created.error).not.toMatch(/Database|relation|violates|user_profiles/);
+      const listed = await listDirectory();
+      expect(listed).toMatchObject({ ok: false, status: 502 });
+      expect(!listed.ok && listed.error).not.toMatch(/permission|schema|auth/);
+    } finally {
+      log.mockRestore();
+    }
   });
 });

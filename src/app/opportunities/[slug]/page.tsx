@@ -25,6 +25,7 @@ import {
   OPPORTUNITY_STATUS_LABELS,
 } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-url";
 import {
   getRelatedLeader,
   getRelatedMedia,
@@ -157,6 +158,8 @@ export default function OpportunityDetailPage({
         ? "warning"
         : "error";
   const myApplication = mine.items.find((item) => item.opportunityId === opportunity.id);
+  // Only an http(s) link is offered as the official website.
+  const applicationUrl = safeHttpUrl(opportunity.applicationUrl);
   const isPublisher = Boolean(
     user && (user.role === "admin" || (user.leaderId && user.leaderId === opportunity.leaderId))
   );
@@ -263,8 +266,8 @@ export default function OpportunityDetailPage({
           </div>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             {applyAction}
-            {opportunity.applicationUrl && (
-              <Button href={opportunity.applicationUrl} size="lg" variant="outline">
+            {applicationUrl && (
+              <Button href={applicationUrl} size="lg" variant="outline">
                 Official website
               </Button>
             )}

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthSession, UserRole } from "@/types/auth";
 import type { PublicUser } from "@/server/domain";
 import { getRepositories, usesTracker } from "@/server";
+import { failureFromError } from "@/server/http-errors";
 import { TrackerConfigError, userClient } from "@/server/tracker/clients";
 import {
   loadAccountRows,
@@ -172,12 +173,7 @@ export async function signUp(input: SignUpInput, origin: string): Promise<SignUp
       emailRedirectTo: `${origin}/auth/callback`,
     },
   });
-  if (error) {
-    if (error.code === "user_already_exists" || /already (registered|exists)/i.test(error.message)) {
-      return fail("An account with this email already exists.", 409);
-    }
-    return fail(error.message || "Could not create the account.", 400);
-  }
+  if (error) return signUpFailure(error);
   // With confirmation on, an existing email comes back as a user with no identities.
   if (!data.user || data.user.identities?.length === 0) {
     return fail("An account with this email already exists.", 409);
@@ -193,6 +189,36 @@ export async function signUp(input: SignUpInput, origin: string): Promise<SignUp
   }
 }
 
+/**
+ * Sign-up errors from Supabase Auth (GoTrue). Only the known, user-facing
+ * cases are answered specifically; any other text is logged and replaced by a
+ * generic message.
+ */
+function signUpFailure(error: { message?: string; code?: string; status?: number }): AuthFailure {
+  const message = error.message ?? "";
+  if (error.code === "user_already_exists" || error.code === "email_exists" || /already (registered|exists)/i.test(message)) {
+    return fail("An account with this email already exists.", 409);
+  }
+  if (error.code === "weak_password") {
+    // GoTrue's weak password text lists the requirements and is written for people.
+    return fail(/^Password /.test(message) ? message : "Choose a stronger password.", 400);
+  }
+  if (error.code === "email_address_invalid" || /invalid.*email|email.*invalid/i.test(message)) {
+    return fail("Enter a valid email address.", 400);
+  }
+  if (
+    error.status === 429 ||
+    error.code === "over_email_send_rate_limit" ||
+    error.code === "over_request_rate_limit" ||
+    /rate limit/i.test(message)
+  ) {
+    return fail("Too many sign-up attempts. Try again in a few minutes.", 429);
+  }
+  console.error("[api] sign up failed", error);
+  const clientError = typeof error.status === "number" && error.status >= 400 && error.status < 500;
+  return fail("Could not create the account. Try again in a moment.", clientError ? 400 : 502);
+}
+
 export async function signOut(): Promise<void> {
   if (!usesTracker()) return;
   const client = await userClient();
@@ -201,13 +227,19 @@ export async function signOut(): Promise<void> {
   await client.auth.signOut({ scope: "local" });
 }
 
-/** Run an admin directory call, turning a missing service role key into a 503. */
+/**
+ * Run an admin directory call. A missing service role key is a 503. Any other
+ * error goes through failureFromError: a real conflict (duplicate email,
+ * TrackerUserError 409) keeps its message, everything else is logged and
+ * answered with a generic message, so Auth and database text stay on the server.
+ */
 async function adminCall<T>(run: () => Promise<T>): Promise<{ ok: true; value: T } | AuthFailure> {
   try {
     return { ok: true, value: await run() };
   } catch (error) {
     if (error instanceof TrackerConfigError) return fail(error.message, 503);
-    return fail(error instanceof Error ? error.message : "Could not reach the user directory.", 502);
+    const failure = failureFromError(error, "user directory");
+    return fail(failure.error, failure.status);
   }
 }
 
@@ -272,7 +304,7 @@ export async function adminUpsertUser(body: unknown): Promise<AuthResult> {
     // `updated` is re-read from the Tracker, so this is the role that took effect.
     return roleStuck(updated, role as UserRole) ?? { ok: true, session: toSession(updated) };
   });
-  if (!result.ok) return result.status === 502 ? { ...result, status: 409 } : result;
+  if (!result.ok) return result;
   return result.value;
 }
 

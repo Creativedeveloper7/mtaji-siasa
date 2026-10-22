@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AdminField,
   AdminHeader,
@@ -28,6 +28,8 @@ export default function PoliticianVisionPage() {
   const { upsertLeader } = useContent();
   const [form, setForm] = useState<Vision>(emptyVision());
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (leader?.vision) setForm(structuredClone(leader.vision));
@@ -65,16 +67,25 @@ export default function PoliticianVisionPage() {
   }
 
   const save = async () => {
-    const result = await upsertLeader({
-      ...leader,
-      type: "aspirant",
-      vision: {
-        ...form,
-        manifesto: form.manifesto.filter(Boolean),
-        priorities: form.priorities.filter(Boolean),
-        expectedImpact: form.expectedImpact.filter(Boolean),
-      },
-    });
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    let result: Awaited<ReturnType<typeof upsertLeader>>;
+    try {
+      result = await upsertLeader({
+        ...leader,
+        type: "aspirant",
+        vision: {
+          ...form,
+          manifesto: form.manifesto.filter(Boolean),
+          priorities: form.priorities.filter(Boolean),
+          expectedImpact: form.expectedImpact.filter(Boolean),
+        },
+      });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
     if (!result.ok) {
       alert(result.error);
       return;
@@ -90,8 +101,8 @@ export default function PoliticianVisionPage() {
         title="Vision & manifesto"
         description="Clearly labelled proposed visions — never presented as completed projects."
         action={
-          <Button type="button" onClick={save}>
-            {saved ? "Saved" : "Save vision"}
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving…" : saved ? "Saved" : "Save vision"}
           </Button>
         }
       />
@@ -238,8 +249,8 @@ export default function PoliticianVisionPage() {
           </div>
         </div>
 
-        <Button type="button" onClick={save} fullWidth>
-          {saved ? "Saved" : "Save vision"}
+        <Button type="button" onClick={() => void save()} disabled={saving} fullWidth>
+          {saving ? "Saving…" : saved ? "Saved" : "Save vision"}
         </Button>
       </div>
     </div>

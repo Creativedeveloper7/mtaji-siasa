@@ -7,6 +7,7 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
@@ -16,7 +17,8 @@ import { CoordinatePickerMap } from "@/components/gis/CoordinatePickerMap";
 import { ProjectCategoryField } from "@/components/admin/ProjectCategoryField";
 import { DEFAULT_MAP_CENTER } from "@/lib/projects";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
-import { useContent } from "@/components/content/ContentProvider";
+import { useSaveAction } from "@/components/admin/useSaveAction";
+import { useContent, type SaveResult } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Project, ProjectCategory, ProjectStatus } from "@/types";
 import { COUNTIES, OPPORTUNITY_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants";
@@ -57,8 +59,7 @@ export default function PoliticianProjectsPage() {
     content,
   } = useContent();
   const [editing, setEditing] = useState<Project | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
 
   const open = (project: Project) => {
     setError("");
@@ -84,19 +85,13 @@ export default function PoliticianProjectsPage() {
       progress: Math.max(0, Math.min(100, Number(editing.progress) || 0)),
       leaderIds: Array.from(new Set([...editing.leaderIds, leader.id])),
     };
-    setSaving(true);
-    setError("");
-    const result = await upsertProject(saved);
-    setSaving(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    // The server links the project to its leaders. On the Tracker a new project gets a new id.
-    const projectId = result.item?.id ?? saved.id;
-    if (result.warnings?.length) alert(result.warnings.join("\n"));
-
-    if (seedMilestones && !saved.milestoneIds.length) {
+    // One save at a time: a new project's client id is not a Tracker uuid, so a
+    // second PUT would create a second project.
+    const result = await run(async () => {
+      const stored = await upsertProject(saved);
+      if (!stored.ok || !seedMilestones || saved.milestoneIds.length) return stored;
+      // The server links the project to its leaders. On the Tracker a new project gets a new id.
+      const projectId = stored.item?.id ?? saved.id;
       const titles = [
         "Planning",
         "Funding",
@@ -104,22 +99,27 @@ export default function PoliticianProjectsPage() {
         "Implementation",
         "Completion",
       ];
-      const ids: string[] = [];
-      titles.forEach((title, i) => {
-        const id = createId("ms");
-        ids.push(id);
-        upsertMilestone({
-          id,
-          projectId,
-          number: i + 1,
-          date: saved.startDate,
-          title,
-          description: `${title} stage for ${saved.name}`,
-          status: i === 0 ? "current" : "upcoming",
-        });
-      });
-    }
-    setEditing(null);
+      const seeded = await Promise.all(
+        titles.map((title, i) =>
+          upsertMilestone({
+            id: createId("ms"),
+            projectId,
+            number: i + 1,
+            date: saved.startDate,
+            title,
+            description: `${title} stage for ${saved.name}`,
+            status: i === 0 ? "current" : "upcoming",
+          })
+        )
+      );
+      const failures = seeded.flatMap((r, i) =>
+        r.ok ? [] : [`Milestone "${titles[i]}" was not added: ${r.error}`]
+      );
+      return failures.length
+        ? { ...stored, warnings: [...(stored.warnings ?? []), ...failures] }
+        : stored;
+    });
+    if (result?.ok) setEditing(null);
   };
 
   return (
@@ -136,6 +136,15 @@ export default function PoliticianProjectsPage() {
           </Button>
         }
       />
+
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
 
       <AdminTable headers={["Name", "Status", "Progress", "Milestones", "Opportunities", ""]}>
         {projects.map((p) => (
@@ -181,12 +190,17 @@ export default function PoliticianProjectsPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
                   if (!confirm(`Delete ${p.name}?`)) return;
-                  getMilestonesByProject(p.id).forEach((m) =>
-                    void deleteMilestone(m.id)
-                  );
-                  deleteProject(p.id);
+                  void remove(async (): Promise<SaveResult> => {
+                    const milestoneResults = await Promise.all(
+                      getMilestonesByProject(p.id).map((m) => deleteMilestone(m.id))
+                    );
+                    const failed = milestoneResults.find((r) => !r.ok);
+                    if (failed) return failed;
+                    return deleteProject(p.id);
+                  });
                 }}
               >
                 Delete
@@ -205,14 +219,12 @@ export default function PoliticianProjectsPage() {
       <AdminDrawer
         open={!!editing}
         title={editing?.name ? "Edit project" : "New project"}
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex flex-col gap-2">
-            {error && (
-              <p className="rounded-md border border-error/30 bg-error-muted px-3 py-2 text-small text-error">
-                {error}
-              </p>
-            )}
+            {error && <AdminNotice messages={error} />}
             {editing && !editing.milestoneIds.length && (
               <Button type="button" variant="outline" fullWidth disabled={saving} onClick={() => void save(true)}>
                 Save + add standard milestones
@@ -226,6 +238,7 @@ export default function PoliticianProjectsPage() {
                 type="button"
                 variant="secondary"
                 fullWidth
+                disabled={saving}
                 onClick={() => setEditing(null)}
               >
                 Cancel

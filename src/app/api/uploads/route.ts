@@ -24,6 +24,11 @@ function tooLarge() {
  * with the signed-in user's session (src/server/tracker/storage). Siasa never
  * creates buckets and never uses the service role here.
  * Memory store: answers 501 and the browser keeps the photo inline.
+ *
+ * The sign-in check comes first. Every caller (ImageField / MultiImageField
+ * on the admin, dashboard and Adly studio pages) is signed-in only, and memory
+ * mode has no sessions (docs/tracker-backend.md, Memory mode), so there the
+ * route answers 401 and those pages are unreachable anyway.
  */
 export async function POST(request: Request) {
   const gate = await requireRoles(["admin", "leader", "aspirant"]);

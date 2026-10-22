@@ -92,6 +92,11 @@ export interface ContentRepository {
    * for the Ownership rule (docs/tracker-backend.md). Absent in memory mode.
    */
   projectOwnerUserId?(projectId: string): Promise<string | undefined>;
+  /**
+   * Tracker only: donations rows for a project. Deleting an initiative
+   * cascades to its donations, so a project with donations is not deleted.
+   */
+  projectDonationCount?(projectId: string): Promise<number>;
 }
 
 export interface AdlyRepository {
@@ -159,6 +164,13 @@ export interface ApplicationRepository {
   listForApplicant?(applicantId: string): Promise<OpportunityApplication[]>;
   listForAuthor?(authorId: string): Promise<OpportunityApplication[]>;
   listAll?(): Promise<OpportunityApplication[]>;
+  /**
+   * Tracker only, admin (checked by the store): find and review any
+   * application. find()/upsert() run under row-level security, which gives an
+   * admin no access to applications on other people's listings.
+   */
+  findAsAdmin?(id: string): Promise<OpportunityApplication | undefined>;
+  reviewAsAdmin?(item: OpportunityApplication): Promise<OpportunityApplication>;
 }
 
 /** Paid ad campaigns. Read straight from the store, like applications. */

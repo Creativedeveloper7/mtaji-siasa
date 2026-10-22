@@ -8,10 +8,12 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Leader, LeaderType } from "@/types";
@@ -43,6 +45,12 @@ export default function AdminLeadersPage() {
   const { content, ready, upsertLeader, deleteLeader } = useContent();
   const [editing, setEditing] = useState<Leader | null>(null);
   const [query, setQuery] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (leader: Leader) => {
+    setError("");
+    setEditing(leader);
+  };
 
   const rows = useMemo(() => {
     const q = query.toLowerCase();
@@ -57,15 +65,17 @@ export default function AdminLeadersPage() {
 
   if (!ready) return <LoadingState />;
 
-  const save = () => {
+  const save = async () => {
     if (!editing) return;
     const slug = editing.slug || slugify(editing.name);
-    upsertLeader({
-      ...editing,
-      slug,
-      achievements: editing.achievements.filter(Boolean),
-    });
-    setEditing(null);
+    const result = await run(() =>
+      upsertLeader({
+        ...editing,
+        slug,
+        achievements: editing.achievements.filter(Boolean),
+      })
+    );
+    if (result?.ok) setEditing(null);
   };
 
   return (
@@ -74,11 +84,20 @@ export default function AdminLeadersPage() {
         title="Leaders"
         description="Create and edit elected leaders and aspirants. Position is free-text."
         action={
-          <Button type="button" onClick={() => setEditing(emptyLeader())}>
+          <Button type="button" onClick={() => open(emptyLeader())}>
             Add leader
           </Button>
         }
       />
+
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
 
       <div className="mb-4 max-w-sm">
         <AdminInput
@@ -107,7 +126,7 @@ export default function AdminLeadersPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setEditing(structuredClone(l))}
+                onClick={() => open(structuredClone(l))}
               >
                 Edit
               </Button>
@@ -115,8 +134,9 @@ export default function AdminLeadersPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
-                  if (confirm(`Delete ${l.name}?`)) deleteLeader(l.id);
+                  if (confirm(`Delete ${l.name}?`)) void remove(() => deleteLeader(l.id));
                 }}
               >
                 Delete
@@ -129,16 +149,19 @@ export default function AdminLeadersPage() {
       <AdminDrawer
         open={!!editing}
         title={editing?.name ? `Edit ${editing.name}` : "New leader"}
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
-            <Button type="button" fullWidth onClick={save}>
-              Save leader
+            <Button type="button" fullWidth disabled={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Save leader"}
             </Button>
             <Button
               type="button"
               variant="secondary"
               fullWidth
+              disabled={saving}
               onClick={() => setEditing(null)}
             >
               Cancel
@@ -274,6 +297,7 @@ export default function AdminLeadersPage() {
                 }
               />
             </AdminField>
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

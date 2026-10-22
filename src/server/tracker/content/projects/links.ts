@@ -308,3 +308,23 @@ export async function projectTitles(
   );
   return new Map(rows.map((row) => [row.id, row.title]));
 }
+
+/**
+ * Number of donations rows for a project (initiative). Deleting an initiative
+ * cascades to its donations, so the content service refuses a delete when
+ * this is above 0. donations has a public SELECT policy, so the reader's
+ * client sees every row.
+ */
+export async function projectDonationCount(
+  projectId: string,
+  client?: SupabaseClient
+): Promise<number> {
+  if (!isUuid(projectId)) return 0;
+  const db = client ?? (await readClient());
+  const { count, error } = await db
+    .from("donations")
+    .select("id", { count: "exact", head: true })
+    .eq("initiative_id", projectId);
+  if (error) throw new Error(`Tracker donations read failed: ${error.message}`);
+  return count ?? 0;
+}

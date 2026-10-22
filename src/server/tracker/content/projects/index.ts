@@ -8,6 +8,7 @@ export type { ProjectRepository, ProjectRepositoryOptions } from "./repository";
 export {
   leaderIdsForProjects,
   projectIdsByOwner,
+  projectDonationCount,
   projectIdsForFigures,
   projectOwnerUserId,
   projectTitles,
