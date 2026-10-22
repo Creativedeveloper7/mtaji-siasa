@@ -186,6 +186,11 @@ export async function loadProjectLinks(
     const link = links.get(id);
     if (link) link.leaderIds = leaderIds;
   }
+  for (const row of rows) {
+    const link = links.get(row.id);
+    const owner = owners.get(row.changemaker_id);
+    if (link && owner) link.ownerUserId = owner;
+  }
   return links;
 }
 

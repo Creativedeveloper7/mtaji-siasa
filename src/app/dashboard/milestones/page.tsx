@@ -7,6 +7,7 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
@@ -15,6 +16,7 @@ import { ImageField } from "@/components/ui/ImageField";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { createId } from "@/lib/store";
 import { formatDate } from "@/lib/utils";
 import type { MilestoneStatus, ProjectMilestone } from "@/types";
@@ -37,8 +39,7 @@ export default function PoliticianMilestonesPage() {
     useContent();
   const [projectId, setProjectId] = useState("");
   const [editing, setEditing] = useState<ProjectMilestone | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
 
   const projects = leader ? getProjectsByIds(leader.projectIds) : [];
   const firstProjectId = projects[0]?.id ?? "";
@@ -74,15 +75,8 @@ export default function PoliticianMilestonesPage() {
       setError("Give the milestone a title.");
       return;
     }
-    setSaving(true);
-    setError("");
-    const result = await upsertMilestone({ ...editing, image: editing.image || undefined });
-    setSaving(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setEditing(null);
+    const result = await run(() => upsertMilestone({ ...editing, image: editing.image || undefined }));
+    if (result?.ok) setEditing(null);
   };
 
   return (
@@ -96,6 +90,15 @@ export default function PoliticianMilestonesPage() {
           </Button>
         }
       />
+
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
 
       {projects.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-small text-ink-muted">
@@ -163,9 +166,10 @@ export default function PoliticianMilestonesPage() {
                       type="button"
                       size="sm"
                       variant="ghost"
+                      disabled={saving}
                       onClick={() => {
                         if (!confirm(`Delete milestone “${m.title}”?`)) return;
-                        void deleteMilestone(m.id);
+                        void remove(() => deleteMilestone(m.id));
                       }}
                     >
                       Delete

@@ -1,6 +1,5 @@
 import { rowSlug } from "@/server/tracker/slug";
 import type { Leader, LeaderType, ProjectCategory, ProposedProject, SocialLinks, Vision } from "@/types";
-import { safeHttpUrl } from "@/lib/safe-url";
 
 /**
  * Leader <-> political_figures mapping (docs/content-mapping.md §3).
@@ -312,20 +311,26 @@ function readSocial(value: unknown): SocialLinks {
   const social: SocialLinks = {};
   if (!isRecord(value)) return social;
   for (const key of SOCIAL_KEYS) {
-    // Only http(s) links reach the page; anything else stored on the Tracker is left out.
-    const link = safeHttpUrl(text(value[key]));
+    // The stored value is kept as-is (even a handle such as "@jane") so an
+    // unrelated save writes it back unchanged. SocialLinks sanitises on render.
+    const link = text(value[key]);
     if (link) social[key] = link;
   }
   return social;
 }
 
-/** Siasa owns the six keys; anything else already in social_links is kept. */
+/**
+ * Siasa owns the six keys; anything else already in social_links is kept. A
+ * key is removed only when it held a readable value that the leader no longer
+ * has (the editor cleared it); a stored value Siasa could not read is kept.
+ */
 function writeSocial(social: SocialLinks | undefined, existing: unknown): Record<string, unknown> {
-  const next: Record<string, unknown> = isRecord(existing) ? { ...existing } : {};
+  const stored: Record<string, unknown> = isRecord(existing) ? existing : {};
+  const next: Record<string, unknown> = { ...stored };
   for (const key of SOCIAL_KEYS) {
     const link = text(social?.[key]);
     if (link) next[key] = link;
-    else delete next[key];
+    else if (text(stored[key])) delete next[key];
   }
   return next;
 }

@@ -497,3 +497,18 @@ describe("no-op detection on live-shaped rows (finding 3)", () => {
     expect(admin.ok && admin.row.status).toBe("active");
   });
 });
+
+describe("stored social links that are not http(s)", () => {
+  it("are read raw and written back unchanged on an unrelated save", () => {
+    const row = signupRow({ social_links: { x: "@jane", instagram: 42, youtube: "https://youtube.com/@example" } });
+    const leader = rowToLeader(row);
+    expect(leader.social).toEqual({ x: "@jane" });
+    const result = leaderToRow({ ...leader, bio: "A new bio." }, row, { now: NOW });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.row.social_links).toEqual({
+      x: "@jane",
+      instagram: 42,
+      youtube: "https://youtube.com/@example",
+    });
+  });
+});

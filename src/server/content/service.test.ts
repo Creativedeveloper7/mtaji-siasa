@@ -479,6 +479,14 @@ describe("Tracker mode: deleting a project", () => {
     expect(fake.calls).toEqual([`deleteProject:${OTHER_PROJECT}`]);
   });
 
+  it("keeps the milestones of a project it refuses to delete (pages send only the project delete)", async () => {
+    fake.owners.set(OTHER_PROJECT, OWNER);
+    fake.donations.set(OTHER_PROJECT, 1);
+    expect(await deleteCollection(owner, "projects", OTHER_PROJECT)).toMatchObject({ ok: false, status: 409 });
+    expect(fake.calls).toEqual([]);
+    expect(fake.milestones.has(MILESTONE)).toBe(true);
+  });
+
   it("still deletes milestones one by one in memory mode", async () => {
     state.tracker = false;
     fake.donations.set(OTHER_PROJECT, 5); // ignored: memory mode has no donations table

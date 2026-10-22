@@ -18,7 +18,7 @@ import { ProjectCategoryField } from "@/components/admin/ProjectCategoryField";
 import { DEFAULT_MAP_CENTER } from "@/lib/projects";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useSaveAction } from "@/components/admin/useSaveAction";
-import { useContent, type SaveResult } from "@/components/content/ContentProvider";
+import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Project, ProjectCategory, ProjectStatus } from "@/types";
 import { COUNTIES, OPPORTUNITY_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants";
@@ -54,7 +54,6 @@ export default function PoliticianProjectsPage() {
     upsertProject,
     deleteProject,
     upsertMilestone,
-    deleteMilestone,
     getMilestonesByProject,
     content,
   } = useContent();
@@ -193,14 +192,10 @@ export default function PoliticianProjectsPage() {
                 disabled={saving}
                 onClick={() => {
                   if (!confirm(`Delete ${p.name}?`)) return;
-                  void remove(async (): Promise<SaveResult> => {
-                    const milestoneResults = await Promise.all(
-                      getMilestonesByProject(p.id).map((m) => deleteMilestone(m.id))
-                    );
-                    const failed = milestoneResults.find((r) => !r.ok);
-                    if (failed) return failed;
-                    return deleteProject(p.id);
-                  });
+                  // The server removes the milestones (memory mode) or the
+                  // database cascades them (Tracker), and only once the project
+                  // delete is allowed (a project with donations is refused).
+                  void remove(() => deleteProject(p.id));
                 }}
               >
                 Delete

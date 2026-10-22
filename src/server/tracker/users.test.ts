@@ -215,6 +215,25 @@ describe("admin directory errors", () => {
     });
   });
 
+  it("answers 400 with a message for people for a weak password or an invalid email", async () => {
+    const answers = [
+      [{ message: "Password should be at least 8 characters.", code: "weak_password", status: 422 }, "Password should be at least 8 characters."],
+      [{ message: "Password should contain at least one character of each: abc", status: 422 }, "Password should contain at least one character of each: abc"],
+      [{ message: "weak", code: "weak_password", status: 422 }, "Choose a stronger password."],
+      [{ message: "Unable to validate email address: invalid format", code: "email_address_invalid", status: 400 }, "Enter a valid email address."],
+      [{ message: "Unable to validate email address: invalid format", status: 400 }, "Enter a valid email address."],
+    ] as const;
+    for (const [error, message] of answers) {
+      clients.admin = fakeSupabase(db, {
+        admin: {
+          ...adminApi(),
+          createUser: async () => ({ data: { user: null }, error }),
+        } as never,
+      });
+      expect(await adminUpsertUser(newUser)).toEqual({ ok: false, status: 400, error: message });
+    }
+  });
+
   it("hides Auth and database text behind a generic 502, not a 409", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     clients.admin = fakeSupabase(db, {

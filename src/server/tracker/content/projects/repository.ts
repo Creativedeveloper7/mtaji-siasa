@@ -28,6 +28,7 @@ import {
   type SatelliteSnapshot,
 } from "./mapping";
 import { droppedColumnsWarning, writeAdaptive, type DbError } from "./adaptive";
+import { withOwner } from "@/server/tracker/content/media/shared";
 import {
   NEW_INITIATIVE_COLUMNS,
   NEW_MILESTONE_COLUMNS,
@@ -201,12 +202,17 @@ async function mapRows(client: SupabaseClient, rows: InitiativeRow[], slugs?: Ma
   const links = await loadProjectLinks(client, rows);
   const index = slugs ?? (await slugIndex(client)).slugs;
   const today = todayDate();
-  return rows.map((row) =>
-    mapInitiative(row, links.get(row.id) ?? EMPTY_LINKS, {
-      slug: index.get(row.id) ?? rowSlug(row.title, row.id, "full-id"),
-      today,
-    })
-  );
+  return rows.map((row) => {
+    const link = links.get(row.id) ?? EMPTY_LINKS;
+    // ownerUserId (changemakers.user_id) as on every other Tracker record.
+    return withOwner(
+      mapInitiative(row, link, {
+        slug: index.get(row.id) ?? rowSlug(row.title, row.id, "full-id"),
+        today,
+      }),
+      link.ownerUserId
+    );
+  });
 }
 
 async function findWith(client: SupabaseClient, id: string): Promise<Project | undefined> {

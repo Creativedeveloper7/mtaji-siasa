@@ -17,7 +17,7 @@ import {
   AdminTextarea,
 } from "@/components/admin/AdminUI";
 import { useSaveAction } from "@/components/admin/useSaveAction";
-import { useContent, type SaveResult } from "@/components/content/ContentProvider";
+import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Project, ProjectCategory, ProjectStatus } from "@/types";
 import { LoadingState } from "@/components/ui/EmptyState";
@@ -50,9 +50,7 @@ export default function AdminProjectsPage() {
     ready,
     upsertProject,
     deleteProject,
-    getMilestonesByProject,
     upsertMilestone,
-    deleteMilestone,
   } = useContent();
   const [editing, setEditing] = useState<Project | null>(null);
   const [query, setQuery] = useState("");
@@ -131,14 +129,10 @@ export default function AdminProjectsPage() {
   };
 
   const removeProject = (project: Project) =>
-    remove(async (): Promise<SaveResult> => {
-      const milestoneResults = await Promise.all(
-        getMilestonesByProject(project.id).map((m) => deleteMilestone(m.id))
-      );
-      const failed = milestoneResults.find((r) => !r.ok);
-      if (failed) return failed;
-      return deleteProject(project.id);
-    });
+    // The server removes the milestones (memory mode) or the database cascades
+    // them (Tracker), and only once the project delete is allowed (a project
+    // with donations is refused), so nothing is deleted on a refusal.
+    remove(() => deleteProject(project.id));
 
   return (
     <div>

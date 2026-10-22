@@ -35,6 +35,8 @@ export default function AdlyTimelapsePage() {
   const [media, setMedia] = useState<TimelapseMedia[]>(existing?.media || []);
   const [playIndex, setPlayIndex] = useState(0);
   const [previewNote, setPreviewNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [newCaption, setNewCaption] = useState("");
   const [newDate, setNewDate] = useState("2026-01-01");
@@ -108,7 +110,10 @@ export default function AdlyTimelapsePage() {
   };
 
   const save = async () => {
-    if (!project) return;
+    if (!project || saving) return;
+    setSaving(true);
+    setSaveError("");
+    setPreviewNote("");
     const item: Timelapse = {
       id: existing?.id || createId("tl"),
       name: title || `${project.name} — Progress Story`,
@@ -124,8 +129,15 @@ export default function AdlyTimelapsePage() {
       brandingEnabled: true,
       createdAt: existing?.createdAt || new Date().toISOString(),
     };
-    upsertTimelapse(item);
+    const result = await upsertTimelapse(item);
+    if (!result.ok) {
+      // No render note: the composition was not saved.
+      setSaving(false);
+      setSaveError(result.error);
+      return;
+    }
     const render = await mockVideoRenderService.renderTimelapse(item);
+    setSaving(false);
     setPreviewNote(render.note);
   };
 
@@ -316,13 +328,18 @@ export default function AdlyTimelapsePage() {
                 </AdminSelect>
               </AdminField>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={save}>
-                  Save & preview composition
+                <Button type="button" onClick={() => void save()} disabled={saving}>
+                  {saving ? "Saving…" : "Save & preview composition"}
                 </Button>
                 <Button href="/adly/advertising" variant="outline">
                   Create campaign
                 </Button>
               </div>
+              {saveError && (
+                <p role="alert" className="text-caption text-error">
+                  {saveError}
+                </p>
+              )}
               {previewNote && (
                 <p className="text-caption text-ink-subtle">{previewNote}</p>
               )}

@@ -56,22 +56,24 @@ const SOCIAL_LABELS = {
   website: "Website",
 } as const;
 
-/** Social links, or an error message when a link is not an http(s) URL. */
+/**
+ * Social links, or an error message when a new or changed link is not an
+ * http(s) URL. Keys the request leaves out, and values it sends back
+ * unchanged, are kept as stored even when they are not http(s) (for example
+ * a handle such as "@jane" saved on the Tracker); pages sanitise on render.
+ */
 function social(value: unknown, existing?: SocialLinks): SocialLinks | string {
   const source = isRecord(value) ? value : {};
   const base = existing ?? {};
   const next: SocialLinks = { ...base };
   for (const key of ["x", "instagram", "facebook", "tiktok", "whatsapp", "website"] as const) {
-    if (!(isRecord(value) && key in source)) {
-      // A link stored before this check that is not http(s) is dropped, not kept.
-      if (next[key] && !safeHttpUrl(next[key])) delete next[key];
-      continue;
-    }
+    if (!(key in source)) continue;
     const text = asString(source[key]);
     if (!text) {
       delete next[key];
       continue;
     }
+    if (text === asString(base[key])) continue;
     const link = safeHttpUrl(text);
     if (!link) return `The ${SOCIAL_LABELS[key]} link must be a full web address starting with http:// or https://.`;
     next[key] = link;
@@ -251,10 +253,18 @@ export function parseOpportunity(body: unknown, existing?: Opportunity): Opportu
   if (!title) return "Opportunity title is required.";
   const id = asString(body.id) ?? existing?.id ?? createId("opp");
   const slugSource = "slug" in body ? asString(body.slug) : existing?.slug;
-  const applicationUrlText = "applicationUrl" in body ? asString(body.applicationUrl) : existing?.applicationUrl;
-  const applicationUrl = safeHttpUrl(applicationUrlText);
-  if ("applicationUrl" in body && applicationUrlText && !applicationUrl) {
-    return "The application link must start with http:// or https://.";
+  // Only a new or changed link is checked. A stored link that is not http(s)
+  // (for example "munene.dev" saved on the Tracker) passes through untouched;
+  // the opportunity page sanitises it before linking to it.
+  const existingApplicationUrl = asString(existing?.applicationUrl);
+  let applicationUrl = existingApplicationUrl;
+  if ("applicationUrl" in body) {
+    const text = asString(body.applicationUrl);
+    if (!text) applicationUrl = undefined;
+    else if (text !== existingApplicationUrl) {
+      applicationUrl = safeHttpUrl(text);
+      if (!applicationUrl) return "The application link must start with http:// or https://.";
+    }
   }
   return {
     id,

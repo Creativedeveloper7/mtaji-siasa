@@ -6,7 +6,6 @@ import type {
   OpportunityStatus,
 } from "@/types";
 import type { AdlyInterestLead } from "@/server/domain";
-import { safeHttpUrl } from "@/lib/safe-url";
 
 /**
  * Pure mappers between Siasa's opportunity model and the Tracker tables
@@ -338,8 +337,9 @@ export function opportunityFromRow(row: OpportunityRow, context: OpportunityRead
     requirements: textList(row.requirements),
     applicationSteps: steps.length ? steps : undefined,
     organization: text(row.organization),
-    // Only an http(s) link is passed to the page.
-    applicationUrl: safeHttpUrl(text(row.apply_url)),
+    // The stored value is kept as-is so an unrelated edit writes it back
+    // unchanged. Pages sanitise it with safeHttpUrl before linking to it.
+    applicationUrl: text(row.apply_url),
     relatedMediaIds: context.relatedMediaIds?.length ? context.relatedMediaIds : undefined,
   };
 }
@@ -383,7 +383,9 @@ export function opportunityToRow(
   const title = text(item.title);
   if (!title) throw new OpportunityValidationError("Opportunity title is required.");
   const applyUrl = text(item.applicationUrl);
-  if (applyUrl && !isHttpUrl(applyUrl)) {
+  // A stored link that is not http(s) (older Tracker rows) is written back
+  // unchanged; only a new or changed link must be http(s).
+  if (applyUrl && applyUrl !== text(existing?.apply_url) && !isHttpUrl(applyUrl)) {
     throw new OpportunityValidationError("The application link must start with http:// or https://.");
   }
   const deadline = toDateOnly(item.deadline);

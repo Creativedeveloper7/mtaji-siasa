@@ -5,19 +5,18 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import type { PollVoteState } from "@/components/cards/PollCard";
 import { apiJson } from "@/lib/api-client";
 import type { Poll } from "@/types";
-
-interface Entry {
-  /** The account this entry was loaded or voted for ("" when signed out). */
-  owner: string;
-  /** The poll's own load has answered for this owner. */
-  loaded?: boolean;
-  myOptionId?: string | null;
-  results?: Record<string, number>;
-  busy?: boolean;
-  error?: string;
-}
-
-type VoteAnswer = { optionId?: string | null; results?: Record<string, number>; error?: string };
+import {
+  entryAfterLoad,
+  entryAfterVote,
+  entryVoting,
+  LOAD_FAILED,
+  loadStillCurrent,
+  settleAnswer,
+  VOTE_FAILED,
+  versionKey,
+  type PollVoteEntry,
+  type VoteAnswer,
+} from "@/components/polls/poll-votes";
 
 /**
  * Voting on the listed polls through /api/content/polls/vote: loads the
@@ -26,41 +25,39 @@ type VoteAnswer = { optionId?: string | null; results?: Record<string, number>; 
  * Each poll loads independently (in parallel) and is merged into state as its
  * answer arrives. A load answer is dropped for a poll that changed locally (a
  * vote started or finished) after that load began, so a slow load cannot undo
- * a vote just cast. Each poll exposes `loaded`; the card keeps vote buttons
- * off until it is true.
+ * a vote just cast. Versions are kept per account and poll, so a vote by the
+ * previous account (sign-in/out mid-vote) never drops the new account's load.
+ * Each poll exposes `loaded`; the card keeps vote buttons off until it is
+ * true. A request that fails outright (network) still settles: the load
+ * shows an error and allows voting, and a vote is never left busy.
  */
 export function usePollVotes(polls: Poll[]) {
   const { user, ready } = useAuth();
   const owner = user?.userId ?? "";
-  const [entries, setEntries] = useState<Record<string, Entry>>({});
+  const [entries, setEntries] = useState<Record<string, PollVoteEntry>>({});
   const [available, setAvailable] = useState(true);
   const ids = useMemo(() => polls.map((poll) => poll.id).join(","), [polls]);
-  /** Bumped per poll whenever a vote starts or settles. */
+  /** Bumped per `${owner}:${pollId}` whenever a vote starts or settles. */
   const localVersion = useRef<Record<string, number>>({});
 
   useEffect(() => {
     if (!ready || !ids) return;
     let cancel = false;
     for (const pollId of ids.split(",")) {
-      const startedAt = localVersion.current[pollId] ?? 0;
-      void apiJson<VoteAnswer>(`/api/content/polls/vote?pollId=${encodeURIComponent(pollId)}`).then((result) => {
+      const key = versionKey(owner, pollId);
+      const startedAt = localVersion.current[key] ?? 0;
+      void settleAnswer(
+        apiJson<VoteAnswer>(`/api/content/polls/vote?pollId=${encodeURIComponent(pollId)}`),
+        LOAD_FAILED
+      ).then((result) => {
         if (cancel) return;
         if (result.status === 503) {
           setAvailable(false);
           return;
         }
-        // A vote on this poll started or finished since the load began: keep it.
-        if ((localVersion.current[pollId] ?? 0) !== startedAt) return;
-        setEntries((current) => {
-          const previous = current[pollId]?.owner === owner ? current[pollId] : undefined;
-          return {
-            ...current,
-            [pollId]: result.ok
-              ? { owner, loaded: true, myOptionId: result.data.optionId ?? null, results: result.data.results }
-              : // Could not read this poll's state: allow voting; the server still refuses a second vote.
-                { ...previous, owner, loaded: true },
-          };
-        });
+        // A vote on this poll by this account started or finished since the load began: keep it.
+        if (!loadStillCurrent(localVersion.current, key, startedAt)) return;
+        setEntries((current) => ({ ...current, [pollId]: entryAfterLoad(current[pollId], owner, result) }));
       });
     }
     return () => {
@@ -70,25 +67,21 @@ export function usePollVotes(polls: Poll[]) {
 
   const vote = useCallback(
     async (pollId: string, optionId: string) => {
+      const key = versionKey(owner, pollId);
       const bump = () => {
-        localVersion.current[pollId] = (localVersion.current[pollId] ?? 0) + 1;
+        localVersion.current[key] = (localVersion.current[key] ?? 0) + 1;
       };
       bump();
-      setEntries((current) => ({
-        ...current,
-        [pollId]: { ...current[pollId], owner, loaded: true, busy: true, error: undefined },
-      }));
-      const result = await apiJson<VoteAnswer>("/api/content/polls/vote", {
-        method: "POST",
-        body: JSON.stringify({ pollId, optionId }),
-      });
+      setEntries((current) => ({ ...current, [pollId]: entryVoting(current[pollId], owner) }));
+      const result = await settleAnswer(
+        apiJson<VoteAnswer>("/api/content/polls/vote", {
+          method: "POST",
+          body: JSON.stringify({ pollId, optionId }),
+        }),
+        VOTE_FAILED
+      );
       bump();
-      setEntries((current) => ({
-        ...current,
-        [pollId]: result.ok
-          ? { owner, loaded: true, myOptionId: optionId, results: result.data.results }
-          : { ...current[pollId], owner, loaded: true, busy: false, error: result.data.error || "Could not record your vote." },
-      }));
+      setEntries((current) => ({ ...current, [pollId]: entryAfterVote(current[pollId], owner, optionId, result) }));
     },
     [owner]
   );

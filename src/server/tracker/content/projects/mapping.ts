@@ -577,6 +577,12 @@ export interface ProjectLinks {
   opportunityIds: string[];
   mediaIds: string[];
   hasPublishedOpportunity: boolean;
+  /**
+   * Auth user id of the project's owner (changemakers.user_id), when the
+   * reader can see it. Carried on the Project as `ownerUserId` so the Adly
+   * studio offers a user only the projects they own (not commissioned ones).
+   */
+  ownerUserId?: string | null;
 }
 
 export const EMPTY_LINKS: ProjectLinks = {

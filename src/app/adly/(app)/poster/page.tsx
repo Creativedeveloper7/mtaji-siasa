@@ -51,6 +51,8 @@ export default function AdlyPosterPage() {
   const [concepts, setConcepts] = useState<Poster["concepts"]>([]);
   const [selected, setSelected] = useState<string>("");
   const [savedId, setSavedId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     if (!ownedLeaderId) return;
@@ -80,10 +82,13 @@ export default function AdlyPosterPage() {
     setSelected(next[0]?.id || "");
   };
 
-  const save = () => {
-    if (!leaderId) return;
+  const save = async () => {
+    if (!leaderId || saving) return;
+    setSaving(true);
+    setSaveError("");
+    setSavedId("");
     const id = createId("pst");
-    upsertPoster({
+    const result = await upsertPoster({
       id,
       name: headline.slice(0, 48) || "Untitled poster",
       leaderId,
@@ -102,6 +107,12 @@ export default function AdlyPosterPage() {
       selectedConceptId: selected,
       createdAt: new Date().toISOString(),
     });
+    setSaving(false);
+    // Success is shown only once the server has saved it.
+    if (!result.ok) {
+      setSaveError(result.error);
+      return;
+    }
     setSavedId(id);
   };
 
@@ -244,12 +255,17 @@ export default function AdlyPosterPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={save}
-                  disabled={!concepts.length}
+                  onClick={() => void save()}
+                  disabled={!concepts.length || saving}
                 >
-                  Save poster
+                  {saving ? "Saving…" : "Save poster"}
                 </Button>
               </div>
+              {saveError && (
+                <p role="alert" className="text-caption text-error">
+                  {saveError}
+                </p>
+              )}
               {savedId && (
                 <p className="text-caption text-success">
                   Saved. Continue to advertising or export later.
@@ -326,7 +342,7 @@ export default function AdlyPosterPage() {
                 <Button type="button" size="sm" variant="outline" onClick={generate}>
                   Regenerate
                 </Button>
-                <Button type="button" size="sm" variant="ghost" onClick={save}>
+                <Button type="button" size="sm" variant="ghost" onClick={() => void save()} disabled={saving}>
                   Duplicate & save
                 </Button>
                 <Button href="/adly/advertising" size="sm">

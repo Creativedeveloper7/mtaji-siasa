@@ -18,13 +18,13 @@ const PAGE = 1000;
 
 /**
  * A user directory call failed. `status` drives the API answer through
- * failureFromError (src/server/http-errors.ts): a 409 message is written for
- * people and is shown; a 502 is logged and answered with a generic message, so
+ * failureFromError (src/server/http-errors.ts): a 400 or 409 message is written
+ * for people and is shown; a 502 is logged and answered with a generic message, so
  * Auth and database text never reach the browser.
  */
 export class TrackerUserError extends Error {
   constructor(
-    readonly status: 409 | 502,
+    readonly status: 400 | 409 | 502,
     message: string
   ) {
     super(message);
@@ -44,9 +44,42 @@ function isConflict(error: DirectoryError): boolean {
   );
 }
 
+/** GoTrue's 400/422 answers for an input the person can fix. */
+const INPUT_STATUSES = new Set([400, 422]);
+
+/**
+ * A weak or invalid password: GoTrue weak_password, or (older GoTrue, no code)
+ * a 400/422 whose text starts with "Password ".
+ */
+function isWeakPassword(error: DirectoryError): boolean {
+  return (
+    error.code === "weak_password" ||
+    (INPUT_STATUSES.has(error.status ?? 0) && /^Password /.test(error.message ?? ""))
+  );
+}
+
+/** An email GoTrue will not accept: email_address_invalid, or a 400/422 that says so. */
+function isInvalidEmail(error: DirectoryError): boolean {
+  return (
+    error.code === "email_address_invalid" ||
+    (INPUT_STATUSES.has(error.status ?? 0) && /invalid.*email|email.*invalid/i.test(error.message ?? ""))
+  );
+}
+
+/**
+ * Same rules as signUpFailure (src/server/auth/service.ts): a duplicate email
+ * is a 409, a weak password or invalid email a 400 with a message for people,
+ * anything else a 502 (logged, generic answer).
+ */
 function check(error: DirectoryError | null, action: string) {
   if (!error) return;
   if (isConflict(error)) throw new TrackerUserError(409, "An account with this email already exists.");
+  if (isWeakPassword(error)) {
+    // GoTrue's weak password text lists the requirements and is written for people.
+    const message = error.message ?? "";
+    throw new TrackerUserError(400, /^Password /.test(message) ? message : "Choose a stronger password.");
+  }
+  if (isInvalidEmail(error)) throw new TrackerUserError(400, "Enter a valid email address.");
   throw new TrackerUserError(502, `${action}: ${error.message}`);
 }
 

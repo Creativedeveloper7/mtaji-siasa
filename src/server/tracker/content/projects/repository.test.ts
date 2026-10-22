@@ -192,6 +192,13 @@ describe("co-leaders (finding 1)", () => {
     expect(figureRow(F_SEED).commissioned_projects).toEqual([]);
   });
 
+  it("each project carries its owner's auth user id (changemakers.user_id), not a co-leader's", async () => {
+    signIn(COLEAD);
+    const project = await loadP();
+    expect(project.leaderIds).toContain(F_COLEAD);
+    expect((project as { ownerUserId?: string }).ownerUserId).toBe(OWNER);
+  });
+
   it("a co-leader can remove themself with their own session", async () => {
     signIn(COLEAD);
     const project = await loadP();

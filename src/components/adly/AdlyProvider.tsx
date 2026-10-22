@@ -23,6 +23,9 @@ import type {
 import { computeAdlyStats, createSeedAdlyContent } from "@/data/adly";
 import { apiJson } from "@/lib/api-client";
 import { createId } from "@/lib/store";
+import { ADLY_SAVE_FAILED, adlySaveResult, type AdlySaveResult } from "@/components/adly/save-result";
+
+export type { AdlySaveResult } from "@/components/adly/save-result";
 
 /** One campaign plan saved in a single request (one adly_campaigns row on the Tracker). */
 export interface AdlyPlanInput {
@@ -44,12 +47,13 @@ interface AdlyContextValue {
   reload: () => Promise<void>;
   deleteCampaign: (id: string) => Promise<void>;
   getCampaign: (id: string) => Campaign | undefined;
-  upsertCreative: (item: AdCreative) => Promise<void>;
-  upsertPolicyReview: (item: PolicyReview) => Promise<void>;
-  upsertPoster: (item: Poster) => Promise<void>;
-  upsertTimelapse: (item: Timelapse) => Promise<void>;
-  upsertSimulation: (item: Simulation) => Promise<void>;
-  addInsight: (item: Omit<AdlyInsight, "id"> & { id?: string }) => Promise<void>;
+  /** Studio saves answer with the outcome: show success only when `ok`. */
+  upsertCreative: (item: AdCreative) => Promise<AdlySaveResult>;
+  upsertPolicyReview: (item: PolicyReview) => Promise<AdlySaveResult>;
+  upsertPoster: (item: Poster) => Promise<AdlySaveResult>;
+  upsertTimelapse: (item: Timelapse) => Promise<AdlySaveResult>;
+  upsertSimulation: (item: Simulation) => Promise<AdlySaveResult>;
+  addInsight: (item: Omit<AdlyInsight, "id"> & { id?: string }) => Promise<AdlySaveResult>;
 }
 
 const AdlyContext = createContext<AdlyContextValue | null>(null);
@@ -87,16 +91,26 @@ export function AdlyProvider({ children }: { children: ReactNode }) {
     return run;
   }, []);
 
-  const save = useCallback(
-    (collection: string, item: unknown) =>
-      enqueue(async () => {
-        const result = await apiJson(`/api/adly/${collection}`, {
-          method: "PUT",
-          body: JSON.stringify(item),
-        });
-        if (result.ok) await reload();
-      }),
+  /** PUT one body to an Adly route, in the write queue; reloads on success. */
+  const put = useCallback(
+    (path: string, body: unknown): Promise<AdlySaveResult> => {
+      let outcome: AdlySaveResult = { ok: false, error: ADLY_SAVE_FAILED };
+      return enqueue(async () => {
+        outcome = await adlySaveResult(
+          apiJson<{ error?: string }>(path, { method: "PUT", body: JSON.stringify(body) })
+        );
+        if (outcome.ok) await reload().catch(() => undefined);
+      }).then(
+        () => outcome,
+        () => outcome
+      );
+    },
     [enqueue, reload]
+  );
+
+  const save = useCallback(
+    (collection: string, item: unknown) => put(`/api/adly/${collection}`, item),
+    [put]
   );
 
   const savePlan = useCallback(
@@ -142,28 +156,17 @@ export function AdlyProvider({ children }: { children: ReactNode }) {
         }),
       getCampaign: (id) => content.campaigns.find((item) => item.id === id),
       upsertCreative: (item) =>
-        backend === "tracker"
-          ? enqueue(async () => {
-              const result = await apiJson("/api/adly/plans", { method: "PUT", body: JSON.stringify({ creative: item }) });
-              if (result.ok) await reload();
-            })
-          : save("creatives", item),
+        backend === "tracker" ? put("/api/adly/plans", { creative: item }) : save("creatives", item),
       upsertPolicyReview: (item) =>
         backend === "tracker"
-          ? enqueue(async () => {
-              const result = await apiJson("/api/adly/plans", {
-                method: "PUT",
-                body: JSON.stringify({ campaign: { id: item.campaignId }, policyReview: item }),
-              });
-              if (result.ok) await reload();
-            })
+          ? put("/api/adly/plans", { campaign: { id: item.campaignId }, policyReview: item })
           : save("policy-reviews", item),
       upsertPoster: (item) => save("posters", item),
       upsertTimelapse: (item) => save("timelapses", item),
       upsertSimulation: (item) => save("simulations", item),
       addInsight: (item) => save("insights", { ...item, id: item.id || createId("ins") }),
     }),
-    [ready, backend, content, enqueue, reload, save, savePlan]
+    [ready, backend, content, enqueue, reload, put, save, savePlan]
   );
 
   return <AdlyContext.Provider value={value}>{children}</AdlyContext.Provider>;

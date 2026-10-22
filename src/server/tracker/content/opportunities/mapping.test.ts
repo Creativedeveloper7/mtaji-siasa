@@ -528,3 +528,25 @@ describe("Adly interest leads", () => {
     expect(isAdlyInterestRow({ subject: null })).toBe(false);
   });
 });
+
+describe("a stored application link that is not http(s)", () => {
+  const stored: OpportunityRow = { ...liveCall, apply_url: "munene.dev" };
+
+  it("is read back raw (pages sanitise it on render)", () => {
+    expect(opportunityFromRow(stored, { slug: "s", now: NOW }).applicationUrl).toBe("munene.dev");
+  });
+
+  it("survives an edit to another field", () => {
+    const read = opportunityFromRow(stored, { slug: "s", now: NOW });
+    const write = opportunityToRow({ ...read, title: "New title" }, stored, NOW);
+    expect(write.base.title).toBe("New title");
+    expect(write.base.apply_url).toBe("munene.dev");
+  });
+
+  it("is still refused when it is new or changed", () => {
+    const read = opportunityFromRow(stored, { slug: "s", now: NOW });
+    expect(() => opportunityToRow({ ...read, applicationUrl: "other.dev" }, stored, NOW)).toThrow(
+      OpportunityValidationError
+    );
+  });
+});

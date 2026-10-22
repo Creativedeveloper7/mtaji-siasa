@@ -72,7 +72,8 @@ export default function PoliticianProfilePage() {
   const setSocial = (key: keyof SocialLinks, value: string) => {
     setForm({
       ...form,
-      social: { ...form.social, [key]: value || undefined },
+      // "" (not undefined) so the key reaches the server, which clears it.
+      social: { ...form.social, [key]: value },
     });
   };
 
