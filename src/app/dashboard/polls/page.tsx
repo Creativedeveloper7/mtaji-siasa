@@ -7,9 +7,12 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
+import { PollOptionsEditor } from "@/components/admin/PollOptionsEditor";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
@@ -17,8 +20,14 @@ import type { Poll } from "@/types";
 
 export default function PoliticianPollsPage() {
   const { leader } = usePoliticianProfile();
-  const { getPollsByIds, upsertPoll, deletePoll, upsertLeader } = useContent();
+  const { getPollsByIds, upsertPoll, deletePoll } = useContent();
   const [editing, setEditing] = useState<Poll | null>(null);
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (poll: Poll) => {
+    setError("");
+    setEditing(poll);
+  };
 
   const rows = useMemo(
     () => (leader ? getPollsByIds(leader.pollIds) : []),
@@ -26,6 +35,33 @@ export default function PoliticianPollsPage() {
   );
 
   if (!leader) return null;
+
+  const save = async () => {
+    if (!editing) return;
+    const options = editing.options
+      .map((o) => ({ ...o, id: o.id || createId("opt"), label: o.label.trim() }))
+      .filter((o) => o.label);
+    if (!editing.question.trim()) {
+      setError("Add a question before saving.");
+      return;
+    }
+    if (!options.length) {
+      setError("Add at least one option.");
+      return;
+    }
+    const result = await run(() =>
+      upsertPoll({
+        ...editing,
+        slug: editing.slug || slugify(editing.question),
+        options,
+        leaderId: leader.id,
+        participationCount:
+          Number(editing.participationCount) ||
+          options.reduce((s, o) => s + o.votes, 0),
+      })
+    );
+    if (result?.ok) setEditing(null);
+  };
 
   return (
     <div>
@@ -36,15 +72,15 @@ export default function PoliticianPollsPage() {
           <Button
             type="button"
             onClick={() =>
-              setEditing({
+              open({
                 id: createId("pol"),
                 slug: "",
                 question: "",
                 options: [
-                  { id: "o1", label: "Option A", votes: 0 },
-                  { id: "o2", label: "Option B", votes: 0 },
+                  { id: createId("opt"), label: "Option A", votes: 0 },
+                  { id: createId("opt"), label: "Option B", votes: 0 },
                 ],
-                closingDate: new Date().toISOString().slice(0, 10),
+                closingDate: "",
                 participationCount: 0,
                 leaderId: leader.id,
               })
@@ -54,6 +90,15 @@ export default function PoliticianPollsPage() {
           </Button>
         }
       />
+
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
 
       <AdminTable headers={["Question", "Options", "Participants", ""]}>
         {rows.map((p) => (
@@ -72,7 +117,7 @@ export default function PoliticianPollsPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setEditing(structuredClone(p))}
+                onClick={() => open(structuredClone(p))}
               >
                 Edit
               </Button>
@@ -80,13 +125,10 @@ export default function PoliticianPollsPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
                   if (!confirm("Delete this poll?")) return;
-                  deletePoll(p.id);
-                  upsertLeader({
-                    ...leader,
-                    pollIds: leader.pollIds.filter((id) => id !== p.id),
-                  });
+                  void remove(() => deletePoll(p.id));
                 }}
               >
                 Delete
@@ -99,46 +141,19 @@ export default function PoliticianPollsPage() {
       <AdminDrawer
         open={!!editing}
         title="Poll"
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
-            <Button
-              type="button"
-              fullWidth
-              onClick={() => {
-                if (!editing) return;
-                const options = editing.options
-                  .map((o, i) => ({
-                    ...o,
-                    id: o.id || `o${i + 1}`,
-                    label: o.label.trim(),
-                  }))
-                  .filter((o) => o.label);
-                const saved = {
-                  ...editing,
-                  slug: editing.slug || slugify(editing.question),
-                  options,
-                  leaderId: leader.id,
-                  participationCount:
-                    Number(editing.participationCount) ||
-                    options.reduce((s, o) => s + o.votes, 0),
-                };
-                upsertPoll(saved);
-                if (!leader.pollIds.includes(saved.id)) {
-                  upsertLeader({
-                    ...leader,
-                    pollIds: [...leader.pollIds, saved.id],
-                  });
-                }
-                setEditing(null);
-              }}
-            >
-              Save
+            <Button type="button" fullWidth disabled={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Save"}
             </Button>
             <Button
               type="button"
               variant="secondary"
               fullWidth
+              disabled={saving}
               onClick={() => setEditing(null)}
             >
               Cancel
@@ -156,7 +171,7 @@ export default function PoliticianPollsPage() {
                 }
               />
             </AdminField>
-            <AdminField label="Closing date">
+            <AdminField label="Closing date" hint="Leave empty to keep the poll open until you close it.">
               <AdminInput
                 type="date"
                 value={editing.closingDate}
@@ -165,26 +180,12 @@ export default function PoliticianPollsPage() {
                 }
               />
             </AdminField>
-            <AdminField label="Options (label|votes per line)">
-              <AdminTextarea
-                value={editing.options
-                  .map((o) => `${o.label}|${o.votes}`)
-                  .join("\n")}
-                onChange={(e) =>
-                  setEditing({
-                    ...editing,
-                    options: e.target.value.split("\n").map((line, i) => {
-                      const [label, votes] = line.split("|");
-                      return {
-                        id: `o${i + 1}`,
-                        label: (label || "").trim(),
-                        votes: Number(votes) || 0,
-                      };
-                    }),
-                  })
-                }
-              />
-            </AdminField>
+            <PollOptionsEditor
+              options={editing.options}
+              disabled={saving}
+              onChange={(options) => setEditing({ ...editing, options })}
+            />
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

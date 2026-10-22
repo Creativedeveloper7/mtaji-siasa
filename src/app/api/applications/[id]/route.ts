@@ -21,7 +21,7 @@ export async function PATCH(request: Request, context: Context) {
   } catch {
     return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
   }
-  return send(reviewApplication(session, id, body));
+  return send(await reviewApplication(session, id, body));
 }
 
 /** Applicant withdraws an application that has not been reviewed yet. */
@@ -31,7 +31,7 @@ export async function DELETE(_request: Request, context: Context) {
     return NextResponse.json({ ok: false, error: "Sign in required." }, { status: 401 });
   }
   const { id } = await context.params;
-  return send(withdrawApplication(session, id));
+  return send(await withdrawApplication(session, id));
 }
 
 function send(result: ContentResult) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AdminField,
   AdminHeader,
@@ -15,25 +15,56 @@ import { useContent } from "@/components/content/ContentProvider";
 import type { Leader, LeaderType, SocialLinks } from "@/types";
 import { COUNTIES } from "@/lib/constants";
 import { slugify } from "@/lib/store";
+import { apiJson } from "@/lib/api-client";
+import { useAuth } from "@/components/auth/AuthProvider";
+import type { AuthSession } from "@/types/auth";
 
 export default function PoliticianProfilePage() {
-  const { leader } = usePoliticianProfile();
+  const { leader, isDraft } = usePoliticianProfile();
+  const { applySession } = useAuth();
   const { upsertLeader } = useContent();
   const [form, setForm] = useState<Leader | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Guards clicks that land before the disabled button re-renders: a draft's
+  // first save creates the leader, so a second one would create another.
+  const savingRef = useRef(false);
+  const [error, setError] = useState("");
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   useEffect(() => {
-    if (leader) setForm(structuredClone(leader));
-  }, [leader]);
+    if (leader) setForm((current) => (current && current.id === leader.id && isDraft ? current : structuredClone(leader)));
+  }, [leader, isDraft]);
 
   if (!form) return null;
 
-  const save = () => {
-    upsertLeader({
-      ...form,
-      slug: form.slug || slugify(form.name),
-      achievements: form.achievements.filter(Boolean),
-    });
+  const save = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setError("");
+    setWarnings([]);
+    setSaving(true);
+    let result: Awaited<ReturnType<typeof upsertLeader>>;
+    try {
+      result = await upsertLeader({
+        ...form,
+        slug: form.slug || slugify(form.name),
+        achievements: form.achievements.filter(Boolean),
+      });
+      if (result.ok && isDraft) {
+        // The first save created the leader profile: the session now carries its id.
+        const session = await apiJson<{ user?: AuthSession | null }>("/api/auth/session");
+        if (session.ok && session.data.user) applySession(session.data.user);
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setWarnings(result.warnings ?? []);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -41,7 +72,8 @@ export default function PoliticianProfilePage() {
   const setSocial = (key: keyof SocialLinks, value: string) => {
     setForm({
       ...form,
-      social: { ...form.social, [key]: value || undefined },
+      // "" (not undefined) so the key reaches the server, which clears it.
+      social: { ...form.social, [key]: value },
     });
   };
 
@@ -51,11 +83,29 @@ export default function PoliticianProfilePage() {
         title="My profile"
         description="This is what citizens see on your public leader page. Position/office is free-text."
         action={
-          <Button type="button" onClick={save}>
-            {saved ? "Saved" : "Save profile"}
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving…" : saved ? "Saved" : isDraft ? "Create profile" : "Save profile"}
           </Button>
         }
       />
+
+      {isDraft && (
+        <p className="mb-4 max-w-2xl rounded-md border border-accent/30 bg-accent-soft px-4 py-3 text-small text-ink">
+          You do not have a public leader page yet. Fill in your name and office, then create your profile.
+        </p>
+      )}
+      {error && (
+        <p className="mb-4 max-w-2xl rounded-md border border-error/30 bg-error-muted px-4 py-3 text-small text-error">
+          {error}
+        </p>
+      )}
+      {warnings.length > 0 && (
+        <ul className="mb-4 max-w-2xl space-y-1 rounded-md border border-border bg-surface px-4 py-3 text-small text-ink-muted">
+          {warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      )}
 
       <div className="max-w-2xl space-y-4 rounded-lg border border-border bg-surface p-5 md:p-6">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -169,8 +219,8 @@ export default function PoliticianProfilePage() {
           </AdminField>
         ))}
 
-        <Button type="button" onClick={save} fullWidth>
-          {saved ? "Saved" : "Save profile"}
+        <Button type="button" onClick={() => void save()} disabled={saving} fullWidth>
+          {saving ? "Saving…" : saved ? "Saved" : isDraft ? "Create profile" : "Save profile"}
         </Button>
       </div>
     </div>

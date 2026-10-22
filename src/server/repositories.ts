@@ -29,113 +29,122 @@ import type {
 } from "@/server/domain";
 
 /**
- * Accounts. Password hashes stay inside the repository.
- * Lookups return PublicUser and never include a password or hash.
+ * Account directory. Credentials belong to Supabase Auth: a password passed to
+ * create() or setPassword() goes to the auth provider and is never stored or
+ * returned here.
  */
 export interface UserRepository {
-  count(): number;
-  listPublic(): PublicUser[];
-  findById(id: string): PublicUser | undefined;
-  findByEmail(email: string): PublicUser | undefined;
-  /** False for an unknown email and for a wrong password. */
-  verifyPassword(email: string, password: string): boolean;
-  create(input: NewUserInput): PublicUser;
-  update(user: PublicUser): PublicUser | undefined;
-  setPassword(id: string, password: string): boolean;
-  delete(id: string): boolean;
+  count(): Promise<number>;
+  listPublic(): Promise<PublicUser[]>;
+  findById(id: string): Promise<PublicUser | undefined>;
+  findByEmail(email: string): Promise<PublicUser | undefined>;
+  create(input: NewUserInput): Promise<PublicUser>;
+  update(user: PublicUser): Promise<PublicUser | undefined>;
+  setPassword(id: string, password: string): Promise<boolean>;
+  delete(id: string): Promise<boolean>;
 }
 
 export interface ContentRepository {
-  snapshot(): PlatformContent;
-  reset(): void;
-  listLeaders(): Leader[];
-  findLeader(id: string): Leader | undefined;
-  findLeaderBySlug(slug: string): Leader | undefined;
-  upsertLeader(item: Leader): Leader;
-  deleteLeader(id: string): boolean;
-  listProjects(): Project[];
-  findProject(id: string): Project | undefined;
-  findProjectBySlug(slug: string): Project | undefined;
-  listProjectsByIds(ids: string[]): Project[];
-  upsertProject(item: Project): Project;
-  deleteProject(id: string): boolean;
-  listMilestones(): ProjectMilestone[];
-  findMilestone(id: string): ProjectMilestone | undefined;
-  listMilestonesByProject(projectId: string): ProjectMilestone[];
-  upsertMilestone(item: ProjectMilestone): ProjectMilestone;
-  deleteMilestone(id: string): boolean;
-  listOpportunities(): Opportunity[];
-  findOpportunity(id: string): Opportunity | undefined;
-  findOpportunityBySlug(slug: string): Opportunity | undefined;
-  listOpportunitiesByIds(ids: string[]): Opportunity[];
-  upsertOpportunity(item: Opportunity): Opportunity;
-  deleteOpportunity(id: string): boolean;
-  listMedia(): MediaItem[];
-  findMedia(id: string): MediaItem | undefined;
-  findMediaBySlug(slug: string): MediaItem | undefined;
-  listMediaByIds(ids: string[]): MediaItem[];
-  upsertMedia(item: MediaItem): MediaItem;
-  deleteMedia(id: string): boolean;
-  listPolls(): Poll[];
-  findPoll(id: string): Poll | undefined;
-  findPollBySlug(slug: string): Poll | undefined;
-  listPollsByIds(ids: string[]): Poll[];
-  upsertPoll(item: Poll): Poll;
-  deletePoll(id: string): boolean;
-  listProducts(): Product[];
-  findProduct(id: string): Product | undefined;
-  findProductBySlug(slug: string): Product | undefined;
-  listProductsByLeader(leaderId: string): Product[];
-  upsertProduct(item: Product): Product;
-  deleteProduct(id: string): boolean;
+  snapshot(): Promise<PlatformContent>;
+  reset(): Promise<void>;
+  listLeaders(): Promise<Leader[]>;
+  findLeader(id: string): Promise<Leader | undefined>;
+  findLeaderBySlug(slug: string): Promise<Leader | undefined>;
+  upsertLeader(item: Leader): Promise<Leader>;
+  deleteLeader(id: string): Promise<boolean>;
+  listProjects(): Promise<Project[]>;
+  findProject(id: string): Promise<Project | undefined>;
+  findProjectBySlug(slug: string): Promise<Project | undefined>;
+  listProjectsByIds(ids: string[]): Promise<Project[]>;
+  upsertProject(item: Project): Promise<Project>;
+  deleteProject(id: string): Promise<boolean>;
+  listMilestones(): Promise<ProjectMilestone[]>;
+  findMilestone(id: string): Promise<ProjectMilestone | undefined>;
+  listMilestonesByProject(projectId: string): Promise<ProjectMilestone[]>;
+  upsertMilestone(item: ProjectMilestone): Promise<ProjectMilestone>;
+  deleteMilestone(id: string): Promise<boolean>;
+  listOpportunities(): Promise<Opportunity[]>;
+  findOpportunity(id: string): Promise<Opportunity | undefined>;
+  findOpportunityBySlug(slug: string): Promise<Opportunity | undefined>;
+  listOpportunitiesByIds(ids: string[]): Promise<Opportunity[]>;
+  upsertOpportunity(item: Opportunity): Promise<Opportunity>;
+  deleteOpportunity(id: string): Promise<boolean>;
+  listMedia(): Promise<MediaItem[]>;
+  findMedia(id: string): Promise<MediaItem | undefined>;
+  findMediaBySlug(slug: string): Promise<MediaItem | undefined>;
+  listMediaByIds(ids: string[]): Promise<MediaItem[]>;
+  upsertMedia(item: MediaItem): Promise<MediaItem>;
+  deleteMedia(id: string): Promise<boolean>;
+  listPolls(): Promise<Poll[]>;
+  findPoll(id: string): Promise<Poll | undefined>;
+  findPollBySlug(slug: string): Promise<Poll | undefined>;
+  listPollsByIds(ids: string[]): Promise<Poll[]>;
+  upsertPoll(item: Poll): Promise<Poll>;
+  deletePoll(id: string): Promise<boolean>;
+  listProducts(): Promise<Product[]>;
+  findProduct(id: string): Promise<Product | undefined>;
+  findProductBySlug(slug: string): Promise<Product | undefined>;
+  listProductsByLeader(leaderId: string): Promise<Product[]>;
+  upsertProduct(item: Product): Promise<Product>;
+  deleteProduct(id: string): Promise<boolean>;
+  /**
+   * Tracker only: the auth user id that owns a project (changemakers.user_id),
+   * for the Ownership rule (docs/tracker-backend.md). Absent in memory mode.
+   */
+  projectOwnerUserId?(projectId: string): Promise<string | undefined>;
+  /**
+   * Tracker only: donations rows for a project. Deleting an initiative
+   * cascades to its donations, so a project with donations is not deleted.
+   */
+  projectDonationCount?(projectId: string): Promise<number>;
 }
 
 export interface AdlyRepository {
-  snapshot(): AdlyContent;
+  snapshot(): Promise<AdlyContent>;
   /** Replace the whole Adly document. Used when a record type has no single-row delete. */
-  replace(content: AdlyContent): void;
-  reset(): void;
-  listCampaigns(): Campaign[];
-  findCampaign(id: string): Campaign | undefined;
-  upsertCampaign(item: Campaign): Campaign;
-  deleteCampaign(id: string): boolean;
-  listCreatives(): AdCreative[];
-  findCreative(id: string): AdCreative | undefined;
-  upsertCreative(item: AdCreative): AdCreative;
-  listPolicyReviews(): PolicyReview[];
-  findPolicyReview(id: string): PolicyReview | undefined;
-  upsertPolicyReview(item: PolicyReview): PolicyReview;
-  listPosters(): Poster[];
-  findPoster(id: string): Poster | undefined;
-  upsertPoster(item: Poster): Poster;
-  listTimelapses(): Timelapse[];
-  findTimelapse(id: string): Timelapse | undefined;
-  upsertTimelapse(item: Timelapse): Timelapse;
-  listSimulations(): Simulation[];
-  findSimulation(id: string): Simulation | undefined;
-  upsertSimulation(item: Simulation): Simulation;
-  listInsights(): AdlyInsight[];
-  addInsight(item: AdlyInsight): AdlyInsight;
+  replace(content: AdlyContent): Promise<void>;
+  reset(): Promise<void>;
+  listCampaigns(): Promise<Campaign[]>;
+  findCampaign(id: string): Promise<Campaign | undefined>;
+  upsertCampaign(item: Campaign): Promise<Campaign>;
+  deleteCampaign(id: string): Promise<boolean>;
+  listCreatives(): Promise<AdCreative[]>;
+  findCreative(id: string): Promise<AdCreative | undefined>;
+  upsertCreative(item: AdCreative): Promise<AdCreative>;
+  listPolicyReviews(): Promise<PolicyReview[]>;
+  findPolicyReview(id: string): Promise<PolicyReview | undefined>;
+  upsertPolicyReview(item: PolicyReview): Promise<PolicyReview>;
+  listPosters(): Promise<Poster[]>;
+  findPoster(id: string): Promise<Poster | undefined>;
+  upsertPoster(item: Poster): Promise<Poster>;
+  listTimelapses(): Promise<Timelapse[]>;
+  findTimelapse(id: string): Promise<Timelapse | undefined>;
+  upsertTimelapse(item: Timelapse): Promise<Timelapse>;
+  listSimulations(): Promise<Simulation[]>;
+  findSimulation(id: string): Promise<Simulation | undefined>;
+  upsertSimulation(item: Simulation): Promise<Simulation>;
+  listInsights(): Promise<AdlyInsight[]>;
+  addInsight(item: AdlyInsight): Promise<AdlyInsight>;
 }
 
 export interface WalletRepository {
   /** Saved wallets only. Leaders with no top-up yet are absent. */
-  listLeaderIds(): string[];
+  listLeaderIds(): Promise<string[]>;
   /**
    * Returns the saved wallet, or the default balances when nothing is stored.
    * Defaults are not written until save().
    */
-  get(leaderId: string): WalletRecord;
-  save(record: WalletRecord): WalletRecord;
+  get(leaderId: string): Promise<WalletRecord>;
+  save(record: WalletRecord): Promise<WalletRecord>;
 }
 
 export interface EngagementRepository {
-  getSavedOpportunityIds(userId: string): string[];
-  setSavedOpportunityIds(userId: string, ids: string[]): string[];
-  listAdlyInterests(): AdlyInterestLead[];
+  getSavedOpportunityIds(userId: string): Promise<string[]>;
+  setSavedOpportunityIds(userId: string, ids: string[]): Promise<string[]>;
+  listAdlyInterests(): Promise<AdlyInterestLead[]>;
   addAdlyInterest(
     input: Omit<AdlyInterestLead, "id"> & { id?: string }
-  ): AdlyInterestLead;
+  ): Promise<AdlyInterestLead>;
 }
 
 /**
@@ -143,19 +152,35 @@ export interface EngagementRepository {
  * so an owner always sees applications submitted through any server instance.
  */
 export interface ApplicationRepository {
-  list(): OpportunityApplication[];
-  find(id: string): OpportunityApplication | undefined;
-  upsert(item: OpportunityApplication): OpportunityApplication;
-  delete(id: string): boolean;
+  list(): Promise<OpportunityApplication[]>;
+  find(id: string): Promise<OpportunityApplication | undefined>;
+  upsert(item: OpportunityApplication): Promise<OpportunityApplication>;
+  delete(id: string): Promise<boolean>;
+  /**
+   * Tracker only (row-level security scopes list() to the session there):
+   * applications the given user sent, applications on listings authored by
+   * the given user, and every application (admin, checked by the store).
+   */
+  listForApplicant?(applicantId: string): Promise<OpportunityApplication[]>;
+  listForAuthor?(authorId: string): Promise<OpportunityApplication[]>;
+  listAll?(): Promise<OpportunityApplication[]>;
+  /**
+   * Tracker only, admin (checked by the store): find and review any
+   * application. find()/upsert() run under row-level security, which gives an
+   * admin no access to applications on other people's listings.
+   */
+  findAsAdmin?(id: string): Promise<OpportunityApplication | undefined>;
+  reviewAsAdmin?(item: OpportunityApplication): Promise<OpportunityApplication>;
 }
 
 /** Paid ad campaigns. Read straight from the store, like applications. */
 export interface AdCampaignRepository {
-  list(): AdCampaign[];
-  find(id: string): AdCampaign | undefined;
-  upsert(item: AdCampaign): AdCampaign;
+  list(): Promise<AdCampaign[]>;
+  find(id: string): Promise<AdCampaign | undefined>;
+  upsert(item: AdCampaign): Promise<AdCampaign>;
 }
 
+/** Every method returns a Promise, whichever store backs it. */
 export interface AppRepositories {
   users: UserRepository;
   content: ContentRepository;
@@ -164,7 +189,7 @@ export interface AppRepositories {
   engagement: EngagementRepository;
   applications: ApplicationRepository;
   adCampaigns: AdCampaignRepository;
-  counts(): SeedCounts;
+  counts(): Promise<SeedCounts>;
   /** Restore seed content and drop wallets, saves, and leads. */
-  resetAll(): void;
+  resetAll(): Promise<void>;
 }

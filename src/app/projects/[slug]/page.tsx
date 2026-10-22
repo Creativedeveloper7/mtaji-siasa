@@ -114,12 +114,18 @@ export default function ProjectDetailPage({
                 geography. Switch between map and satellite basemaps.
               </p>
             </div>
-            <GISMap
-              center={project.geo.center}
-              boundary={project.geo.boundary}
-              projectName={project.name}
-              locationLabel={project.location}
-            />
+            {project.geo.center ? (
+              <GISMap
+                center={project.geo.center}
+                boundary={project.geo.boundary}
+                projectName={project.name}
+                locationLabel={project.location}
+              />
+            ) : (
+              <p className="rounded-lg border border-border bg-surface p-5 text-body text-ink-muted">
+                This project has no map location yet.
+              </p>
+            )}
           </div>
         )}
 

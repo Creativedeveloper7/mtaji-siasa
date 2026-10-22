@@ -17,7 +17,7 @@ import { useApplications } from "@/components/opportunities/useApplications";
 import { formatDate } from "@/lib/utils";
 
 export default function PoliticianOverviewPage() {
-  const { leader, isAspirant } = usePoliticianProfile();
+  const { leader, isAspirant, isDraft } = usePoliticianProfile();
   const {
     getProjectsByIds,
     getOpportunitiesByIds,
@@ -68,9 +68,15 @@ export default function PoliticianOverviewPage() {
         title="Your workspace"
         description="Control everything citizens see about you — profile, projects, GIS evidence, media, opportunities and engagement."
         action={
-          <Button href={`/leaders/${leader.slug}`} variant="outline">
-            View public profile
-          </Button>
+          isDraft ? (
+            <Button href="/dashboard/profile" variant="outline">
+              Complete your profile
+            </Button>
+          ) : (
+            <Button href={`/leaders/${leader.slug}`} variant="outline">
+              View public profile
+            </Button>
+          )
         }
       />
 

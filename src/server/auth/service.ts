@@ -1,7 +1,16 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthSession, UserRole } from "@/types/auth";
 import type { PublicUser } from "@/server/domain";
-import { createId, slugify } from "@/lib/store";
-import { getRepositories } from "@/server";
+import { getRepositories, usesTracker } from "@/server";
+import { failureFromError } from "@/server/http-errors";
+import { TrackerConfigError, userClient } from "@/server/tracker/clients";
+import {
+  loadAccountRows,
+  toAccount,
+  toSession,
+  type AuthUser,
+} from "@/server/tracker/accounts";
+import { signUpMetadata } from "@/server/tracker/roles";
 
 const ROLES = new Set<UserRole>([
   "citizen",
@@ -11,9 +20,14 @@ const ROLES = new Set<UserRole>([
   "admin",
 ]);
 
-export type AuthResult =
-  | { ok: true; session: AuthSession }
-  | { ok: false; error: string; status: number };
+const MIN_PASSWORD = 6;
+
+export type AuthFailure = { ok: false; error: string; status: number };
+
+export type AuthResult = { ok: true; session: AuthSession } | AuthFailure;
+
+/** Sign-up with email confirmation on returns no session until the emailed link is used. */
+export type SignUpResult = AuthResult | { ok: true; needsConfirmation: true };
 
 export interface SignUpInput {
   fullName: unknown;
@@ -21,102 +35,222 @@ export interface SignUpInput {
   phone: unknown;
   password: unknown;
   role: unknown;
-  leaderId?: unknown;
 }
 
-function toSession(user: PublicUser): AuthSession {
-  return {
-    userId: user.id,
-    email: user.email,
-    fullName: user.fullName,
-    role: user.role,
-    leaderId: user.leaderId,
-  };
+const NOT_CONFIGURED: AuthFailure = {
+  ok: false,
+  error:
+    "Accounts need the M-Taji Tracker backend. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+  status: 503,
+};
+
+function fail(error: string, status: number): AuthFailure {
+  return { ok: false, error, status };
 }
 
-export function signIn(email: unknown, password: unknown): AuthResult {
-  if (typeof email !== "string" || typeof password !== "string") {
-    return { ok: false, error: "Invalid email or password.", status: 401 };
-  }
-  const normalized = email.trim().toLowerCase();
-  const users = getRepositories().users;
-  if (!users.verifyPassword(normalized, password)) {
-    return { ok: false, error: "Invalid email or password.", status: 401 };
-  }
-  const account = users.findByEmail(normalized);
-  if (!account) {
-    return { ok: false, error: "Invalid email or password.", status: 401 };
-  }
-  return { ok: true, session: toSession(account) };
+/** Build the session from Tracker rows. The caller has confirmed `user` with Supabase Auth. */
+async function sessionFromUser(client: SupabaseClient, user: AuthUser): Promise<AuthSession> {
+  const session = toSession(toAccount(await loadAccountRows(client, user)));
+  return withPhase1Leader(session);
 }
 
-export function signUp(input: SignUpInput): AuthResult {
+/**
+ * Id of the Phase 1 memory leader profile of a politician with no
+ * political_figures row. Never the bare auth user id: political_figures.id is
+ * client-settable, so a figure row could be created with another user's uid as
+ * its id. The "user-" prefix is not a uuid and cannot collide with a figure id.
+ */
+export function phase1LeaderId(userId: string): string {
+  return `user-${userId}`;
+}
+
+/**
+ * A politician with no political_figures row has no Leader yet. Their content
+ * still hangs off their auth user id, and the Tracker adapter shows it under
+ * the Phase 1 leader id `user-<uid>` (leaderIdForOwner), so the session uses
+ * that id for display and linking. Authorization never uses it (Ownership rule).
+ */
+async function withPhase1Leader(session: AuthSession): Promise<AuthSession> {
+  if (session.leaderId) return session;
+  if (session.role !== "leader" && session.role !== "aspirant") return session;
+  return { ...session, leaderId: phase1LeaderId(session.userId) };
+}
+
+/** Load the session; a Tracker read failure is logged and surfaces as AccountUnavailable. */
+class AccountUnavailable extends Error {}
+
+async function loadSession(client: SupabaseClient, user: AuthUser): Promise<AuthSession> {
+  try {
+    return await sessionFromUser(client, user);
+  } catch (error) {
+    console.error("[auth] could not load the account", user.id, error);
+    throw new AccountUnavailable();
+  }
+}
+
+const ACCOUNT_UNAVAILABLE: AuthFailure = {
+  ok: false,
+  error: "Your account could not be loaded right now. Try again in a moment.",
+  status: 503,
+};
+
+/**
+ * The signed-in user, verified with auth.getUser() (never read from the cookie
+ * alone). Null when signed out, and also when the account rows cannot be read:
+ * the failure is logged here instead of turning every route into a 500 page.
+ */
+export async function currentSession(): Promise<AuthSession | null> {
+  if (!usesTracker()) return null;
+  try {
+    const client = await userClient();
+    const { data, error } = await client.auth.getUser();
+    if (error || !data.user) return null;
+    return await loadSession(client, data.user);
+  } catch (error) {
+    if (!(error instanceof AccountUnavailable)) {
+      console.error("[auth] could not read the session", error);
+    }
+    return null;
+  }
+}
+
+export async function signIn(email: unknown, password: unknown): Promise<AuthResult> {
+  if (typeof email !== "string" || typeof password !== "string" || !email.trim() || !password) {
+    return fail("Invalid email or password.", 401);
+  }
+  if (!usesTracker()) return NOT_CONFIGURED;
+  const client = await userClient();
+  const { data, error } = await client.auth.signInWithPassword({
+    email: email.trim().toLowerCase(),
+    password,
+  });
+  if (error || !data.user) {
+    if (error?.code === "email_not_confirmed" || /not confirmed/i.test(error?.message ?? "")) {
+      return fail("Confirm your email first. Use the link we sent when you signed up.", 403);
+    }
+    return fail("Invalid email or password.", 401);
+  }
+  try {
+    return { ok: true, session: await loadSession(client, data.user) };
+  } catch {
+    return ACCOUNT_UNAVAILABLE;
+  }
+}
+
+export async function signUp(input: SignUpInput, origin: string): Promise<SignUpResult> {
   if (
     typeof input.fullName !== "string" ||
     typeof input.email !== "string" ||
     typeof input.phone !== "string" ||
     typeof input.password !== "string"
   ) {
-    return {
-      ok: false,
-      error: "Name, email, phone, and password are required.",
-      status: 400,
-    };
+    return fail("Name, email, phone, and password are required.", 400);
   }
   const fullName = input.fullName.trim();
   const email = input.email.trim().toLowerCase();
   const phone = input.phone.trim();
   if (!fullName || !email || !phone || !input.password) {
-    return {
-      ok: false,
-      error: "Name, email, phone, and password are required.",
-      status: 400,
-    };
+    return fail("Name, email, phone, and password are required.", 400);
   }
   if (!email.includes("@") || email.startsWith("@") || email.endsWith("@")) {
-    return { ok: false, error: "Enter a valid email address.", status: 400 };
+    return fail("Enter a valid email address.", 400);
   }
-  if (input.password.length < 6) {
-    return {
-      ok: false,
-      error: "Password must be at least 6 characters.",
-      status: 400,
-    };
+  if (input.password.length < MIN_PASSWORD) {
+    return fail(`Password must be at least ${MIN_PASSWORD} characters.`, 400);
   }
   if (typeof input.role !== "string" || !ROLES.has(input.role as UserRole)) {
-    return { ok: false, error: "Choose a valid account role.", status: 400 };
+    return fail("Choose a valid account role.", 400);
   }
-  const role: UserRole = input.role === "admin" ? "citizen" : (input.role as UserRole);
-  const leaderId =
-    typeof input.leaderId === "string" && input.leaderId.trim()
-      ? input.leaderId.trim()
-      : undefined;
-  const users = getRepositories().users;
-  if (users.findByEmail(email)) {
-    return {
-      ok: false,
-      error: "An account with this email already exists.",
-      status: 409,
-    };
-  }
-  const account = users.create({
-    fullName,
+  if (!usesTracker()) return NOT_CONFIGURED;
+
+  const client = await userClient();
+  const { data, error } = await client.auth.signUp({
     email,
-    phone,
     password: input.password,
-    role,
-    leaderId,
+    options: {
+      // The Tracker triggers create profiles and user_profiles from this metadata.
+      data: signUpMetadata({ fullName, phone, role: input.role as UserRole }),
+      emailRedirectTo: `${origin}/auth/callback`,
+    },
   });
-  return { ok: true, session: toSession(account) };
+  if (error) return signUpFailure(error);
+  // With confirmation on, an existing email comes back as a user with no identities.
+  if (!data.user || data.user.identities?.length === 0) {
+    return fail("An account with this email already exists.", 409);
+  }
+  if (!data.session) return { ok: true, needsConfirmation: true };
+
+  // The triggers do not copy the phone. Best effort: it is also in user_metadata.
+  await client.from("profiles").update({ phone }).eq("id", data.user.id);
+  try {
+    return { ok: true, session: await loadSession(client, data.user) };
+  } catch {
+    return ACCOUNT_UNAVAILABLE;
+  }
 }
 
-export function listDirectory(): PublicUser[] {
-  return getRepositories().users.listPublic();
+/**
+ * Sign-up errors from Supabase Auth (GoTrue). Only the known, user-facing
+ * cases are answered specifically; any other text is logged and replaced by a
+ * generic message.
+ */
+function signUpFailure(error: { message?: string; code?: string; status?: number }): AuthFailure {
+  const message = error.message ?? "";
+  if (error.code === "user_already_exists" || error.code === "email_exists" || /already (registered|exists)/i.test(message)) {
+    return fail("An account with this email already exists.", 409);
+  }
+  if (error.code === "weak_password") {
+    // GoTrue's weak password text lists the requirements and is written for people.
+    return fail(/^Password /.test(message) ? message : "Choose a stronger password.", 400);
+  }
+  if (error.code === "email_address_invalid" || /invalid.*email|email.*invalid/i.test(message)) {
+    return fail("Enter a valid email address.", 400);
+  }
+  if (
+    error.status === 429 ||
+    error.code === "over_email_send_rate_limit" ||
+    error.code === "over_request_rate_limit" ||
+    /rate limit/i.test(message)
+  ) {
+    return fail("Too many sign-up attempts. Try again in a few minutes.", 429);
+  }
+  console.error("[api] sign up failed", error);
+  const clientError = typeof error.status === "number" && error.status >= 400 && error.status < 500;
+  return fail("Could not create the account. Try again in a moment.", clientError ? 400 : 502);
 }
 
-export function adminUpsertUser(body: unknown): AuthResult {
+export async function signOut(): Promise<void> {
+  if (!usesTracker()) return;
+  const client = await userClient();
+  // Local scope: end this browser's session only. The default (global) would
+  // also sign the person out of the Tracker app and every other device.
+  await client.auth.signOut({ scope: "local" });
+}
+
+/**
+ * Run an admin directory call. A missing service role key is a 503. Any other
+ * error goes through failureFromError: a real conflict (duplicate email,
+ * TrackerUserError 409) keeps its message, everything else is logged and
+ * answered with a generic message, so Auth and database text stay on the server.
+ */
+async function adminCall<T>(run: () => Promise<T>): Promise<{ ok: true; value: T } | AuthFailure> {
+  try {
+    return { ok: true, value: await run() };
+  } catch (error) {
+    if (error instanceof TrackerConfigError) return fail(error.message, 503);
+    const failure = failureFromError(error, "user directory");
+    return fail(failure.error, failure.status);
+  }
+}
+
+export async function listDirectory(): Promise<{ ok: true; users: PublicUser[] } | AuthFailure> {
+  const result = await adminCall(() => getRepositories().users.listPublic());
+  return result.ok ? { ok: true, users: result.value } : result;
+}
+
+export async function adminUpsertUser(body: unknown): Promise<AuthResult> {
   if (!body || typeof body !== "object") {
-    return { ok: false, error: "User body must be an object.", status: 400 };
+    return fail("User body must be an object.", 400);
   }
   const input = body as Record<string, unknown>;
   const fullName = typeof input.fullName === "string" ? input.fullName.trim() : "";
@@ -125,24 +259,28 @@ export function adminUpsertUser(body: unknown): AuthResult {
   const password = typeof input.password === "string" ? input.password : "";
   const role = input.role;
   if (!fullName || !email || !phone) {
-    return { ok: false, error: "Name, email, and phone are required.", status: 400 };
+    return fail("Name, email, and phone are required.", 400);
   }
   if (typeof role !== "string" || !ROLES.has(role as UserRole)) {
-    return { ok: false, error: "Choose a valid account role.", status: 400 };
+    return fail("Choose a valid account role.", 400);
+  }
+  if (password && password.length < MIN_PASSWORD) {
+    return fail(`Password must be at least ${MIN_PASSWORD} characters.`, 400);
   }
   const leaderId =
     typeof input.leaderId === "string" && input.leaderId.trim()
       ? input.leaderId.trim()
       : undefined;
-  const users = getRepositories().users;
   const requestedId = typeof input.id === "string" ? input.id.trim() : "";
-  const existing = requestedId ? users.findById(requestedId) : undefined;
-  try {
+  const users = getRepositories().users;
+
+  const result = await adminCall(async (): Promise<AuthResult> => {
+    const existing = requestedId ? await users.findById(requestedId) : undefined;
     if (!existing) {
-      if (password.length < 6) {
-        return { ok: false, error: "Password must be at least 6 characters.", status: 400 };
+      if (!password) {
+        return fail(`Password must be at least ${MIN_PASSWORD} characters.`, 400);
       }
-      const created = users.create({
+      const created = await users.create({
         id: requestedId || undefined,
         fullName,
         email,
@@ -151,12 +289,9 @@ export function adminUpsertUser(body: unknown): AuthResult {
         role: role as UserRole,
         leaderId,
       });
-      return { ok: true, session: toSession(created) };
+      return roleStuck(created, role as UserRole) ?? { ok: true, session: toSession(created) };
     }
-    if (password && password.length < 6) {
-      return { ok: false, error: "Password must be at least 6 characters.", status: 400 };
-    }
-    const updated = users.update({
+    const updated = await users.update({
       ...existing,
       fullName,
       email,
@@ -164,96 +299,85 @@ export function adminUpsertUser(body: unknown): AuthResult {
       role: role as UserRole,
       leaderId,
     });
-    if (!updated) return { ok: false, error: "User not found.", status: 404 };
-    if (password) users.setPassword(updated.id, password);
-    const fresh = users.findById(updated.id);
-    return { ok: true, session: toSession(fresh ?? updated) };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not save the user.";
-    return { ok: false, error: message, status: 409 };
-  }
+    if (!updated) return fail("User not found.", 404);
+    if (password) await users.setPassword(updated.id, password);
+    // `updated` is re-read from the Tracker, so this is the role that took effect.
+    return roleStuck(updated, role as UserRole) ?? { ok: true, session: toSession(updated) };
+  });
+  if (!result.ok) return result;
+  return result.value;
 }
 
-export function adminDeleteUser(actorUserId: string, id: string): AuthResult | { ok: true; session?: undefined } {
-  if (!id) return { ok: false, error: "id is required.", status: 400 };
-  if (actorUserId === id) {
-    return { ok: false, error: "You cannot delete the account you are signed in with.", status: 400 };
+/**
+ * A 409 when the saved account does not have the role the admin asked for. A
+ * political_figures row's status decides leader vs aspirant, so that choice
+ * cannot be overridden from the user directory.
+ */
+function roleStuck(account: PublicUser, requested: UserRole): AuthFailure | undefined {
+  if (account.role === requested) return undefined;
+  const politician = (role: UserRole) => role === "leader" || role === "aspirant";
+  if (politician(account.role) && politician(requested)) {
+    return fail(
+      `The other changes were saved, but this account is still ${account.role === "leader" ? "a leader" : "an aspirant"}: ` +
+        "its political figure status decides leader vs aspirant. Change that status in the M-Taji Tracker.",
+      409
+    );
   }
-  const removed = getRepositories().users.delete(id);
-  if (!removed) return { ok: false, error: "User not found.", status: 404 };
+  return fail(
+    `The other changes were saved, but the account's role is still ${account.role}, not ${requested}.`,
+    409
+  );
+}
+
+export async function adminDeleteUser(
+  actorUserId: string,
+  id: string
+): Promise<AuthFailure | { ok: true }> {
+  if (!id) return fail("id is required.", 400);
+  if (actorUserId === id) {
+    return fail("You cannot delete the account you are signed in with.", 400);
+  }
+  const result = await adminCall(() => getRepositories().users.delete(id));
+  if (!result.ok) return result;
+  if (!result.value) return fail("User not found.", 404);
   return { ok: true };
 }
 
-export function ensurePoliticianProfile(userId: string):
-  | { ok: true; session: AuthSession; leaderId: string }
-  | { ok: false; error: string; status: number } {
-  const users = getRepositories().users;
-  let account = users.findById(userId);
-  if (!account) return { ok: false, error: "Sign in required.", status: 401 };
-  if (account.role === "citizen" || account.role === "organization") {
-    account = users.update({ ...account, role: "leader" }) ?? {
-      ...account,
-      role: "leader",
-    };
-  }
-  if (account.role !== "leader" && account.role !== "aspirant") {
-    return { ok: false, error: "Only a politician account can open a profile.", status: 403 };
-  }
-  const content = getRepositories().content;
-  if (account.leaderId && content.findLeader(account.leaderId)) {
-    return { ok: true, session: toSession(account), leaderId: account.leaderId };
-  }
-  const match = content
-    .listLeaders()
-    .find((leader) => leader.name.toLowerCase() === account.fullName.toLowerCase());
-  if (match) {
-    const linked = users.update({ ...account, leaderId: match.id });
-    return {
-      ok: true,
-      session: toSession(linked ?? { ...account, leaderId: match.id }),
-      leaderId: match.id,
-    };
-  }
-  const id = createId("ldr");
-  const leader = content.upsertLeader({
-    id,
-    slug: slugify(account.fullName) || id,
-    name: account.fullName,
-    honorific: account.role === "aspirant" ? "H.E." : "Hon.",
-    position:
-      account.role === "aspirant"
-        ? "Political aspirant — profile in progress"
-        : "Elected leader — profile in progress",
-    type: account.role === "aspirant" ? "aspirant" : "elected",
-    county: "Nairobi",
-    photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80",
-    shortBio: "Complete your profile to showcase your development record.",
-    bio: "Welcome to your M-Taji Siasa politician workspace. Update your biography, publish projects with GIS evidence, and engage citizens through Faida.",
-    achievements: [],
-    social: {},
-    projectIds: [],
-    opportunityIds: [],
-    mediaIds: [],
-    pollIds: [],
-    productIds: [],
-    vision:
-      account.role === "aspirant"
-        ? {
-            statement: "Add your vision statement for citizens to discover.",
-            manifesto: [],
-            priorities: [],
-            proposedProjects: [],
-            expectedImpact: [],
-          }
-        : undefined,
-  });
-  const linked = users.update({ ...account, leaderId: leader.id });
-  return { ok: true, session: toSession(linked ?? { ...account, leaderId: leader.id }), leaderId: leader.id };
+/** Make a citizen or organization a political figure, as the old dashboard flow did. */
+async function promoteToLeader(userId: string): Promise<AuthSession | null> {
+  const client = await userClient();
+  // RLS lets a user update their own user_profiles row and user_metadata.
+  const { error } = await client
+    .from("user_profiles")
+    .update({ user_type: "political_figure" })
+    .eq("user_id", userId);
+  if (error) return null;
+  await client.auth.updateUser({ data: { user_type: "political_figure", siasa_role: "leader" } });
+  return currentSession();
 }
 
-export function sessionForUserId(userId: string): AuthSession | null {
-  const account = getRepositories().users.findById(userId);
-  return account ? toSession(account) : null;
+/**
+ * Open the politician workspace. A citizen or organization is switched to a
+ * political_figure account first. No political_figures row is created here:
+ * the Tracker needs an office the person has not entered yet. They create it
+ * from the profile page (PUT /api/content/leaders), which derives the
+ * position from the office text. Until then the session's leaderId is the
+ * Phase 1 id `user-<uid>`.
+ */
+export async function ensurePoliticianProfile(
+  current: AuthSession
+): Promise<{ ok: true; session: AuthSession; leaderId: string } | AuthFailure> {
+  let session: AuthSession | null = current;
+  if (session.role === "citizen" || session.role === "organization") {
+    session = await promoteToLeader(session.userId);
+    if (!session) return fail("Could not switch your account to a politician account.", 502);
+  }
+  if (session.role !== "leader" && session.role !== "aspirant") {
+    return fail("Only a politician account can open a profile.", 403);
+  }
+  // Never the bare user id (see phase1LeaderId).
+  const leaderId = session.leaderId ?? phase1LeaderId(session.userId);
+  return { ok: true, session: { ...session, leaderId }, leaderId };
 }
 
 export function sessionHasRole(

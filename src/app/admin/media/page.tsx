@@ -8,10 +8,12 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { MediaCategory, MediaItem, MediaType } from "@/types";
@@ -34,6 +36,12 @@ export default function AdminMediaPage() {
   const { content, ready, upsertMedia, deleteMedia } = useContent();
   const [editing, setEditing] = useState<MediaItem | null>(null);
   const [query, setQuery] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (item: MediaItem) => {
+    setError("");
+    setEditing(item);
+  };
 
   const rows = useMemo(() => {
     const q = query.toLowerCase();
@@ -44,17 +52,40 @@ export default function AdminMediaPage() {
 
   if (!ready) return <LoadingState />;
 
+  const save = async () => {
+    if (!editing) return;
+    if (!editing.title.trim()) {
+      setError("Add a title before saving.");
+      return;
+    }
+    const result = await run(() =>
+      upsertMedia({
+        ...editing,
+        slug: editing.slug || slugify(editing.title),
+      })
+    );
+    if (result?.ok) setEditing(null);
+  };
+
   return (
     <div>
       <AdminHeader
         title="Media"
         description="Editorial stories, project updates, videos and news."
         action={
-          <Button type="button" onClick={() => setEditing(emptyMedia())}>
+          <Button type="button" onClick={() => open(emptyMedia())}>
             Add media
           </Button>
         }
       />
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
       <div className="mb-4 max-w-sm">
         <AdminInput placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
@@ -68,15 +99,16 @@ export default function AdminMediaPage() {
             <td className="px-4 py-3 capitalize text-ink-muted">{m.type}</td>
             <td className="px-4 py-3 text-ink-muted">{m.date}</td>
             <td className="px-4 py-3 text-right whitespace-nowrap">
-              <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(structuredClone(m))}>
+              <Button type="button" size="sm" variant="ghost" onClick={() => open(structuredClone(m))}>
                 Edit
               </Button>
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
-                  if (confirm("Delete this item?")) deleteMedia(m.id);
+                  if (confirm("Delete this item?")) void remove(() => deleteMedia(m.id));
                 }}
               >
                 Delete
@@ -89,24 +121,15 @@ export default function AdminMediaPage() {
       <AdminDrawer
         open={!!editing}
         title="Media item"
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
-            <Button
-              type="button"
-              fullWidth
-              onClick={() => {
-                if (!editing) return;
-                upsertMedia({
-                  ...editing,
-                  slug: editing.slug || slugify(editing.title),
-                });
-                setEditing(null);
-              }}
-            >
-              Save
+            <Button type="button" fullWidth disabled={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Save"}
             </Button>
-            <Button type="button" variant="secondary" fullWidth onClick={() => setEditing(null)}>
+            <Button type="button" variant="secondary" fullWidth disabled={saving} onClick={() => setEditing(null)}>
               Cancel
             </Button>
           </div>
@@ -193,6 +216,7 @@ export default function AdminMediaPage() {
                 }
               />
             </AdminField>
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

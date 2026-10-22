@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import type { SocialLinks as SocialLinksType } from "@/types";
 import { cn } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-url";
 
 function XIcon({ className }: { className?: string }) {
   return (
@@ -43,15 +44,19 @@ interface SocialLinksProps {
 }
 
 export function SocialLinks({ links, className }: SocialLinksProps) {
-  const available = config.filter((c) => links[c.key]);
+  // Only http(s) links are rendered: a stored "javascript:" value never becomes an href.
+  const available = config.flatMap((c) => {
+    const href = safeHttpUrl(links[c.key]);
+    return href ? [{ ...c, href }] : [];
+  });
   if (!available.length) return null;
 
   return (
     <ul className={cn("flex flex-wrap gap-2", className)}>
-      {available.map(({ key, label, icon: Icon }) => (
+      {available.map(({ key, label, href, icon: Icon }) => (
         <li key={key}>
           <a
-            href={links[key]}
+            href={href}
             target="_blank"
             rel="noopener noreferrer"
             aria-label={label}

@@ -43,6 +43,8 @@ export default function AdlySimulatePage() {
   const [compare, setCompare] = useState<"before" | "after" | "split">("split");
   const [busy, setBusy] = useState(false);
   const [savedId, setSavedId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     if (ownedLeaderId) setLeaderId(ownedLeaderId);
@@ -64,10 +66,13 @@ export default function AdlySimulatePage() {
     setBusy(false);
   };
 
-  const save = () => {
-    if (!beforeImage || !afterImage || !leaderId) return;
+  const save = async () => {
+    if (!beforeImage || !afterImage || !leaderId || saving) return;
+    setSaving(true);
+    setSaveError("");
+    setSavedId("");
     const id = createId("sim");
-    upsertSimulation({
+    const result = await upsertSimulation({
       id,
       title,
       description,
@@ -82,6 +87,12 @@ export default function AdlySimulatePage() {
       createdAt: new Date().toISOString(),
       isAiSimulation: true,
     });
+    setSaving(false);
+    // Success is shown only once the server has saved it.
+    if (!result.ok) {
+      setSaveError(result.error);
+      return;
+    }
     setSavedId(id);
   };
 
@@ -317,8 +328,8 @@ export default function AdlySimulatePage() {
           </dl>
 
           <div className="mt-6 flex flex-wrap gap-2">
-            <Button type="button" onClick={save}>
-              Save to manifesto workspace
+            <Button type="button" onClick={() => void save()} disabled={saving}>
+              {saving ? "Saving…" : "Save to manifesto workspace"}
             </Button>
             <Button href="/adly/poster" variant="outline">
               Create poster
@@ -330,6 +341,11 @@ export default function AdlySimulatePage() {
               Open vision editor
             </Button>
           </div>
+          {saveError && (
+            <p role="alert" className="mt-3 text-caption text-error">
+              {saveError}
+            </p>
+          )}
           {savedId && (
             <p className="mt-3 text-caption text-success">
               Simulation saved. Keep AI Simulation labelling wherever it appears.

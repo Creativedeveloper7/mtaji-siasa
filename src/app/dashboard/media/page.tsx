@@ -7,12 +7,14 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
 import { MultiImageField } from "@/components/ui/MultiImageField";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { MediaCategory, MediaItem, MediaType } from "@/types";
@@ -20,10 +22,9 @@ import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
 
 export default function PoliticianMediaPage() {
   const { leader } = usePoliticianProfile();
-  const { getMediaByIds, getProjectsByIds, upsertMedia, deleteMedia, upsertLeader } = useContent();
+  const { getMediaByIds, getProjectsByIds, upsertMedia, deleteMedia } = useContent();
   const [editing, setEditing] = useState<MediaItem | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
 
   const open = (item: MediaItem) => {
     setError("");
@@ -47,20 +48,13 @@ export default function PoliticianMediaPage() {
       setError("Add a title before saving.");
       return;
     }
-    setSaving(true);
-    setError("");
     const saved = {
       ...editing,
       slug: editing.slug || slugify(editing.title),
       leaderId: leader.id,
     };
-    const result = await upsertMedia(saved);
-    setSaving(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setEditing(null);
+    const result = await run(() => upsertMedia(saved));
+    if (result?.ok) setEditing(null);
   };
 
   return (
@@ -91,6 +85,14 @@ export default function PoliticianMediaPage() {
         }
       />
 
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
       <AdminTable headers={["Title", "Category", "Type", "Photos", "Date", ""]}>
         {rows.map((m) => (
           <tr key={m.id}>
@@ -116,13 +118,10 @@ export default function PoliticianMediaPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
                   if (!confirm("Delete this item?")) return;
-                  deleteMedia(m.id);
-                  upsertLeader({
-                    ...leader,
-                    mediaIds: leader.mediaIds.filter((id) => id !== m.id),
-                  });
+                  void remove(() => deleteMedia(m.id));
                 }}
               >
                 Delete
@@ -135,7 +134,9 @@ export default function PoliticianMediaPage() {
       <AdminDrawer
         open={!!editing}
         title="Media"
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
             <Button
@@ -150,6 +151,7 @@ export default function PoliticianMediaPage() {
               type="button"
               variant="secondary"
               fullWidth
+              disabled={saving}
               onClick={() => setEditing(null)}
             >
               Cancel
@@ -248,11 +250,7 @@ export default function PoliticianMediaPage() {
                 onChange={(e) => setEditing({ ...editing, body: e.target.value })}
               />
             </AdminField>
-            {error && (
-              <p className="rounded-md border border-error/30 bg-error-muted px-3 py-2 text-small text-error">
-                {error}
-              </p>
-            )}
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

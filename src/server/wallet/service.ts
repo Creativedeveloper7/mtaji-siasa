@@ -48,10 +48,13 @@ function present(wallet: WalletRecord) {
   };
 }
 
-export function resolveWalletLeader(actor: ContentActor, requested?: string): string | ContentResult {
+export async function resolveWalletLeader(
+  actor: ContentActor,
+  requested?: string
+): Promise<string | ContentResult> {
   if (isAdmin(actor)) {
     if (!requested) return fail(400, "leaderId is required.");
-    if (!getRepositories().content.findLeader(requested)) {
+    if (!(await getRepositories().content.findLeader(requested))) {
       return fail(404, "Leader not found.");
     }
     return requested;
@@ -62,18 +65,18 @@ export function resolveWalletLeader(actor: ContentActor, requested?: string): st
   return actor.leaderId;
 }
 
-export function readWallet(actor: ContentActor, requested?: string): ContentResult {
-  const leaderId = resolveWalletLeader(actor, requested);
+export async function readWallet(actor: ContentActor, requested?: string): Promise<ContentResult> {
+  const leaderId = await resolveWalletLeader(actor, requested);
   if (typeof leaderId !== "string") return leaderId;
-  const wallet = present(getRepositories().wallets.get(leaderId));
+  const wallet = present(await getRepositories().wallets.get(leaderId));
   return { ok: true, status: 200, body: { ok: true, wallet } };
 }
 
-export function topUpWallet(
+export async function topUpWallet(
   actor: ContentActor,
   input: { amount: unknown; source: unknown; leaderId?: unknown }
-): ContentResult {
-  const leaderId = resolveWalletLeader(actor, asId(input.leaderId));
+): Promise<ContentResult> {
+  const leaderId = await resolveWalletLeader(actor, asId(input.leaderId));
   if (typeof leaderId !== "string") return leaderId;
   const amount = asAmount(input.amount);
   if (amount == null) return fail(400, "Enter a valid top-up amount.");
@@ -81,7 +84,7 @@ export function topUpWallet(
     return fail(400, "Choose a top-up source.");
   }
   const source = input.source as TopUpSource;
-  const current = present(getRepositories().wallets.get(leaderId));
+  const current = present(await getRepositories().wallets.get(leaderId));
   const createdAt = new Date().toISOString();
   const movement: WalletMovement = {
     id: createId("mov"),
@@ -91,7 +94,7 @@ export function topUpWallet(
     status: "recorded",
     createdAt,
   };
-  const saved = getRepositories().wallets.save({
+  const saved = await getRepositories().wallets.save({
     leaderId,
     sources: {
       ...current.sources,
@@ -108,15 +111,15 @@ export function topUpWallet(
   };
 }
 
-export function withdrawWallet(
+export async function withdrawWallet(
   actor: ContentActor,
   input: { amount: unknown; leaderId?: unknown }
-): ContentResult {
-  const leaderId = resolveWalletLeader(actor, asId(input.leaderId));
+): Promise<ContentResult> {
+  const leaderId = await resolveWalletLeader(actor, asId(input.leaderId));
   if (typeof leaderId !== "string") return leaderId;
   const amount = asAmount(input.amount);
   if (amount == null) return fail(400, "Enter a valid withdrawal amount.");
-  const current = present(getRepositories().wallets.get(leaderId));
+  const current = present(await getRepositories().wallets.get(leaderId));
   if (amount > availableBalance(current)) {
     return fail(400, "Amount exceeds available balance.");
   }
@@ -136,7 +139,7 @@ export function withdrawWallet(
     status: "recorded",
     createdAt,
   };
-  const saved = getRepositories().wallets.save({
+  const saved = await getRepositories().wallets.save({
     leaderId,
     sources,
     lastTopUpAt: current.lastTopUpAt,
@@ -164,13 +167,13 @@ function asId(value: unknown): string | undefined {
  * Take money for an ad campaign. Draws from sources in the same order as a
  * withdrawal. Returns the updated wallet, or an error when the balance is short.
  */
-export function chargeWallet(
+export async function chargeWallet(
   leaderId: string,
   amount: number,
   note: string,
   reference: string
-): { ok: true; wallet: ReturnType<typeof present> } | { ok: false; error: string } {
-  const current = present(getRepositories().wallets.get(leaderId));
+): Promise<{ ok: true; wallet: ReturnType<typeof present> } | { ok: false; error: string }> {
+  const current = present(await getRepositories().wallets.get(leaderId));
   if (amount > availableBalance(current)) {
     return {
       ok: false,
@@ -194,7 +197,7 @@ export function chargeWallet(
     reference,
     createdAt: new Date().toISOString(),
   };
-  const saved = getRepositories().wallets.save({
+  const saved = await getRepositories().wallets.save({
     ...current,
     sources,
     movements: [movement, ...current.movements],
@@ -203,9 +206,9 @@ export function chargeWallet(
 }
 
 /** Return unspent ad money to the wallet (credited to transfers). */
-export function refundWallet(leaderId: string, amount: number, note: string, reference: string) {
+export async function refundWallet(leaderId: string, amount: number, note: string, reference: string) {
   if (amount <= 0) return;
-  const current = present(getRepositories().wallets.get(leaderId));
+  const current = present(await getRepositories().wallets.get(leaderId));
   const movement: WalletMovement = {
     id: createId("mov"),
     kind: "ad-refund",
@@ -215,13 +218,13 @@ export function refundWallet(leaderId: string, amount: number, note: string, ref
     reference,
     createdAt: new Date().toISOString(),
   };
-  getRepositories().wallets.save({
+  await getRepositories().wallets.save({
     ...current,
     sources: { ...current.sources, transfers: current.sources.transfers + movement.amount },
     movements: [movement, ...current.movements],
   });
 }
 
-export function walletBalance(leaderId: string): number {
-  return availableBalance(present(getRepositories().wallets.get(leaderId)));
+export async function walletBalance(leaderId: string): Promise<number> {
+  return availableBalance(present(await getRepositories().wallets.get(leaderId)));
 }

@@ -4,15 +4,19 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ImageField } from "@/components/ui/ImageField";
 import { CoordinatePickerMap } from "@/components/gis/CoordinatePickerMap";
+import { ProjectCategoryField } from "@/components/admin/ProjectCategoryField";
+import { DEFAULT_MAP_CENTER } from "@/lib/projects";
 import {
   AdminDrawer,
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Project, ProjectCategory, ProjectStatus } from "@/types";
@@ -24,18 +28,17 @@ const emptyProject = (): Project => ({
   slug: "",
   name: "",
   category: "infrastructure",
-  subcategory: "Road Rehabilitation",
+  subcategory: "roads",
   location: "",
   county: "Nairobi",
   status: "planned",
   progress: 0,
-  image:
-    "https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=1400&q=80",
+  image: "",
   description: "",
   startDate: new Date().toISOString().slice(0, 10),
   expectedCompletion: new Date().toISOString().slice(0, 10),
   leaderIds: [],
-  geo: { center: { lat: -1.2864, lng: 36.8172 } },
+  geo: { center: { ...DEFAULT_MAP_CENTER } },
   milestoneIds: [],
   opportunityIds: [],
   mediaIds: [],
@@ -47,12 +50,16 @@ export default function AdminProjectsPage() {
     ready,
     upsertProject,
     deleteProject,
-    getMilestonesByProject,
     upsertMilestone,
-    deleteMilestone,
   } = useContent();
   const [editing, setEditing] = useState<Project | null>(null);
   const [query, setQuery] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (project: Project) => {
+    setError("");
+    setEditing(project);
+  };
 
   const rows = useMemo(() => {
     const q = query.toLowerCase();
@@ -66,17 +73,36 @@ export default function AdminProjectsPage() {
 
   if (!ready) return <LoadingState />;
 
-  const save = () => {
+  /**
+   * Saves the project (one save at a time: a new project's client id is not a
+   * Tracker uuid, so a second PUT would create a second project) and, when asked,
+   * seeds its standard milestones under the id the server stored.
+   * Closes the drawer only on success; a failure stays in the drawer.
+   */
+  const save = async (seedMilestones = false) => {
     if (!editing) return;
-    upsertProject({
-      ...editing,
-      slug: editing.slug || slugify(editing.name),
-      progress: Math.max(0, Math.min(100, Number(editing.progress) || 0)),
+    if (!editing.name.trim()) {
+      setError("Give the project a name.");
+      return;
+    }
+    const project = editing;
+    const result = await run(async () => {
+      const saved = await upsertProject({
+        ...project,
+        slug: project.slug || slugify(project.name),
+        progress: Math.max(0, Math.min(100, Number(project.progress) || 0)),
+      });
+      if (!saved.ok || !seedMilestones || project.milestoneIds.length) return saved;
+      const failures = await addDefaultMilestones({ ...project, id: saved.item?.id ?? project.id });
+      return failures.length
+        ? { ...saved, warnings: [...(saved.warnings ?? []), ...failures] }
+        : saved;
     });
-    setEditing(null);
+    if (result?.ok) setEditing(null);
   };
 
-  const addDefaultMilestones = (project: Project) => {
+  /** Seeds the five standard milestones; returns a message per milestone that failed. */
+  const addDefaultMilestones = async (project: Project): Promise<string[]> => {
     const titles = [
       "Planning",
       "Funding",
@@ -84,22 +110,29 @@ export default function AdminProjectsPage() {
       "Implementation",
       "Completion",
     ];
-    const ids: string[] = [];
-    titles.forEach((title, i) => {
-      const id = createId("ms");
-      ids.push(id);
-      upsertMilestone({
-        id,
-        projectId: project.id,
-        number: i + 1,
-        date: project.startDate,
-        title,
-        description: `${title} stage for ${project.name}`,
-        status: i === 0 ? "current" : "upcoming",
-      });
-    });
-    upsertProject({ ...project, milestoneIds: ids });
+    const results = await Promise.all(
+      titles.map((title, i) =>
+        upsertMilestone({
+          id: createId("ms"),
+          projectId: project.id,
+          number: i + 1,
+          date: project.startDate,
+          title,
+          description: `${title} stage for ${project.name}`,
+          status: i === 0 ? "current" : "upcoming",
+        })
+      )
+    );
+    return results.flatMap((r, i) =>
+      r.ok ? [] : [`Milestone "${titles[i]}" was not added: ${r.error}`]
+    );
   };
+
+  const removeProject = (project: Project) =>
+    // The server removes the milestones (memory mode) or the database cascades
+    // them (Tracker), and only once the project delete is allowed (a project
+    // with donations is refused), so nothing is deleted on a refusal.
+    remove(() => deleteProject(project.id));
 
   return (
     <div>
@@ -107,11 +140,20 @@ export default function AdminProjectsPage() {
         title="Projects"
         description="Manage development projects, GIS coordinates, status and progress."
         action={
-          <Button type="button" onClick={() => setEditing(emptyProject())}>
+          <Button type="button" onClick={() => open(emptyProject())}>
             Add project
           </Button>
         }
       />
+
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
 
       <div className="mb-4 max-w-sm">
         <AdminInput
@@ -140,7 +182,7 @@ export default function AdminProjectsPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setEditing(structuredClone(p))}
+                onClick={() => open(structuredClone(p))}
               >
                 Edit
               </Button>
@@ -148,13 +190,9 @@ export default function AdminProjectsPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
-                  if (confirm(`Delete ${p.name}?`)) {
-                    getMilestonesByProject(p.id).forEach((m) =>
-                      deleteMilestone(m.id)
-                    );
-                    deleteProject(p.id);
-                  }
+                  if (confirm(`Delete ${p.name}?`)) void removeProject(p);
                 }}
               >
                 Delete
@@ -167,7 +205,9 @@ export default function AdminProjectsPage() {
       <AdminDrawer
         open={!!editing}
         title={editing?.name ? `Edit project` : "New project"}
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex flex-col gap-2">
             {editing && (
@@ -175,25 +215,21 @@ export default function AdminProjectsPage() {
                 type="button"
                 variant="outline"
                 fullWidth
-                onClick={() => {
-                  const slug = editing.slug || slugify(editing.name);
-                  const saved = { ...editing, slug };
-                  upsertProject(saved);
-                  if (!saved.milestoneIds.length) addDefaultMilestones(saved);
-                  setEditing(null);
-                }}
+                disabled={saving}
+                onClick={() => void save(true)}
               >
                 Save + seed milestones
               </Button>
             )}
             <div className="flex gap-2">
-              <Button type="button" fullWidth onClick={save}>
-                Save project
+              <Button type="button" fullWidth disabled={saving} onClick={() => void save(false)}>
+                {saving ? "Saving…" : "Save project"}
               </Button>
               <Button
                 type="button"
                 variant="secondary"
                 fullWidth
+                disabled={saving}
                 onClick={() => setEditing(null)}
               >
                 Cancel
@@ -256,14 +292,7 @@ export default function AdminProjectsPage() {
                 </AdminSelect>
               </AdminField>
             </div>
-            <AdminField label="Subcategory">
-              <AdminInput
-                value={editing.subcategory}
-                onChange={(e) =>
-                  setEditing({ ...editing, subcategory: e.target.value })
-                }
-              />
-            </AdminField>
+            <ProjectCategoryField project={editing} onChange={setEditing} />
             <AdminField label="Location">
               <AdminInput
                 value={editing.location}
@@ -328,14 +357,14 @@ export default function AdminProjectsPage() {
                 <AdminInput
                   type="number"
                   step="any"
-                  value={editing.geo.center.lat}
+                  value={editing.geo.center?.lat ?? ""}
                   onChange={(e) =>
                     setEditing({
                       ...editing,
                       geo: {
                         ...editing.geo,
                         center: {
-                          ...editing.geo.center,
+                          ...(editing.geo.center ?? DEFAULT_MAP_CENTER),
                           lat: Number(e.target.value),
                         },
                       },
@@ -347,14 +376,14 @@ export default function AdminProjectsPage() {
                 <AdminInput
                   type="number"
                   step="any"
-                  value={editing.geo.center.lng}
+                  value={editing.geo.center?.lng ?? ""}
                   onChange={(e) =>
                     setEditing({
                       ...editing,
                       geo: {
                         ...editing.geo,
                         center: {
-                          ...editing.geo.center,
+                          ...(editing.geo.center ?? DEFAULT_MAP_CENTER),
                           lng: Number(e.target.value),
                         },
                       },
@@ -365,7 +394,7 @@ export default function AdminProjectsPage() {
             </div>
             <CoordinatePickerMap
               key={editing.id}
-              center={editing.geo.center}
+              center={editing.geo.center ?? DEFAULT_MAP_CENTER}
               label={editing.name || editing.location || "Project location"}
               onChange={(point) =>
                 setEditing({
@@ -405,6 +434,7 @@ export default function AdminProjectsPage() {
               Milestones linked: {editing.milestoneIds.length}. Use “Save + seed
               milestones” for a horizontal Planning→Completion track.
             </p>
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

@@ -23,7 +23,14 @@ import { apiJson } from "@/lib/api-client";
 import { createSeedContent, type PlatformContent } from "@/lib/store";
 
 /** Outcome of a save or delete. Callers that do not care can ignore it. */
-export type SaveResult = { ok: true } | { ok: false; error: string };
+/**
+ * `item` is the record as the server stored it (on the Tracker a new record
+ * gets a new uuid, so use item.id for anything linked to it). `warnings` lists
+ * data the server had to leave out.
+ */
+export type SaveResult =
+  | { ok: true; item?: { id: string } & Record<string, unknown>; warnings?: string[] }
+  | { ok: false; error: string };
 
 interface ContentContextValue {
   ready: boolean;
@@ -98,12 +105,16 @@ export function ContentProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const settle = useCallback(
-    (request: () => Promise<{ ok: boolean; data: { error?: string } }>) => {
+    (request: () => Promise<{ ok: boolean; data: { error?: string; item?: { id: string }; warnings?: string[] } }>) => {
       let outcome: SaveResult = { ok: false, error: "Could not save. Try again." };
       return enqueue(async () => {
         const result = await request();
         if (result.ok) {
-          outcome = { ok: true };
+          outcome = {
+            ok: true,
+            item: result.data.item as ({ id: string } & Record<string, unknown>) | undefined,
+            warnings: result.data.warnings?.length ? result.data.warnings : undefined,
+          };
           await reload();
         } else {
           outcome = { ok: false, error: result.data.error || "Could not save. Try again." };
@@ -119,7 +130,7 @@ export function ContentProvider({ children }: { children: ReactNode }) {
   const save = useCallback(
     (collection: string, item: unknown) =>
       settle(() =>
-        apiJson<{ error?: string }>(`/api/content/${collection}`, {
+        apiJson<{ error?: string; item?: { id: string }; warnings?: string[] }>(`/api/content/${collection}`, {
           method: "PUT",
           body: JSON.stringify(item),
         })

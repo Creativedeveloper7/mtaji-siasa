@@ -1,4 +1,5 @@
 import type {
+  GeoBounds,
   Leader,
   MediaCategory,
   MediaItem,
@@ -15,6 +16,7 @@ import type {
   SocialLinks,
 } from "@/types";
 import { createId, slugify } from "@/lib/store";
+import { safeHttpUrl } from "@/lib/safe-url";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -45,16 +47,36 @@ const MEDIA_CATEGORIES = ["news", "project-updates", "leader-updates", "videos",
 const MEDIA_TYPES = ["image", "video", "article"] as const;
 export const MAX_GALLERY_IMAGES = 12;
 
-function social(value: unknown, existing?: SocialLinks): SocialLinks {
+const SOCIAL_LABELS = {
+  x: "X",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  tiktok: "TikTok",
+  whatsapp: "WhatsApp",
+  website: "Website",
+} as const;
+
+/**
+ * Social links, or an error message when a new or changed link is not an
+ * http(s) URL. Keys the request leaves out, and values it sends back
+ * unchanged, are kept as stored even when they are not http(s) (for example
+ * a handle such as "@jane" saved on the Tracker); pages sanitise on render.
+ */
+function social(value: unknown, existing?: SocialLinks): SocialLinks | string {
   const source = isRecord(value) ? value : {};
   const base = existing ?? {};
   const next: SocialLinks = { ...base };
   for (const key of ["x", "instagram", "facebook", "tiktok", "whatsapp", "website"] as const) {
-    if (isRecord(value) && key in source) {
-      const text = asString(source[key]);
-      if (text) next[key] = text;
-      else delete next[key];
+    if (!(key in source)) continue;
+    const text = asString(source[key]);
+    if (!text) {
+      delete next[key];
+      continue;
     }
+    if (text === asString(base[key])) continue;
+    const link = safeHttpUrl(text);
+    if (!link) return `The ${SOCIAL_LABELS[key]} link must be a full web address starting with http:// or https://.`;
+    next[key] = link;
   }
   return next;
 }
@@ -89,12 +111,26 @@ function vision(value: unknown, existing: Leader["vision"]): Leader["vision"] {
   };
 }
 
-export function parseLeader(body: unknown, existing?: Leader): Leader | string {
+export interface ParseLeaderOptions {
+  /**
+   * Fill a missing photo with the stock portrait (memory demo only). On the
+   * Tracker backend a missing photo stays empty: the stock image would be
+   * written to political_figures.profile_image_url as if it were the person.
+   */
+  stockPhoto?: boolean;
+}
+
+const STOCK_PORTRAIT = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80";
+
+export function parseLeader(body: unknown, existing?: Leader, options: ParseLeaderOptions = {}): Leader | string {
+  const stockPhoto = options.stockPhoto ?? true;
   if (!isRecord(body)) return "Leader body must be an object.";
   const name = "name" in body ? asString(body.name) : existing?.name;
   if (!name) return "Leader name is required.";
   const id = asString(body.id) ?? existing?.id ?? createId("ldr");
   const slugSource = "slug" in body ? asString(body.slug) : existing?.slug;
+  const socialLinks = "social" in body ? social(body.social, existing?.social) : existing?.social ?? {};
+  if (typeof socialLinks === "string") return socialLinks;
   return {
     id,
     slug: slugSource || slugify(name) || id,
@@ -106,13 +142,12 @@ export function parseLeader(body: unknown, existing?: Leader): Leader | string {
     constituency: "constituency" in body ? asString(body.constituency) : existing?.constituency,
     ward: "ward" in body ? asString(body.ward) : existing?.ward,
     photo:
-      ("photo" in body ? asString(body.photo) : existing?.photo) ??
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&q=80",
+      ("photo" in body ? asString(body.photo) : existing?.photo) ?? (stockPhoto ? STOCK_PORTRAIT : ""),
     coverImage: "coverImage" in body ? asString(body.coverImage) : existing?.coverImage,
     shortBio: ("shortBio" in body ? asString(body.shortBio) : existing?.shortBio) ?? "",
     bio: ("bio" in body ? asString(body.bio) : existing?.bio) ?? "",
     achievements: "achievements" in body ? stringList(body.achievements) : existing?.achievements ?? [],
-    social: "social" in body ? social(body.social, existing?.social) : existing?.social ?? {},
+    social: socialLinks,
     projectIds: "projectIds" in body ? stringList(body.projectIds) : existing?.projectIds ?? [],
     opportunityIds: "opportunityIds" in body ? stringList(body.opportunityIds) : existing?.opportunityIds ?? [],
     mediaIds: "mediaIds" in body ? stringList(body.mediaIds) : existing?.mediaIds ?? [],
@@ -132,20 +167,24 @@ function geo(value: unknown, existing?: Project["geo"]): Project["geo"] | string
   if (value == null) {
     return existing ?? { center: { lat: -1.2864, lng: 36.8172 } };
   }
-  if (!isRecord(value) || !isRecord(value.center)) return "Project geo.center with lat and lng is required.";
+  if (!isRecord(value)) return "Project geo.center with lat and lng is required.";
+  const boundary = isRecord(value.boundary) ? value.boundary : undefined;
+  const nextBoundary: GeoBounds | undefined =
+    boundary?.type === "Polygon" && Array.isArray(boundary.coordinates)
+      ? { type: "Polygon", coordinates: boundary.coordinates as number[][][] }
+      : existing?.boundary;
+  if (!isRecord(value.center)) {
+    // A Tracker project may have no pin yet (Project.geo.center is optional).
+    // Keep what is stored; a project with neither pin nor boundary is refused.
+    if (!existing?.center && !nextBoundary) return "Project geo.center with lat and lng is required.";
+    return { ...(existing?.center ? { center: existing.center } : {}), boundary: nextBoundary };
+  }
   const lat = Number(value.center.lat);
   const lng = Number(value.center.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return "Project coordinates must be numbers.";
   }
-  const boundary = isRecord(value.boundary) ? value.boundary : undefined;
-  return {
-    center: { lat, lng },
-    boundary:
-      boundary?.type === "Polygon" && Array.isArray(boundary.coordinates)
-        ? { type: "Polygon", coordinates: boundary.coordinates as number[][][] }
-        : existing?.boundary,
-  };
+  return { center: { lat, lng }, boundary: nextBoundary };
 }
 
 export function parseProject(body: unknown, existing?: Project): Project | string {
@@ -214,6 +253,19 @@ export function parseOpportunity(body: unknown, existing?: Opportunity): Opportu
   if (!title) return "Opportunity title is required.";
   const id = asString(body.id) ?? existing?.id ?? createId("opp");
   const slugSource = "slug" in body ? asString(body.slug) : existing?.slug;
+  // Only a new or changed link is checked. A stored link that is not http(s)
+  // (for example "munene.dev" saved on the Tracker) passes through untouched;
+  // the opportunity page sanitises it before linking to it.
+  const existingApplicationUrl = asString(existing?.applicationUrl);
+  let applicationUrl = existingApplicationUrl;
+  if ("applicationUrl" in body) {
+    const text = asString(body.applicationUrl);
+    if (!text) applicationUrl = undefined;
+    else if (text !== existingApplicationUrl) {
+      applicationUrl = safeHttpUrl(text);
+      if (!applicationUrl) return "The application link must start with http:// or https://.";
+    }
+  }
   return {
     id,
     slug: slugSource || slugify(title) || id,
@@ -237,7 +289,7 @@ export function parseOpportunity(body: unknown, existing?: Opportunity): Opportu
     requirements: "requirements" in body ? stringList(body.requirements) : existing?.requirements,
     applicationSteps: "applicationSteps" in body ? stringList(body.applicationSteps) : existing?.applicationSteps,
     organization: "organization" in body ? asString(body.organization) : existing?.organization,
-    applicationUrl: "applicationUrl" in body ? asString(body.applicationUrl) : existing?.applicationUrl,
+    applicationUrl,
     relatedMediaIds: "relatedMediaIds" in body ? stringList(body.relatedMediaIds) : existing?.relatedMediaIds,
   };
 }

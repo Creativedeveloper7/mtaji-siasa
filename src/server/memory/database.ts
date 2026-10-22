@@ -28,25 +28,55 @@ import {
   type PlatformContent,
 } from "@/lib/store";
 import {
-  dummyPasswordHash,
-  hashPassword,
-  verifyPasswordHash,
-} from "@/server/auth/password";
-import {
   defaultWallet,
   type AdlyInterestLead,
   type PublicUser,
   type SeedCounts,
   type WalletRecord,
 } from "@/server/domain";
-import type { AppRepositories } from "@/server/repositories";
+import type {
+  AdCampaignRepository,
+  AdlyRepository,
+  AppRepositories,
+  ApplicationRepository,
+  ContentRepository,
+  EngagementRepository,
+  UserRepository,
+  WalletRepository,
+} from "@/server/repositories";
 
+/** The synchronous shape the memory store is built in; callers get the async AppRepositories. */
+type Sync<T> = {
+  [K in keyof T]: T[K] extends (...args: infer A) => Promise<infer R> ? (...args: A) => R : T[K];
+};
+
+type SyncRepositories = {
+  [K in keyof AppRepositories]: AppRepositories[K] extends (...args: infer A) => Promise<infer R>
+    ? (...args: A) => R
+    : Sync<AppRepositories[K]>;
+};
+
+/** Wrap every method so it returns a Promise. A thrown error becomes a rejection. */
+function toAsync<T extends object>(repo: Sync<T>): T {
+  const wrapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(repo)) {
+    wrapped[key] =
+      typeof value === "function"
+        ? async (...args: unknown[]) => (value as (...a: unknown[]) => unknown)(...args)
+        : value;
+  }
+  return wrapped as T;
+}
+
+/**
+ * Memory mode has no sign-in (accounts live in Supabase Auth), so stored users
+ * carry no password.
+ */
 interface StoredUser {
   id: string;
   fullName: string;
   email: string;
   phone: string;
-  passwordHash: string;
   role: UserRole;
   createdAt: string;
   leaderId?: string;
@@ -86,7 +116,6 @@ function createSeedState(): MemoryState {
       fullName: account.fullName,
       email: account.email.trim().toLowerCase(),
       phone: account.phone,
-      passwordHash: hashPassword(account.password),
       role: account.role,
       createdAt: account.createdAt,
       leaderId: account.leaderId,
@@ -125,12 +154,12 @@ function bySlug<T extends { slug: string }>(
 
 /**
  * Process-local store. Data lives until the Node process restarts.
- * A SQL repository will implement the same AppRepositories interface later.
+ * The Tracker adapter implements the same AppRepositories interface.
  */
 export function createMemoryRepositories(): AppRepositories {
   const state = createSeedState();
 
-  const users: AppRepositories["users"] = {
+  const users: Sync<UserRepository> = {
     count: () => state.users.length,
     listPublic: () => state.users.map((account) => toPublic(account)),
     findById: (id) => {
@@ -140,12 +169,6 @@ export function createMemoryRepositories(): AppRepositories {
     findByEmail: (email) => {
       const found = findStoredUser(email);
       return found ? toPublic(found) : undefined;
-    },
-    verifyPassword: (email, password) => {
-      const found = findStoredUser(email);
-      const hash = found?.passwordHash ?? dummyPasswordHash();
-      const matches = verifyPasswordHash(password, hash);
-      return Boolean(found) && matches;
     },
     create: (input) => {
       const email = input.email.trim().toLowerCase();
@@ -157,7 +180,6 @@ export function createMemoryRepositories(): AppRepositories {
         fullName: input.fullName.trim(),
         email,
         phone: input.phone.trim(),
-        passwordHash: hashPassword(input.password),
         role: input.role,
         createdAt: input.createdAt || new Date().toISOString(),
         leaderId: input.leaderId,
@@ -183,12 +205,8 @@ export function createMemoryRepositories(): AppRepositories {
       existing.leaderId = user.leaderId;
       return toPublic(existing);
     },
-    setPassword: (id, password) => {
-      const existing = state.users.find((account) => account.id === id);
-      if (!existing) return false;
-      existing.passwordHash = hashPassword(password);
-      return true;
-    },
+    // No sign-in in memory mode: the password is not kept.
+    setPassword: (id) => state.users.some((account) => account.id === id),
     delete: (id) => {
       const next = state.users.filter((account) => account.id !== id);
       const removed = next.length !== state.users.length;
@@ -202,7 +220,7 @@ export function createMemoryRepositories(): AppRepositories {
     return state.users.find((account) => account.email === normalized);
   }
 
-  const content: AppRepositories["content"] = {
+  const content: Sync<ContentRepository> = {
     snapshot: () => clone(state.content),
     reset: () => {
       state.content = createSeedContent();
@@ -292,7 +310,7 @@ export function createMemoryRepositories(): AppRepositories {
     return removed;
   }
 
-  const adly: AppRepositories["adly"] = {
+  const adly: Sync<AdlyRepository> = {
     snapshot: () => clone(state.adly),
     replace: (content) => {
       state.adly = clone(content);
@@ -350,7 +368,7 @@ export function createMemoryRepositories(): AppRepositories {
     },
   };
 
-  const wallets: AppRepositories["wallets"] = {
+  const wallets: Sync<WalletRepository> = {
     listLeaderIds: () => Object.keys(state.wallets),
     get: (leaderId) => {
       const saved = state.wallets[leaderId];
@@ -363,7 +381,7 @@ export function createMemoryRepositories(): AppRepositories {
     },
   };
 
-  const engagement: AppRepositories["engagement"] = {
+  const engagement: Sync<EngagementRepository> = {
     getSavedOpportunityIds: (userId) =>
       clone(state.savedOpportunities[userId] ?? []),
     setSavedOpportunityIds: (userId, ids) => {
@@ -382,7 +400,7 @@ export function createMemoryRepositories(): AppRepositories {
     },
   };
 
-  const applications: AppRepositories["applications"] = {
+  const applications: Sync<ApplicationRepository> = {
     list: () => clone(state.applications),
     find: (id) => byId(state.applications, id),
     upsert: (item) => {
@@ -396,7 +414,7 @@ export function createMemoryRepositories(): AppRepositories {
     },
   };
 
-  const adCampaigns: AppRepositories["adCampaigns"] = {
+  const adCampaigns: Sync<AdCampaignRepository> = {
     list: () => clone(state.adCampaigns),
     find: (id) => byId(state.adCampaigns, id),
     upsert: (item) => {
@@ -430,7 +448,7 @@ export function createMemoryRepositories(): AppRepositories {
     };
   }
 
-  const repositories: AppRepositories = {
+  const repositories: SyncRepositories = {
     users,
     content,
     adly,
@@ -453,24 +471,25 @@ export function createMemoryRepositories(): AppRepositories {
   };
 
   assertMemoryAdapter(repositories);
-  return repositories;
+  return {
+    users: toAsync<UserRepository>(users),
+    content: toAsync<ContentRepository>(content),
+    adly: toAsync<AdlyRepository>(adly),
+    wallets: toAsync<WalletRepository>(wallets),
+    engagement: toAsync<EngagementRepository>(engagement),
+    applications: toAsync<ApplicationRepository>(applications),
+    adCampaigns: toAsync<AdCampaignRepository>(adCampaigns),
+    counts: async () => repositories.counts(),
+    resetAll: async () => repositories.resetAll(),
+  };
 }
 
 /** Fails server startup if seed data did not load or callers can mutate stored rows. */
-function assertMemoryAdapter(repos: AppRepositories) {
+function assertMemoryAdapter(repos: SyncRepositories) {
   const leader = repos.content.findLeaderBySlug("amara-njehia");
   if (!leader) throw new Error("Seed leader amara-njehia did not load.");
   const admin = repos.users.findByEmail("admin@mtaji.ke");
   if (!admin) throw new Error("Seed admin account did not load.");
-  if ("password" in admin || "passwordHash" in admin) {
-    throw new Error("User lookup exposed credentials.");
-  }
-  if (!repos.users.verifyPassword("admin@mtaji.ke", "Admin@2026")) {
-    throw new Error("Seed admin password did not verify.");
-  }
-  if (repos.users.verifyPassword("admin@mtaji.ke", "wrong-password")) {
-    throw new Error("Password check accepted a wrong password.");
-  }
   const probe = repos.users.create({
     fullName: "Memory Probe",
     email: "probe-auth@mtaji.ke",
@@ -478,8 +497,8 @@ function assertMemoryAdapter(repos: AppRepositories) {
     password: "Probe@2026",
     role: "citizen",
   });
-  if (!repos.users.verifyPassword(probe.email, "Probe@2026")) {
-    throw new Error("Created account password did not verify.");
+  if (!repos.users.findByEmail(probe.email)) {
+    throw new Error("Created account was not found.");
   }
   if (!repos.users.delete(probe.id)) {
     throw new Error("Probe account was not removed.");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AdminField,
   AdminHeader,
@@ -24,10 +24,12 @@ const emptyVision = (): Vision => ({
 });
 
 export default function PoliticianVisionPage() {
-  const { leader, isAspirant } = usePoliticianProfile();
+  const { leader, isAspirant, isDraft } = usePoliticianProfile();
   const { upsertLeader } = useContent();
   const [form, setForm] = useState<Vision>(emptyVision());
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (leader?.vision) setForm(structuredClone(leader.vision));
@@ -35,6 +37,20 @@ export default function PoliticianVisionPage() {
   }, [leader]);
 
   if (!leader) return null;
+
+  if (isDraft) {
+    return (
+      <div>
+        <AdminHeader
+          title="Vision"
+          description="Create your leader profile first (name and office). Your vision is saved on that profile."
+        />
+        <Button href="/dashboard/profile" variant="outline">
+          Go to profile
+        </Button>
+      </div>
+    );
+  }
 
   if (!isAspirant && leader.type !== "aspirant") {
     return (
@@ -50,17 +66,31 @@ export default function PoliticianVisionPage() {
     );
   }
 
-  const save = () => {
-    upsertLeader({
-      ...leader,
-      type: "aspirant",
-      vision: {
-        ...form,
-        manifesto: form.manifesto.filter(Boolean),
-        priorities: form.priorities.filter(Boolean),
-        expectedImpact: form.expectedImpact.filter(Boolean),
-      },
-    });
+  const save = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    let result: Awaited<ReturnType<typeof upsertLeader>>;
+    try {
+      result = await upsertLeader({
+        ...leader,
+        type: "aspirant",
+        vision: {
+          ...form,
+          manifesto: form.manifesto.filter(Boolean),
+          priorities: form.priorities.filter(Boolean),
+          expectedImpact: form.expectedImpact.filter(Boolean),
+        },
+      });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+    if (!result.ok) {
+      alert(result.error);
+      return;
+    }
+    if (result.warnings?.length) alert(result.warnings.join("\n"));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -71,8 +101,8 @@ export default function PoliticianVisionPage() {
         title="Vision & manifesto"
         description="Clearly labelled proposed visions — never presented as completed projects."
         action={
-          <Button type="button" onClick={save}>
-            {saved ? "Saved" : "Save vision"}
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving…" : saved ? "Saved" : "Save vision"}
           </Button>
         }
       />
@@ -219,8 +249,8 @@ export default function PoliticianVisionPage() {
           </div>
         </div>
 
-        <Button type="button" onClick={save} fullWidth>
-          {saved ? "Saved" : "Save vision"}
+        <Button type="button" onClick={() => void save()} disabled={saving} fullWidth>
+          {saving ? "Saving…" : saved ? "Saved" : "Save vision"}
         </Button>
       </div>
     </div>

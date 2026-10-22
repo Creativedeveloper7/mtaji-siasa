@@ -8,10 +8,12 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
 import type { Opportunity, OpportunityCategory } from "@/types";
@@ -35,6 +37,12 @@ export default function AdminOpportunitiesPage() {
   const { content, ready, upsertOpportunity, deleteOpportunity } = useContent();
   const [editing, setEditing] = useState<Opportunity | null>(null);
   const [query, setQuery] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+
+  const open = (item: Opportunity) => {
+    setError("");
+    setEditing(item);
+  };
 
   const rows = useMemo(() => {
     const q = query.toLowerCase();
@@ -45,17 +53,40 @@ export default function AdminOpportunitiesPage() {
 
   if (!ready) return <LoadingState />;
 
+  const save = async () => {
+    if (!editing) return;
+    if (!editing.title.trim()) {
+      setError("Add a title before saving.");
+      return;
+    }
+    const result = await run(() =>
+      upsertOpportunity({
+        ...editing,
+        slug: editing.slug || slugify(editing.title),
+      })
+    );
+    if (result?.ok) setEditing(null);
+  };
+
   return (
     <div>
       <AdminHeader
         title="Opportunities"
         description="Jobs, tenders, training and funding linked to communities and projects."
         action={
-          <Button type="button" onClick={() => setEditing(emptyOpp())}>
+          <Button type="button" onClick={() => open(emptyOpp())}>
             Add opportunity
           </Button>
         }
       />
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
       <div className="mb-4 max-w-sm">
         <AdminInput placeholder="Search…" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
@@ -67,17 +98,18 @@ export default function AdminOpportunitiesPage() {
               {OPPORTUNITY_CATEGORY_LABELS[o.category]}
             </td>
             <td className="px-4 py-3 text-ink-muted">{o.county}</td>
-            <td className="px-4 py-3 text-ink-muted">{o.deadline}</td>
+            <td className="px-4 py-3 text-ink-muted">{o.deadline || "Rolling"}</td>
             <td className="px-4 py-3 text-right whitespace-nowrap">
-              <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(structuredClone(o))}>
+              <Button type="button" size="sm" variant="ghost" onClick={() => open(structuredClone(o))}>
                 Edit
               </Button>
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
-                  if (confirm("Delete this opportunity?")) deleteOpportunity(o.id);
+                  if (confirm("Delete this opportunity?")) void remove(() => deleteOpportunity(o.id));
                 }}
               >
                 Delete
@@ -90,24 +122,15 @@ export default function AdminOpportunitiesPage() {
       <AdminDrawer
         open={!!editing}
         title="Opportunity"
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
-            <Button
-              type="button"
-              fullWidth
-              onClick={() => {
-                if (!editing) return;
-                upsertOpportunity({
-                  ...editing,
-                  slug: editing.slug || slugify(editing.title),
-                });
-                setEditing(null);
-              }}
-            >
-              Save
+            <Button type="button" fullWidth disabled={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Save"}
             </Button>
-            <Button type="button" variant="secondary" fullWidth onClick={() => setEditing(null)}>
+            <Button type="button" variant="secondary" fullWidth disabled={saving} onClick={() => setEditing(null)}>
               Cancel
             </Button>
           </div>
@@ -205,6 +228,7 @@ export default function AdminOpportunitiesPage() {
                 }
               />
             </AdminField>
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

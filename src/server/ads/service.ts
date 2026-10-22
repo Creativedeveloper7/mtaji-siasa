@@ -4,11 +4,26 @@ import { createId } from "@/lib/store";
 import { getRepositories } from "@/server";
 import { asString, isRecord } from "@/server/content/parse";
 import type { ContentResult } from "@/server/content/service";
-import { adSettings, platformConfigured } from "@/server/ads/config";
-import { prepareAdImages } from "@/server/ads/images";
-import { googleStats, launchGoogle, setGoogleStatus } from "@/server/ads/google";
-import { checkX, launchX, setXStatus, xStats } from "@/server/ads/x";
+import { trackerAdSettings } from "@/server/tracker/adly/config";
 import { chargeWallet, refundWallet, walletBalance } from "@/server/wallet/service";
+
+/**
+ * Paid ads for the MEMORY store only (local demo, MTAJI_STORE=memory or no
+ * Supabase settings). The campaigns routes use src/server/tracker/adly on the
+ * Tracker backend. Nothing here talks to an ad network: launches, pauses and
+ * results are simulated on the memory wallet. Network credentials live only
+ * in the Tracker's Supabase function secrets.
+ */
+
+function adSettings() {
+  const kesPerUsd = Number(process.env.AD_KES_PER_USD);
+  return { ...trackerAdSettings(), kesPerUsd: Number.isFinite(kesPerUsd) && kesPerUsd > 0 ? kesPerUsd : 129 };
+}
+
+/** Every network is "available" in the demo: nothing is sent anywhere. */
+function platformConfigured(_platform: AdPlatform): boolean {
+  return true;
+}
 
 export const LIMITS = {
   headline: 30,
@@ -50,12 +65,15 @@ function canManage(session: AuthSession, campaign: AdCampaign): boolean {
   return session.role === "admin" || (Boolean(session.leaderId) && session.leaderId === campaign.leaderId);
 }
 
-function save(campaign: AdCampaign): AdCampaign {
+function save(campaign: AdCampaign): Promise<AdCampaign> {
   return repo().upsert({ ...campaign, updatedAt: new Date().toISOString() });
 }
 
-export function listAdCampaigns(session: AuthSession, scope: "mine" | "all"): ContentResult {
-  const all = repo().list();
+export async function listAdCampaigns(
+  session: AuthSession,
+  scope: "mine" | "all"
+): Promise<ContentResult> {
+  const all = await repo().list();
   if (scope === "all") {
     if (session.role !== "admin") return fail(403, "Only an admin can see every campaign.");
     return ok({ ok: true, items: all, quote: adQuote() });
@@ -65,7 +83,7 @@ export function listAdCampaigns(session: AuthSession, scope: "mine" | "all"): Co
     ok: true,
     items: all.filter((item) => item.leaderId === session.leaderId),
     quote: adQuote(),
-    walletBalance: walletBalance(session.leaderId),
+    walletBalance: await walletBalance(session.leaderId),
   });
 }
 
@@ -103,7 +121,7 @@ export async function createAdCampaign(
   if (!isRecord(body)) return fail(400, "Campaign body must be an object.");
   const settings = adSettings();
 
-  const project = getRepositories().content.findProject(asString(body.projectId) ?? "");
+  const project = await getRepositories().content.findProject(asString(body.projectId) ?? "");
   if (!project || !project.leaderIds.includes(session.leaderId)) {
     return fail(400, "Choose one of your own projects to promote.");
   }
@@ -189,157 +207,56 @@ export async function createAdCampaign(
     updatedAt: now,
   };
 
-  const charge = chargeWallet(session.leaderId, budgetKes, `Ad: ${campaign.name}`, campaign.id);
+  const charge = await chargeWallet(session.leaderId, budgetKes, `Ad: ${campaign.name}`, campaign.id);
   if (!charge.ok) return fail(402, charge.error);
 
-  let saved = save(campaign);
+  let saved = await save(campaign);
   if (!settings.requireApproval) saved = await launch(saved);
-  return ok({ ok: true, item: saved, walletBalance: walletBalance(session.leaderId) }, 201);
+  return ok({ ok: true, item: saved, walletBalance: await walletBalance(session.leaderId) }, 201);
 }
 
-/** Publish on each chosen network. Failed networks are refunded; if all fail the campaign fails. */
+/** Demo launch: every chosen network "goes live" without contacting it. */
 async function launch(campaign: AdCampaign): Promise<AdCampaign> {
-  let current = save({ ...campaign, status: "launching", statusNote: "Publishing to the ad networks…" });
-  const project = getRepositories().content.findProject(current.projectId);
-  const leader = getRepositories().content.findLeader(current.leaderId);
   const start = new Date(Date.now() + 10 * 60_000);
-  const end = new Date(start.getTime() + current.durationDays * 86_400_000);
-
-  let images: Awaited<ReturnType<typeof prepareAdImages>> | null = null;
-  let imageError = "";
-  try {
-    images = await prepareAdImages(current.imageUrl);
-  } catch (error) {
-    imageError = error instanceof Error ? error.message : "Could not prepare the image.";
-  }
-
-  const dryRun = adSettings().dryRun;
-  const runs: AdPlatformRun[] = [];
-  for (const run of current.platforms) {
-    const usd = run.budgetKes / current.kesPerUsd;
-    try {
-      if (!images) throw new Error(imageError);
-      const externalIds =
-        run.platform === "x" && dryRun
-          ? await checkX()
-          : run.platform === "x"
-          ? await launchX({
-              name: current.name,
-              text: `${current.headline}\n\n${current.body}\n${current.landingUrl}`.slice(0, 280),
-              image: images.landscape,
-              keywords: current.keywords,
-              totalUsd: usd,
-              days: current.durationDays,
-              start,
-              end,
-            })
-          : await launchGoogle({
-              name: current.name,
-              headline: current.headline.slice(0, 30),
-              longHeadline: (project?.name ?? current.headline).slice(0, 90),
-              description: current.body.slice(0, 90),
-              businessName: (leader ? `${leader.honorific} ${leader.name}` : "M-Taji Siasa").slice(0, 25),
-              finalUrl: current.landingUrl,
-              keywords: current.keywords,
-              landscape: images.landscape,
-              square: images.square,
-              totalUsd: usd,
-              days: current.durationDays,
-              start,
-              end,
-              validateOnly: dryRun,
-            });
-      runs.push({ ...run, status: "live", externalIds, error: undefined });
-    } catch (error) {
-      runs.push({ ...run, status: "failed", error: error instanceof Error ? error.message : "Launch failed." });
-    }
-  }
-
-  const failed = runs.filter((r) => r.status === "failed");
-  const refund = failed.reduce((sum, r) => sum + r.budgetKes, 0);
-  if (refund > 0) {
-    refundWallet(
-      current.leaderId,
-      refund,
-      `Refund: ${failed.map((r) => (r.platform === "x" ? "X" : "Google")).join(" and ")} could not run "${current.name}"`,
-      current.id
-    );
-  }
-  const live = runs.some((r) => r.status === "live");
-  current = save({
-    ...current,
-    platforms: runs,
-    status: live ? "active" : "failed",
-    statusNote: live
-      ? failed.length
-        ? `Live on ${runs.filter((r) => r.status === "live").map((r) => (r.platform === "x" ? "X" : "Google")).join(" and ")}. ${failed.length === 1 ? "One network" : "Some networks"} failed and ${refund.toLocaleString()} KES was refunded.`
-        : dryRun
-          ? "Dry run: checked on the networks, nothing was published (ADS_DRY_RUN=true)."
-          : "Live. The networks review new ads before they start showing."
-      : "No network accepted the ad. The full budget was refunded to your wallet.",
-    startDate: live ? start.toISOString() : undefined,
-    endDate: live ? end.toISOString() : undefined,
-    refundedKes: round2(current.refundedKes + refund),
+  const end = new Date(start.getTime() + campaign.durationDays * 86_400_000);
+  return save({
+    ...campaign,
+    platforms: campaign.platforms.map((run) => ({ ...run, status: "live", error: undefined })),
+    status: "active",
+    statusNote: "Demo: simulated launch. Nothing was sent to the ad networks (memory store).",
+    startDate: start.toISOString(),
+    endDate: end.toISOString(),
   });
-  return current;
 }
 
-async function setStatus(campaign: AdCampaign, active: boolean): Promise<AdCampaign> {
-  const runs: AdPlatformRun[] = [];
-  for (const run of campaign.platforms) {
-    if (run.status !== "live" && run.status !== "paused") {
-      runs.push(run);
-      continue;
-    }
-    try {
-      if (run.platform === "x") await setXStatus(run.externalIds ?? {}, active);
-      else await setGoogleStatus(run.externalIds ?? {}, active);
-      runs.push({ ...run, status: active ? "live" : "paused", error: undefined });
-    } catch (error) {
-      runs.push({ ...run, error: error instanceof Error ? error.message : "Could not update the network." });
-    }
-  }
-  return { ...campaign, platforms: runs };
+function setStatus(campaign: AdCampaign, active: boolean): AdCampaign {
+  return {
+    ...campaign,
+    platforms: campaign.platforms.map((run) =>
+      run.status === "live" || run.status === "paused" ? { ...run, status: active ? "live" : "paused", error: undefined } : run
+    ),
+  };
 }
 
-/** Pull impressions, clicks and spend from each network. */
+/** Demo results: nothing is measured, so only the end date is checked. */
 async function sync(campaign: AdCampaign): Promise<AdCampaign> {
-  const runs: AdPlatformRun[] = [];
-  for (const run of campaign.platforms) {
-    if (!run.externalIds || run.status === "failed") {
-      runs.push(run);
-      continue;
-    }
-    try {
-      const stats =
-        run.platform === "x"
-          ? await xStats(run.externalIds, new Date(campaign.startDate ?? campaign.createdAt))
-          : await googleStats(run.externalIds);
-      runs.push({
-        ...run,
-        impressions: stats.impressions,
-        clicks: stats.clicks,
-        spentKes: round2(Math.min(run.budgetKes, stats.spentUsd * campaign.kesPerUsd)),
-        syncedAt: new Date().toISOString(),
-        error: undefined,
-      });
-    } catch (error) {
-      runs.push({ ...run, error: error instanceof Error ? error.message : "Could not read results." });
-    }
-  }
-  let next: AdCampaign = { ...campaign, platforms: runs };
+  const next = { ...campaign, platforms: campaign.platforms.map((run) => ({ ...run, syncedAt: new Date().toISOString() })) };
   if (next.status === "active" && next.endDate && Date.parse(next.endDate) < Date.now()) {
-    next = finish(next, "completed", "Finished. Any unspent budget was returned to your wallet.");
+    return finish(next, "completed", "Finished. Any unspent budget was returned to your wallet.");
   }
   return next;
 }
 
 /** End the campaign and refund what the networks did not spend. */
-function finish(campaign: AdCampaign, status: "completed" | "stopped", note: string): AdCampaign {
+async function finish(
+  campaign: AdCampaign,
+  status: "completed" | "stopped",
+  note: string
+): Promise<AdCampaign> {
   const spent = campaign.platforms.reduce((sum, r) => sum + (r.status === "failed" ? 0 : r.spentKes ?? 0), 0);
   const paidToNetworks = campaign.platforms.reduce((sum, r) => sum + (r.status === "failed" ? 0 : r.budgetKes), 0);
   const unspent = round2(Math.max(0, paidToNetworks - spent));
-  if (unspent > 0) refundWallet(campaign.leaderId, unspent, `Unspent budget: "${campaign.name}"`, campaign.id);
+  if (unspent > 0) await refundWallet(campaign.leaderId, unspent, `Unspent budget: "${campaign.name}"`, campaign.id);
   return {
     ...campaign,
     status,
@@ -357,7 +274,7 @@ export async function actOnAdCampaign(
   action: AdAction,
   note?: string
 ): Promise<ContentResult> {
-  const campaign = repo().find(id);
+  const campaign = await repo().find(id);
   if (!campaign) return fail(404, "Campaign not found.");
   if (!canManage(session, campaign)) return fail(403, "You can only manage your own campaigns.");
 
@@ -371,8 +288,8 @@ export async function actOnAdCampaign(
     case "reject":
       if (campaign.status !== "pending_approval") return fail(400, "Only ads waiting for approval can be rejected or cancelled.");
       if (session.role !== "admin" && campaign.leaderId !== session.leaderId) return fail(403, "Not allowed.");
-      refundWallet(campaign.leaderId, campaign.budgetKes, `Refund: "${campaign.name}" was not published`, campaign.id);
-      next = save({
+      await refundWallet(campaign.leaderId, campaign.budgetKes, `Refund: "${campaign.name}" was not published`, campaign.id);
+      next = await save({
         ...campaign,
         status: "rejected",
         statusNote:
@@ -384,19 +301,19 @@ export async function actOnAdCampaign(
       break;
     case "pause":
       if (campaign.status !== "active") return fail(400, "Only a running ad can be paused.");
-      next = await setStatus(campaign, false);
+      next = setStatus(campaign, false);
       next = { ...next, status: "paused", statusNote: "Paused. Resume any time before the end date." };
       break;
     case "resume":
       if (campaign.status !== "paused") return fail(400, "Only a paused ad can be resumed.");
-      next = await setStatus(campaign, true);
+      next = setStatus(campaign, true);
       next = { ...next, status: "active", statusNote: "Running again." };
       break;
     case "stop":
       if (campaign.status !== "active" && campaign.status !== "paused") return fail(400, "This ad is not running.");
-      next = await sync(await setStatus(campaign, false));
+      next = await sync(setStatus(campaign, false));
       if (next.status === "active" || next.status === "paused") {
-        next = finish(next, "stopped", "Stopped early. The unspent budget was returned to your wallet.");
+        next = await finish(next, "stopped", "Stopped early. The unspent budget was returned to your wallet.");
       }
       break;
     case "sync":
@@ -406,35 +323,8 @@ export async function actOnAdCampaign(
     default:
       return fail(400, "Unknown action.");
   }
-  const saved = action === "reject" ? next : save(next);
-  return ok({ ok: true, item: saved, walletBalance: walletBalance(saved.leaderId) });
-}
-
-/** Admin check: build a full Google campaign in validate-only mode (nothing is created). */
-export async function validateGoogleSetup(imageUrl: string): Promise<ContentResult> {
-  try {
-    const images = await prepareAdImages(imageUrl);
-    const start = new Date(Date.now() + 86_400_000);
-    await launchGoogle({
-      name: "M-Taji validation",
-      headline: "Validation headline",
-      longHeadline: "Validation long headline for M-Taji Siasa",
-      description: "Validation description.",
-      businessName: "M-Taji Siasa",
-      finalUrl: `${adSettings().siteUrl || "https://example.com"}/projects/validation`,
-      keywords: ["nairobi roads"],
-      landscape: images.landscape,
-      square: images.square,
-      totalUsd: 5,
-      days: 1,
-      start,
-      end: new Date(start.getTime() + 86_400_000),
-      validateOnly: true,
-    });
-    return ok({ ok: true, google: "valid" });
-  } catch (error) {
-    return fail(502, error instanceof Error ? error.message : "Validation failed.");
-  }
+  const saved = action === "reject" ? next : await save(next);
+  return ok({ ok: true, item: saved, walletBalance: await walletBalance(saved.leaderId) });
 }
 
 export function asAction(value: unknown): AdAction | null {

@@ -1,6 +1,7 @@
 import { getRepositories } from "@/server";
 import { isRecord } from "@/server/content/parse";
 import type { ContentResult } from "@/server/content/service";
+import { failureFromError } from "@/server/http-errors";
 import type { AdlyInterestLead } from "@/server/domain";
 import type { AuthSession } from "@/types/auth";
 
@@ -25,24 +26,45 @@ function fail(status: number, error: string): ContentResult {
   return { ok: false, status, error };
 }
 
-export function readSavedOpportunities(session: AuthSession): ContentResult {
-  const ids = getRepositories().engagement.getSavedOpportunityIds(session.userId);
-  return { ok: true, status: 200, body: { ok: true, ids } };
+/** The saved_opportunities table (Tracker migration M8) is not there yet. */
+function isSavedTableMissing(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "PGRST205" || code === "42P01";
 }
 
-export function saveOpportunities(session: AuthSession, body: unknown): ContentResult {
+function savedFailure(error: unknown, context: string): ContentResult {
+  if (isSavedTableMissing(error)) {
+    return fail(503, "Saving opportunities is not available yet. Try again later.");
+  }
+  return failureFromError(error, context);
+}
+
+export async function readSavedOpportunities(session: AuthSession): Promise<ContentResult> {
+  try {
+    const ids = await getRepositories().engagement.getSavedOpportunityIds(session.userId);
+    return { ok: true, status: 200, body: { ok: true, ids } };
+  } catch (error) {
+    return savedFailure(error, "read saved opportunities");
+  }
+}
+
+export async function saveOpportunities(session: AuthSession, body: unknown): Promise<ContentResult> {
   if (!isRecord(body) || !Array.isArray(body.ids)) {
     return fail(400, "ids must be a list of opportunity ids.");
   }
   const ids = body.ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim());
-  const known = new Set(getRepositories().content.listOpportunities().map((item) => item.id));
-  const unknown = ids.find((id) => !known.has(id));
-  if (unknown) return fail(400, "One or more opportunities were not found.");
-  const saved = getRepositories().engagement.setSavedOpportunityIds(session.userId, ids);
-  return { ok: true, status: 200, body: { ok: true, ids: saved } };
+  try {
+    const known = new Set((await getRepositories().content.listOpportunities()).map((item) => item.id));
+    const unknown = ids.find((id) => !known.has(id));
+    if (unknown) return fail(400, "One or more opportunities were not found.");
+    const saved = await getRepositories().engagement.setSavedOpportunityIds(session.userId, ids);
+    return { ok: true, status: 200, body: { ok: true, ids: saved } };
+  } catch (error) {
+    return savedFailure(error, "save opportunities");
+  }
 }
 
-export function submitAdlyInterest(body: unknown): ContentResult {
+export async function submitAdlyInterest(body: unknown): Promise<ContentResult> {
   if (!isRecord(body)) return fail(400, "Interest body must be an object.");
   const fullName = text(body.fullName);
   const email = text(body.email)?.toLowerCase();
@@ -63,21 +85,31 @@ export function submitAdlyInterest(body: unknown): ContentResult {
   if (interests.some((item) => !INTEREST_TOPICS.includes(item as (typeof INTEREST_TOPICS)[number]))) {
     return fail(400, "Choose interests from the Adly list.");
   }
-  const lead = getRepositories().engagement.addAdlyInterest({
-    fullName,
-    email,
-    phone,
-    organization,
-    role: body.role,
-    interests,
-    createdAt: new Date().toISOString(),
-  });
-  return { ok: true, status: 201, body: { ok: true, lead: publicLead(lead) } };
+  try {
+    const lead = await getRepositories().engagement.addAdlyInterest({
+      fullName,
+      email,
+      phone,
+      organization,
+      role: body.role,
+      interests,
+      createdAt: new Date().toISOString(),
+    });
+    return { ok: true, status: 201, body: { ok: true, lead: publicLead(lead) } };
+  } catch (error) {
+    return failureFromError(error, "send Adly interest");
+  }
 }
 
-export function listAdlyInterests(): ContentResult {
-  const leads = getRepositories().engagement.listAdlyInterests().map(publicLead);
-  return { ok: true, status: 200, body: { ok: true, leads } };
+/** Admin only. The Tracker store checks admin again before it uses the service role. */
+export async function listAdlyInterests(session: AuthSession): Promise<ContentResult> {
+  if (session.role !== "admin") return fail(403, "Only an admin can see Adly interest leads.");
+  try {
+    const leads = (await getRepositories().engagement.listAdlyInterests()).map(publicLead);
+    return { ok: true, status: 200, body: { ok: true, leads } };
+  } catch (error) {
+    return failureFromError(error, "list Adly interest leads");
+  }
 }
 
 function publicLead(lead: AdlyInterestLead) {

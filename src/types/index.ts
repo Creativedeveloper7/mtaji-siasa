@@ -106,7 +106,8 @@ export interface Project {
   expectedCompletion: string;
   leaderIds: string[];
   geo: {
-    center: GeoPoint;
+    /** Map pin. A Tracker initiative may have none yet (no location saved). */
+    center?: GeoPoint;
     boundary?: GeoBounds;
   };
   milestoneIds: string[];

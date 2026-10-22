@@ -17,6 +17,7 @@ import { useApplications } from "@/components/opportunities/useApplications";
 import { apiJson } from "@/lib/api-client";
 import { APPLICATION_STATUS_LABELS, APPLICATION_STATUS_TONES } from "@/lib/constants";
 import { cn, formatDate } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-url";
 import type { ApplicationStatus, ApplicationView } from "@/types";
 
 const STATUSES = Object.keys(APPLICATION_STATUS_LABELS) as ApplicationStatus[];
@@ -238,9 +239,9 @@ export function ApplicationsManager({ showMine = true }: { showMine?: boolean })
               </p>
             </div>
 
-            {reviewing.attachmentUrl && (
+            {safeHttpUrl(reviewing.attachmentUrl) && (
               <a
-                href={reviewing.attachmentUrl}
+                href={safeHttpUrl(reviewing.attachmentUrl)}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="inline-flex items-center gap-2 text-small text-accent hover:text-accent-hover"

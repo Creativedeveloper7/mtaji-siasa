@@ -25,6 +25,7 @@ import {
   OPPORTUNITY_STATUS_LABELS,
 } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-url";
 import {
   getRelatedLeader,
   getRelatedMedia,
@@ -157,6 +158,8 @@ export default function OpportunityDetailPage({
         ? "warning"
         : "error";
   const myApplication = mine.items.find((item) => item.opportunityId === opportunity.id);
+  // Only an http(s) link is offered as the official website.
+  const applicationUrl = safeHttpUrl(opportunity.applicationUrl);
   const isPublisher = Boolean(
     user && (user.role === "admin" || (user.leaderId && user.leaderId === opportunity.leaderId))
   );
@@ -252,7 +255,7 @@ export default function OpportunityDetailPage({
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Calendar className="h-3.5 w-3.5" aria-hidden />
-              Deadline {formatDate(opportunity.deadline)}
+              Deadline {formatDate(opportunity.deadline, "Rolling")}
             </span>
             {opportunity.organization && (
               <span className="inline-flex items-center gap-1.5">
@@ -263,8 +266,8 @@ export default function OpportunityDetailPage({
           </div>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             {applyAction}
-            {opportunity.applicationUrl && (
-              <Button href={opportunity.applicationUrl} size="lg" variant="outline">
+            {applicationUrl && (
+              <Button href={applicationUrl} size="lg" variant="outline">
                 Official website
               </Button>
             )}
@@ -316,13 +319,13 @@ export default function OpportunityDetailPage({
                 <div>
                   <dt className="meta-label">Opening date</dt>
                   <dd className="mt-1 text-ink">
-                    {formatDate(opportunity.openingDate || opportunity.deadline)}
+                    {formatDate(opportunity.openingDate || opportunity.deadline, "Open now")}
                   </dd>
                 </div>
                 <div>
                   <dt className="meta-label">Closing date</dt>
                   <dd className="mt-1 text-ink">
-                    {formatDate(opportunity.deadline)}
+                    {formatDate(opportunity.deadline, "Rolling")}
                   </dd>
                 </div>
               </dl>
@@ -359,7 +362,7 @@ export default function OpportunityDetailPage({
               <div>
                 <dt className="text-ink-subtle">Deadline</dt>
                 <dd className="mt-1 text-ink">
-                  {formatDate(opportunity.deadline)}
+                  {formatDate(opportunity.deadline, "Rolling")}
                 </dd>
               </div>
               <div>

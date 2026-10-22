@@ -1,18 +1,14 @@
 import type { UserAccount, UserRole } from "@/types/auth";
 
-/** Account fields safe to send over HTTP. The password never leaves the repository. */
-export type PublicUser = Omit<UserAccount, "password">;
-
-export function toPublicUser(account: UserAccount): PublicUser {
-  const { password: _password, ...publicUser } = account;
-  return publicUser;
-}
+/** Account fields safe to send over HTTP. Passwords live only in Supabase Auth. */
+export type PublicUser = UserAccount;
 
 export interface NewUserInput {
   id?: string;
   fullName: string;
   email: string;
   phone: string;
+  /** Initial password, handed to the auth provider and never stored by Siasa. */
   password: string;
   role: UserRole;
   createdAt?: string;

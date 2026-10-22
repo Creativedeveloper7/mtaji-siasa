@@ -7,7 +7,7 @@ import { AdminField, AdminHeader, AdminInput, AdminSelect, AdminTextarea } from 
 import { Button } from "@/components/ui/Button";
 import { AdPreview } from "@/components/ads/AdPreview";
 import { KeywordInput } from "@/components/ads/KeywordInput";
-import { AdCampaignCard, type AdCardAction } from "@/components/ads/AdCampaignCard";
+import { AdCampaignCard, type AdCardAction, type AdCardControls } from "@/components/ads/AdCampaignCard";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { apiJson } from "@/lib/api-client";
@@ -22,6 +22,10 @@ interface Quote {
   requireApproval: boolean;
   limits: { headline: number; body: number; keywords: number; keywordLength: number; minDays: number; maxDays: number };
   platforms: { platform: AdPlatform; configured: boolean }[];
+  /** "tracker": the wallet is charged per network on publish. Absent on the legacy store. */
+  backend?: "tracker";
+  chargeOn?: "publish";
+  controls?: AdCardControls;
 }
 
 const PRESETS = [500, 1000, 2500, 5000, 10000, 25000];
@@ -78,7 +82,7 @@ export default function PoliticianAdsPage() {
   const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
-    const result = await apiJson<{ items?: AdCampaign[]; quote?: Quote; walletBalance?: number; error?: string }>("/api/ads");
+    const result = await apiJson<{ items?: AdCampaign[]; quote?: Quote; walletBalance?: number; error?: string }>("/api/ads/campaigns");
     if (!result.ok) {
       setLoadError(result.data.error || "Could not load your ads.");
       return;
@@ -120,6 +124,7 @@ export default function PoliticianAdsPage() {
   if (!leader) return null;
 
   const limits = quote?.limits;
+  const chargeOnPublish = quote?.chargeOn === "publish";
   const min = quote?.minBudgetKes ?? 500;
   const reach = Math.round(budget * (quote?.reachPerKes ?? 10));
   const usd = budget / (quote?.kesPerUsd ?? 129);
@@ -147,14 +152,15 @@ export default function PoliticianAdsPage() {
     if (!body.trim()) return "Add the ad text.";
     if (keywords.length === 0) return "Add at least one keyword.";
     if (budget < min) return `The minimum budget is ${formatCurrency(min)}.`;
-    if (insufficient) return "Your wallet balance is too low for this budget.";
+    // On the Tracker backend an ad awaiting approval is charged later, at publish.
+    if (insufficient && !(chargeOnPublish && quote?.requireApproval)) return "Your wallet balance is too low for this budget.";
     return "";
   };
 
   const submit = async () => {
     setSubmitting(true);
     setFormError("");
-    const result = await apiJson<{ item?: AdCampaign; walletBalance?: number; error?: string }>("/api/ads", {
+    const result = await apiJson<{ item?: AdCampaign; walletBalance?: number; error?: string }>("/api/ads/campaigns", {
       method: "POST",
       body: JSON.stringify({
         projectId,
@@ -177,7 +183,9 @@ export default function PoliticianAdsPage() {
     if (typeof result.data.walletBalance === "number") setBalance(result.data.walletBalance);
     setNotice(
       created.status === "pending_approval"
-        ? `${formatCurrency(budget)} paid from your wallet. Your ad is waiting for approval — it goes live as soon as an admin approves it.`
+        ? chargeOnPublish
+          ? "Your ad is waiting for approval. Nothing is charged yet: once an admin approves it, publish it and your wallet pays each network that accepts it."
+          : `${formatCurrency(budget)} paid from your wallet. Your ad is waiting for approval — it goes live as soon as an admin approves it.`
         : created.statusNote || "Your ad was submitted."
     );
     document.getElementById("your-ads")?.scrollIntoView({ behavior: "smooth" });
@@ -185,10 +193,15 @@ export default function PoliticianAdsPage() {
 
   const act = async (campaign: AdCampaign, action: AdCardAction) => {
     if (action === "stop" && !confirm("Stop this ad now? Unspent budget goes back to your wallet.")) return;
-    if (action === "reject" && !confirm("Cancel this ad? The full budget goes back to your wallet.")) return;
+    if (
+      action === "reject" &&
+      !confirm(chargeOnPublish ? "Cancel this ad? Nothing has been charged." : "Cancel this ad? The full budget goes back to your wallet.")
+    )
+      return;
+    if (action === "publish" && !confirm(`Publish "${campaign.name}" now? Your wallet pays each network that accepts the ad.`)) return;
     setBusy({ id: campaign.id, action });
-    const result = await apiJson<{ item?: AdCampaign; walletBalance?: number; error?: string }>(
-      `/api/ads/${encodeURIComponent(campaign.id)}`,
+    const result = await apiJson<{ item?: AdCampaign; walletBalance?: number; warnings?: string[]; error?: string }>(
+      `/api/ads/campaigns/${encodeURIComponent(campaign.id)}`,
       { method: "POST", body: JSON.stringify({ action }) }
     );
     setBusy(null);
@@ -199,6 +212,8 @@ export default function PoliticianAdsPage() {
     const updated = result.data.item;
     setItems((current) => current.map((c) => (c.id === updated.id ? updated : c)));
     if (typeof result.data.walletBalance === "number") setBalance(result.data.walletBalance);
+    // A network accepted the ad but the wallet charge failed: say so plainly.
+    if (result.data.warnings?.length) alert(result.data.warnings.join("\n"));
   };
 
   return (
@@ -377,7 +392,10 @@ export default function PoliticianAdsPage() {
                   </li>
                   {platforms.length > 1 && <li>Split evenly: {formatCurrency(perNetwork)} on X and {formatCurrency(budget - perNetwork)} on Google.</li>}
                   <li>
-                    Paid to the networks as ≈ US${usd.toFixed(2)} (KES {quote?.kesPerUsd ?? 129} = $1). Unspent money is refunded to your wallet.
+                    Paid to the networks as ≈ US${usd.toFixed(2)} (KES {quote?.kesPerUsd ?? 129} = $1).{" "}
+                    {chargeOnPublish
+                      ? "Your wallet is charged per network when that network accepts the ad."
+                      : "Unspent money is refunded to your wallet."}
                   </li>
                   <li>Reach is an estimate (~{quote?.reachPerKes ?? 10} people per KES); actual results depend on the audience and the networks.</li>
                 </ul>
@@ -409,7 +427,11 @@ export default function PoliticianAdsPage() {
               }}
             >
               <Megaphone className="h-4 w-4" />
-              Pay {formatCurrency(budget)} &amp; {quote?.requireApproval ? "submit for approval" : "launch ad"}
+              {chargeOnPublish
+                ? quote?.requireApproval
+                  ? "Submit for approval"
+                  : `Pay ${formatCurrency(budget)} & launch ad`
+                : `Pay ${formatCurrency(budget)} & ${quote?.requireApproval ? "submit for approval" : "launch ad"}`}
             </Button>
           </div>
 
@@ -438,6 +460,8 @@ export default function PoliticianAdsPage() {
                 key={campaign.id}
                 campaign={campaign}
                 busy={busy?.id === campaign.id ? busy.action : null}
+                controls={quote?.controls}
+                approvalPublishes={!chargeOnPublish}
                 onAction={(action) => void act(campaign, action)}
               />
             ))}
@@ -449,26 +473,34 @@ export default function PoliticianAdsPage() {
         <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
           <button type="button" className="absolute inset-0 bg-bg/75 backdrop-blur-sm" aria-label="Close" onClick={() => setConfirming(false)} />
           <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-md rounded-t-lg border border-border bg-bg-elevated p-5 shadow-raised sm:rounded-lg">
-            <h2 className="text-h3 text-ink">Confirm ad payment</h2>
+            <h2 className="text-h3 text-ink">{chargeOnPublish && quote?.requireApproval ? "Confirm ad" : "Confirm ad payment"}</h2>
             <dl className="mt-4 space-y-2 text-small">
               <Row label="Project" value={project.name} />
               <Row label="Networks" value={platforms.map((p) => (p === "x" ? "X" : "Google")).join(" + ")} />
               <Row label="Duration" value={`${days} day${days === 1 ? "" : "s"}`} />
               <Row label="Keywords" value={`${keywords.length}`} />
               <Row label="Estimated reach" value={`~${reach.toLocaleString()} people`} />
-              <Row label="Paid from wallet" value={formatCurrency(budget)} strong />
+              <Row
+                label={chargeOnPublish && quote?.requireApproval ? "Budget (charged on publish)" : "Paid from wallet"}
+                value={formatCurrency(budget)}
+                strong
+              />
             </dl>
             <p className="mt-4 text-caption text-ink-muted">
-              {quote?.requireApproval
-                ? "The money is held for this ad now. If the ad is not approved, or a network rejects it, it is refunded to your wallet."
-                : "The ad is published right away. If a network rejects it, that share is refunded to your wallet."}
+              {chargeOnPublish
+                ? quote?.requireApproval
+                  ? "Nothing is charged now. After an admin approves the ad you publish it, and your wallet pays each network that accepts it."
+                  : "The ad is published right away. Your wallet pays each network that accepts it; a network that rejects it costs nothing."
+                : quote?.requireApproval
+                  ? "The money is held for this ad now. If the ad is not approved, or a network rejects it, it is refunded to your wallet."
+                  : "The ad is published right away. If a network rejects it, that share is refunded to your wallet."}
             </p>
             <div className="mt-5 flex gap-2">
               <Button type="button" variant="secondary" fullWidth onClick={() => setConfirming(false)}>
                 Back
               </Button>
               <Button type="button" fullWidth disabled={submitting} onClick={() => void submit()}>
-                {submitting ? "Submitting…" : `Pay ${formatCurrency(budget)}`}
+                {submitting ? "Submitting…" : chargeOnPublish && quote?.requireApproval ? "Submit" : `Pay ${formatCurrency(budget)}`}
               </Button>
             </div>
           </div>

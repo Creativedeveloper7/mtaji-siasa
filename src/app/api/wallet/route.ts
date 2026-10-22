@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { usesTracker } from "@/server";
 import { requireRoles } from "@/server/auth/http";
 import { actorFromSession, type ContentActor, type ContentResult } from "@/server/content/service";
 import { readWallet } from "@/server/wallet/service";
@@ -7,10 +8,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  if (usesTracker()) return gone();
   const editor = await editorActor();
   if (editor.response) return editor.response;
   const leaderId = new URL(request.url).searchParams.get("leaderId")?.trim();
-  return send(readWallet(editor.actor, leaderId));
+  return send(await readWallet(editor.actor, leaderId));
 }
 
 async function editorActor(): Promise<
@@ -38,4 +40,9 @@ function send(result: ContentResult) {
     return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
   }
   return NextResponse.json(result.body, { status: result.status });
+}
+
+/** Superseded by /api/wallet/payments on the Tracker backend; kept for the memory store only. */
+function gone() {
+  return NextResponse.json({ ok: false, error: "Use /api/wallet/payments." }, { status: 410 });
 }

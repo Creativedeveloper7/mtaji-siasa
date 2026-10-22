@@ -35,6 +35,8 @@ export default function AdlyTimelapsePage() {
   const [media, setMedia] = useState<TimelapseMedia[]>(existing?.media || []);
   const [playIndex, setPlayIndex] = useState(0);
   const [previewNote, setPreviewNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [newCaption, setNewCaption] = useState("");
   const [newDate, setNewDate] = useState("2026-01-01");
@@ -108,9 +110,15 @@ export default function AdlyTimelapsePage() {
   };
 
   const save = async () => {
-    if (!project) return;
+    if (!project || saving) return;
+    setSaving(true);
+    setSaveError("");
+    setPreviewNote("");
+    // Reuse the stored timelapse only for the same project; another project
+    // gets a new one instead of overwriting the first match.
+    const current = existing?.projectId === project.id ? existing : undefined;
     const item: Timelapse = {
-      id: existing?.id || createId("tl"),
+      id: current?.id || createId("tl"),
       name: title || `${project.name} — Progress Story`,
       projectId: project.id,
       location: project.location,
@@ -119,13 +127,20 @@ export default function AdlyTimelapsePage() {
       progress: project.progress,
       aspect,
       media: ordered,
-      milestones: existing?.milestones || ["Planning", "Works", "Completion"],
+      milestones: current?.milestones || ["Planning", "Works", "Completion"],
       captionsEnabled: true,
       brandingEnabled: true,
-      createdAt: existing?.createdAt || new Date().toISOString(),
+      createdAt: current?.createdAt || new Date().toISOString(),
     };
-    upsertTimelapse(item);
+    const result = await upsertTimelapse(item);
+    if (!result.ok) {
+      // No render note: the composition was not saved.
+      setSaving(false);
+      setSaveError(result.error);
+      return;
+    }
     const render = await mockVideoRenderService.renderTimelapse(item);
+    setSaving(false);
     setPreviewNote(render.note);
   };
 
@@ -316,13 +331,18 @@ export default function AdlyTimelapsePage() {
                 </AdminSelect>
               </AdminField>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={save}>
-                  Save & preview composition
+                <Button type="button" onClick={() => void save()} disabled={saving}>
+                  {saving ? "Saving…" : "Save & preview composition"}
                 </Button>
                 <Button href="/adly/advertising" variant="outline">
                   Create campaign
                 </Button>
               </div>
+              {saveError && (
+                <p role="alert" className="text-caption text-error">
+                  {saveError}
+                </p>
+              )}
               {previewNote && (
                 <p className="text-caption text-ink-subtle">{previewNote}</p>
               )}

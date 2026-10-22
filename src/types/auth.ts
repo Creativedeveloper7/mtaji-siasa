@@ -10,11 +10,9 @@ export interface UserAccount {
   fullName: string;
   email: string;
   phone: string;
-  /** Prototype only — stored in localStorage, not production-safe */
-  password: string;
   role: UserRole;
   createdAt: string;
-  /** Linked public Leader profile for politicians */
+  /** Linked public Leader profile for politicians (Tracker political_figures.id) */
   leaderId?: string;
 }
 

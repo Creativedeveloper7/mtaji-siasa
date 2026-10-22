@@ -9,6 +9,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { cn } from "@/lib/utils";
 import type { AuthSession, UserRole } from "@/types/auth";
 import { LoadingState } from "@/components/ui/EmptyState";
+import { safeNext } from "@/lib/safe-next";
 
 const roles: Array<{
   id: Exclude<UserRole, "admin">;
@@ -40,12 +41,13 @@ const roles: Array<{
 function SignupForm() {
   const { signUp, ready } = useAuth();
   const params = useSearchParams();
-  const next =
-    params.get("next") || params.get("redirect") || "";
+  // Same-site paths only; "/" means no destination was asked for.
+  const next = safeNext(params.get("next") || params.get("redirect"));
   const [role, setRole] = useState<Exclude<UserRole, "admin">>("citizen");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [created, setCreated] = useState<AuthSession | null>(null);
+  const [confirmEmail, setConfirmEmail] = useState("");
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -53,9 +55,10 @@ function SignupForm() {
     setError("");
     setLoading(true);
     const form = new FormData(e.currentTarget);
+    const email = String(form.get("email") || "");
     const result = await signUp({
       fullName: String(form.get("name") || ""),
-      email: String(form.get("email") || ""),
+      email,
       phone: String(form.get("phone") || ""),
       password: String(form.get("password") || ""),
       role,
@@ -65,13 +68,39 @@ function SignupForm() {
       setLoading(false);
       return;
     }
-    setCreated(result.session);
+    if ("needsConfirmation" in result) {
+      setConfirmEmail(email.trim());
+    } else {
+      setCreated(result.session);
+    }
     setLoading(false);
   };
 
   const destination = created
     ? workspaceFor(created.role, next)
     : workspaceFor(role, next);
+
+  if (confirmEmail) {
+    return (
+      <section className="container-narrow py-12 md:py-20">
+        <Logo size={48} />
+        <p className="meta-label mt-8 text-accent">Account</p>
+        <h1 className="mt-3 text-h1 text-ink">Check your email</h1>
+        <p className="mt-3 text-body text-ink-muted">
+          We sent a confirmation link to {confirmEmail}. Open it to finish creating your
+          account, then sign in.
+        </p>
+        <Button
+          href={next !== "/" ? `/signin?next=${encodeURIComponent(next)}` : "/signin"}
+          size="lg"
+          fullWidth
+          className="mt-8"
+        >
+          Go to sign in
+        </Button>
+      </section>
+    );
+  }
 
   if (created) {
     return (
@@ -163,7 +192,7 @@ function SignupForm() {
           Already have an account?{" "}
           <Link
             href={
-              next.startsWith("/")
+              next !== "/"
                 ? `/signin?next=${encodeURIComponent(next)}`
                 : "/signin"
             }
@@ -186,7 +215,7 @@ export default function SignupPage() {
 }
 
 function workspaceFor(role: UserRole, next: string): { href: string; label: string } {
-  if (next.startsWith("/") && next !== "/") return { href: next, label: "Continue" };
+  if (next !== "/") return { href: next, label: "Continue" };
   if (role === "admin") return { href: "/admin", label: "Go to admin" };
   return { href: "/dashboard", label: "Go to dashboard" };
 }

@@ -17,7 +17,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "Sign in required." }, { status: 401 });
   }
   const scope = new URL(request.url).searchParams.get("scope");
-  return send(scope === "received" ? listReceivedApplications(session) : listMyApplications(session));
+  return send(
+    scope === "received"
+      ? await listReceivedApplications(session)
+      : await listMyApplications(session)
+  );
 }
 
 export async function POST(request: Request) {
@@ -31,7 +35,7 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
   }
-  return send(submitApplication(session, body));
+  return send(await submitApplication(session, body));
 }
 
 function send(result: ContentResult) {

@@ -10,14 +10,14 @@ import {
   AdminSelect,
   AdminTable,
 } from "@/components/admin/AdminUI";
-import { useAuth } from "@/components/auth/AuthProvider";
-import type { UserAccount, UserRole } from "@/types/auth";
+import { useAuth, type EditableAccount } from "@/components/auth/AuthProvider";
+import type { UserRole } from "@/types/auth";
 import { createId } from "@/lib/store";
 import { LoadingState } from "@/components/ui/EmptyState";
 
 export default function AdminUsersPage() {
   const { users, ready, updateUser, deleteUser, user: current } = useAuth();
-  const [editing, setEditing] = useState<UserAccount | null>(null);
+  const [editing, setEditing] = useState<EditableAccount | null>(null);
   const [query, setQuery] = useState("");
 
   const rows = useMemo(() => {
@@ -47,7 +47,7 @@ export default function AdminUsersPage() {
                 fullName: "",
                 email: "",
                 phone: "",
-                password: "ChangeMe1",
+                password: "",
                 role: "citizen",
                 createdAt: new Date().toISOString(),
               })
@@ -134,10 +134,10 @@ export default function AdminUsersPage() {
                 onChange={(e) => setEditing({ ...editing, phone: e.target.value })}
               />
             </AdminField>
-            <AdminField label="Password">
+            <AdminField label="Password" hint="Leave blank to keep the current password.">
               <AdminInput
                 type="text"
-                value={editing.password}
+                value={editing.password ?? ""}
                 onChange={(e) => setEditing({ ...editing, password: e.target.value })}
               />
             </AdminField>
@@ -158,7 +158,7 @@ export default function AdminUsersPage() {
             {(editing.role === "leader" || editing.role === "aspirant") && (
               <AdminField
                 label="Linked leader profile ID"
-                hint="Optional — leave blank and the politician dashboard will create or match a profile on first visit."
+                hint="Comes from the user's Tracker political figure profile and is not changed here. Leave blank; the politician dashboard opens a profile on first visit."
               >
                 <AdminInput
                   value={editing.leaderId || ""}

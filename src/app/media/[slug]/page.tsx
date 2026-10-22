@@ -16,6 +16,7 @@ import { MediaGallery } from "@/components/media/MediaGallery";
 import { useContent } from "@/components/content/ContentProvider";
 import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
 import { formatDate } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-url";
 import {
   getRelatedLeader,
   getRelatedMedia,
@@ -171,7 +172,7 @@ export default function MediaDetailPage({
 
       <article className="container-wide section-y-sm">
         <div className="mx-auto max-w-narrow">
-          {item.type === "video" && item.videoUrl && (
+          {item.type === "video" && safeHttpUrl(item.videoUrl) && (
             <div className="mb-8 overflow-hidden rounded-lg border border-border bg-surface p-4">
               <p className="meta-label text-accent">Video</p>
               <p className="mt-2 text-small text-ink-muted">
@@ -179,7 +180,7 @@ export default function MediaDetailPage({
                 URL for reference.
               </p>
               <a
-                href={item.videoUrl}
+                href={safeHttpUrl(item.videoUrl)}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-3 inline-flex text-small text-accent hover:text-accent-hover"

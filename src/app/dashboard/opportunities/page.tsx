@@ -8,12 +8,14 @@ import {
   AdminField,
   AdminHeader,
   AdminInput,
+  AdminNotice,
   AdminSelect,
   AdminTable,
   AdminTextarea,
 } from "@/components/admin/AdminUI";
 import { ImageField } from "@/components/ui/ImageField";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
+import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { useApplications } from "@/components/opportunities/useApplications";
 import { createId, slugify } from "@/lib/store";
@@ -30,8 +32,7 @@ export default function PoliticianOpportunitiesPage() {
   } = useContent();
   const received = useApplications("received");
   const [editing, setEditing] = useState<Opportunity | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
 
   const rows = useMemo(
     () => (leader ? getOpportunitiesByIds(leader.opportunityIds) : []),
@@ -95,19 +96,14 @@ export default function PoliticianOpportunitiesPage() {
       setError("Add a title before saving.");
       return;
     }
-    setSaving(true);
-    setError("");
-    const result = await upsertOpportunity({
-      ...editing,
-      slug: editing.slug || slugify(editing.title),
-      leaderId: leader.id,
-    });
-    setSaving(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setEditing(null);
+    const result = await run(() =>
+      upsertOpportunity({
+        ...editing,
+        slug: editing.slug || slugify(editing.title),
+        leaderId: leader.id,
+      })
+    );
+    if (result?.ok) setEditing(null);
   };
 
   return (
@@ -125,6 +121,14 @@ export default function PoliticianOpportunitiesPage() {
         }
       />
 
+      {notice && (
+        <AdminNotice
+          className="mb-4"
+          tone={notice.tone}
+          messages={notice.messages}
+          onDismiss={() => setNotice(null)}
+        />
+      )}
       <AdminTable headers={["Title", "Category", "Project", "Deadline", "Applications", ""]}>
         {rows.map((o) => (
           <tr key={o.id}>
@@ -135,7 +139,7 @@ export default function PoliticianOpportunitiesPage() {
             <td className="px-4 py-3 text-ink-muted max-w-[180px] truncate">
               {projects.find((p) => p.id === o.projectId)?.name ?? "—"}
             </td>
-            <td className="px-4 py-3 text-ink-muted">{o.deadline}</td>
+            <td className="px-4 py-3 text-ink-muted">{o.deadline || "Rolling"}</td>
             <td className="px-4 py-3">
               <Link
                 href={`/dashboard/applications?opportunity=${encodeURIComponent(o.id)}`}
@@ -162,9 +166,10 @@ export default function PoliticianOpportunitiesPage() {
                 type="button"
                 size="sm"
                 variant="ghost"
+                disabled={saving}
                 onClick={() => {
                   if (!confirm("Delete this opportunity? Its applications are deleted too.")) return;
-                  void deleteOpportunity(o.id);
+                  void remove(() => deleteOpportunity(o.id));
                 }}
               >
                 Delete
@@ -177,7 +182,9 @@ export default function PoliticianOpportunitiesPage() {
       <AdminDrawer
         open={!!editing}
         title="Opportunity"
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          if (!saving) setEditing(null);
+        }}
         footer={
           <div className="flex gap-2">
             <Button type="button" fullWidth disabled={saving} onClick={() => void save()}>
@@ -187,6 +194,7 @@ export default function PoliticianOpportunitiesPage() {
               type="button"
               variant="secondary"
               fullWidth
+              disabled={saving}
               onClick={() => setEditing(null)}
             >
               Cancel
@@ -304,11 +312,7 @@ export default function PoliticianOpportunitiesPage() {
               optional
               hint="Optional cover image. Paste a URL or upload from this device."
             />
-            {error && (
-              <p className="rounded-md border border-error/30 bg-error-muted px-3 py-2 text-small text-error">
-                {error}
-              </p>
-            )}
+            {error && <AdminNotice messages={error} />}
           </div>
         )}
       </AdminDrawer>

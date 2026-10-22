@@ -1,12 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  HandCoins,
-  Package,
-  PiggyBank,
-  Users,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Package, PiggyBank, Users } from "lucide-react";
 import {
   AdminField,
   AdminHeader,
@@ -17,171 +12,272 @@ import { Button } from "@/components/ui/Button";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { apiJson } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/utils";
+import type {
+  TopUpAttempt,
+  TopUpVerification,
+  WalletActivity,
+  WalletView,
+} from "@/server/tracker/wallet/types";
 
-type FundSourceId =
-  | "crowdfunding"
-  | "merchandise"
-  | "donations"
-  | "transfers";
+/** Kept in step with MIN_TOP_UP_KES on the server. */
+const MIN_TOP_UP = 100;
 
-interface FundSource {
-  id: FundSourceId;
-  label: string;
-  description: string;
-  balance: number;
-  icon: typeof Users;
-}
-
-const TOP_UP_SOURCES = [
-  { value: "mpesa", label: "M-Pesa" },
-  { value: "bank", label: "Bank transfer" },
-  { value: "card", label: "Debit / credit card" },
-  { value: "crowdfunding", label: "Crowdfunding pool" },
-  { value: "merchandise", label: "Merchandise sales" },
+const PAY_METHODS = [
+  { value: "M-PESA", label: "M-Pesa" },
+  { value: "CARD-PAYMENT", label: "Card or bank" },
 ] as const;
 
-interface WalletMovement {
-  id: string;
-  kind: "top-up" | "withdrawal" | "ad-spend" | "ad-refund";
-  amount: number;
-  note?: string;
-  createdAt: string;
-}
+const PAYOUT_METHODS = [
+  { value: "mpesa", label: "M-Pesa", placeholder: "e.g. 0712 345 678" },
+  { value: "bank_transfer", label: "Bank transfer", placeholder: "Bank, branch and account number" },
+] as const;
 
-interface WalletState {
-  sources: Record<FundSourceId, number>;
-  lastTopUpAt?: string;
-  lastWithdrawalAt?: string;
-  movements?: WalletMovement[];
-}
+/** sessionStorage key for the reference of a checkout in progress. */
+const PENDING_REF_KEY = "mtaji_siasa_topup_ref";
 
-const MOVEMENT_LABELS: Record<WalletMovement["kind"], string> = {
+const MOVEMENT_LABELS: Record<WalletActivity["kind"], string> = {
   "top-up": "Top-up",
+  crowdfunding: "Crowdfunding",
+  shop: "Merchandise sale",
   withdrawal: "Withdrawal",
   "ad-spend": "Ad payment",
   "ad-refund": "Ad refund",
+  other: "Other",
 };
 
-const DEFAULT_SOURCES: Record<FundSourceId, number> = {
-  crowdfunding: 185000,
-  merchandise: 62400,
-  donations: 41000,
-  transfers: 15000,
+const ATTEMPT_LABELS: Record<TopUpAttempt["state"], string> = {
+  "awaiting-payment": "Awaiting payment",
+  processing: "Paid, crediting wallet",
+  "not-completed": "Not completed",
+  failed: "Failed",
 };
+
+type Notice = { tone: "info" | "success" | "warning" | "error"; text: string };
+
+const NOTICE_CLASSES: Record<Notice["tone"], string> = {
+  info: "border-border bg-surface text-ink-muted",
+  success: "border-success/30 bg-success-muted text-ink",
+  warning: "border-warning/30 bg-warning-muted text-ink",
+  error: "border-error/30 bg-error-muted text-ink",
+};
+
+function readStoredRef(): string | null {
+  try {
+    return sessionStorage.getItem(PENDING_REF_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeRef(ref: string | null) {
+  try {
+    if (ref) sessionStorage.setItem(PENDING_REF_KEY, ref);
+    else sessionStorage.removeItem(PENDING_REF_KEY);
+  } catch {
+    /* storage unavailable: the return URL still carries the reference */
+  }
+}
+
+function verificationNotice(v: TopUpVerification): Notice {
+  switch (v.outcome) {
+    case "credited":
+      return { tone: "success", text: `${formatCurrency(v.amount)} added to your wallet.` };
+    case "processing":
+      return {
+        tone: "warning",
+        text: `Paystack confirmed ${formatCurrency(v.amount)}. Your balance will update in a moment; refresh if it does not.`,
+      };
+    case "pending":
+      return {
+        tone: "warning",
+        text: "Paystack has not confirmed this payment yet. If you approved it, your balance updates once it clears.",
+      };
+    default:
+      return { tone: "error", text: "The payment did not go through. You were not charged; try again." };
+  }
+}
 
 export default function PoliticianWalletPage() {
-  const { leader } = usePoliticianProfile();
-  const [wallet, setWallet] = useState<WalletState | null>(null);
+  const { leader, user, ready } = usePoliticianProfile();
+  // The Tracker wallet belongs to the signed-in account, not the Leader
+  // profile: an admin without a profile still has (and sees) their own wallet.
+  const ownerId = ready ? user?.userId ?? null : null;
+  const ownerLabel = leader ? `${leader.honorific} ${leader.name}` : "your account";
+  /** The Paystack return is verified once per page load, whatever re-renders follow. */
+  const returnHandled = useRef(false);
+  const [wallet, setWallet] = useState<WalletView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [returnNotice, setReturnNotice] = useState<Notice | null>(null);
 
   const [topUpAmount, setTopUpAmount] = useState("");
-  const [topUpSource, setTopUpSource] = useState<string>(TOP_UP_SOURCES[0].value);
-  const [topUpNote, setTopUpNote] = useState<string | null>(null);
+  const [payMethod, setPayMethod] = useState<string>(PAY_METHODS[0].value);
+  const [topUpNote, setTopUpNote] = useState<Notice | null>(null);
+  const [topUpBusy, setTopUpBusy] = useState(false);
 
   const [withdrawAmount, setWithdrawAmount] = useState("");
-  const [withdrawNote, setWithdrawNote] = useState<string | null>(null);
+  const [payoutMethod, setPayoutMethod] = useState<string>(PAYOUT_METHODS[0].value);
+  const [destination, setDestination] = useState("");
+  const [withdrawNote, setWithdrawNote] = useState<Notice | null>(null);
+  const [withdrawBusy, setWithdrawBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const result = await apiJson<{ wallet?: WalletView; error?: string }>("/api/wallet/payments");
+    if (result.ok && result.data.wallet) {
+      setWallet(result.data.wallet);
+      setLoadError(null);
+    } else {
+      setLoadError(result.data.error || "Could not load your wallet.");
+    }
+  }, []);
 
   useEffect(() => {
-    if (!leader) return;
-    let cancel = false;
-    (async () => {
-      const result = await apiJson<{ wallet?: WalletState }>("/api/wallet");
-      if (!cancel && result.ok && result.data.wallet) setWallet(result.data.wallet);
-    })();
-    return () => {
-      cancel = true;
-    };
-  }, [leader]);
+    if (!ownerId || returnHandled.current) return;
+    returnHandled.current = true;
+    // No cancel flag: this runs once, so its result must always be applied.
+    void (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const returning = params.get("topup") === "1";
+      const reference = params.get("reference") || params.get("trxref") || (returning ? readStoredRef() : null);
 
-  const fundCards: FundSource[] = useMemo(() => {
-    const sources = wallet?.sources ?? DEFAULT_SOURCES;
+      if (returning) {
+        // Drop Paystack's query so a reload does not verify again.
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+      if (returning && reference) {
+        setReturnNotice({ tone: "info", text: "Confirming your payment with Paystack…" });
+        const result = await apiJson<{ verification?: TopUpVerification; wallet?: WalletView; error?: string }>(
+          "/api/wallet/payments/verify",
+          { method: "POST", body: JSON.stringify({ reference }) }
+        );
+        if (result.ok && result.data.verification) {
+          setReturnNotice(verificationNotice(result.data.verification));
+          if (result.data.verification.outcome !== "pending") storeRef(null);
+          if (result.data.wallet) {
+            setWallet(result.data.wallet);
+            setLoadError(null);
+            return;
+          }
+        } else {
+          // The reference is not kept: the top-up still appears under unfinished
+          // top-ups, and the webhook credits it if it was paid.
+          storeRef(null);
+          setReturnNotice({ tone: "error", text: result.data.error || "Could not confirm the payment." });
+        }
+      }
+      await load();
+    })();
+  }, [ownerId, load]);
+
+  const fundCards = useMemo(() => {
+    const received = wallet?.received ?? { topUps: 0, crowdfunding: 0, shop: 0 };
     return [
+      {
+        id: "topUps",
+        label: "Top-ups",
+        description: "Money you added through Paystack",
+        amount: received.topUps,
+        icon: PiggyBank,
+      },
       {
         id: "crowdfunding",
         label: "Crowdfunding",
-        description: "Citizen contributions and campaign pools",
-        balance: sources.crowdfunding,
+        description: "Donations to your campaigns",
+        amount: received.crowdfunding,
         icon: Users,
       },
       {
-        id: "merchandise",
+        id: "shop",
         label: "Merchandise sales",
-        description: "Proceeds from store requests via Faida",
-        balance: sources.merchandise,
+        description: "Paid orders for your products",
+        amount: received.shop,
         icon: Package,
-      },
-      {
-        id: "donations",
-        label: "Direct donations",
-        description: "One-off gifts credited to your wallet",
-        balance: sources.donations,
-        icon: HandCoins,
-      },
-      {
-        id: "transfers",
-        label: "Transfers & top-ups",
-        description: "Manual top-ups and internal transfers",
-        balance: sources.transfers,
-        icon: PiggyBank,
       },
     ];
   }, [wallet]);
 
-  const availableBalance = useMemo(
-    () => fundCards.reduce((sum, s) => sum + s.balance, 0),
-    [fundCards]
-  );
+  const totalReceived = fundCards.reduce((sum, s) => sum + s.amount, 0);
 
-  if (!leader || !wallet) return null;
+  if (!ownerId) return null;
 
-  const handleContinuePaystack = () => {
+  if (!wallet) {
+    return (
+      <div className="space-y-10">
+        <AdminHeader title="Wallet" description="Your M-Taji wallet: top up via Paystack and request withdrawals." />
+        {returnNotice && <NoticeBox notice={returnNotice} />}
+        {loadError ? (
+          <div className="space-y-4">
+            <NoticeBox notice={{ tone: "error", text: loadError }} />
+            <Button type="button" variant="secondary" onClick={() => void load()}>
+              Try again
+            </Button>
+          </div>
+        ) : (
+          <p className="text-small text-ink-muted" role="status">
+            Loading your wallet…
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const available = wallet.availableBalance;
+  const payout = PAYOUT_METHODS.find((m) => m.value === payoutMethod) ?? PAYOUT_METHODS[0];
+
+  const handleContinuePaystack = async () => {
     const amount = Number(topUpAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setTopUpNote("Enter a valid top-up amount.");
+      setTopUpNote({ tone: "error", text: "Enter a valid top-up amount." });
       return;
     }
-    const sourceLabel =
-      TOP_UP_SOURCES.find((s) => s.value === topUpSource)?.label ?? topUpSource;
-    setTopUpNote(`Recording ${formatCurrency(amount)} via ${sourceLabel}…`);
-    void apiJson<{ ok: boolean; error?: string; wallet?: WalletState }>("/api/wallet/top-up", {
-      method: "POST",
-      body: JSON.stringify({ amount, source: topUpSource }),
-    }).then((result) => {
-      if (!result.ok || !result.data.wallet) {
-        setTopUpNote(result.data.error || "Could not record the top-up.");
-        return;
-      }
-      setWallet(result.data.wallet);
-      setTopUpAmount("");
-      setTopUpNote(
-        `${formatCurrency(amount)} recorded on Transfers & top-ups. This is not a live Paystack charge.`
-      );
-    });
+    if (amount < MIN_TOP_UP) {
+      setTopUpNote({ tone: "error", text: `The minimum top-up is ${formatCurrency(MIN_TOP_UP)}.` });
+      return;
+    }
+    setTopUpBusy(true);
+    setTopUpNote({ tone: "info", text: "Opening Paystack checkout…" });
+    const result = await apiJson<{ checkoutUrl?: string; reference?: string; error?: string }>(
+      "/api/wallet/payments/top-up",
+      { method: "POST", body: JSON.stringify({ amount, method: payMethod }) }
+    );
+    if (!result.ok || !result.data.checkoutUrl) {
+      setTopUpBusy(false);
+      setTopUpNote({ tone: "error", text: result.data.error || "Could not start the payment." });
+      return;
+    }
+    if (result.data.reference) storeRef(result.data.reference);
+    window.location.assign(result.data.checkoutUrl);
   };
 
-  const handleWithdraw = () => {
+  const handleWithdraw = async () => {
     const amount = Number(withdrawAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setWithdrawNote("Enter a valid withdrawal amount.");
+      setWithdrawNote({ tone: "error", text: "Enter a valid withdrawal amount." });
       return;
     }
-    if (amount > availableBalance) {
-      setWithdrawNote("Amount exceeds available balance.");
+    if (amount > available) {
+      setWithdrawNote({ tone: "error", text: "Amount exceeds your available balance." });
       return;
     }
-
-    void apiJson<{ ok: boolean; error?: string; wallet?: WalletState }>("/api/wallet/withdraw", {
+    if (!destination.trim()) {
+      setWithdrawNote({ tone: "error", text: "Enter where the money should be sent." });
+      return;
+    }
+    setWithdrawBusy(true);
+    const result = await apiJson<{ wallet?: WalletView; error?: string }>("/api/wallet/payments/withdraw", {
       method: "POST",
-      body: JSON.stringify({ amount }),
-    }).then((result) => {
-      if (!result.ok || !result.data.wallet) {
-        setWithdrawNote(result.data.error || "Could not record the withdrawal.");
-        return;
-      }
-      setWallet(result.data.wallet);
-      setWithdrawAmount("");
-      setWithdrawNote(
-        `Withdrawal of ${formatCurrency(amount)} recorded. Processing typically takes 1–2 business days.`
-      );
+      body: JSON.stringify({ amount, method: payoutMethod, destination: destination.trim() }),
+    });
+    setWithdrawBusy(false);
+    if (!result.ok) {
+      setWithdrawNote({ tone: "error", text: result.data.error || "Could not request the withdrawal." });
+      return;
+    }
+    if (result.data.wallet) setWallet(result.data.wallet);
+    else void load();
+    setWithdrawAmount("");
+    setWithdrawNote({
+      tone: "success",
+      text: `Withdrawal of ${formatCurrency(amount)} requested. It stays pending until it is paid out.`,
     });
   };
 
@@ -189,67 +285,63 @@ export default function PoliticianWalletPage() {
     <div className="space-y-10">
       <AdminHeader
         title="Wallet"
-        description="Track funds by source, top up via Paystack, and request withdrawals."
+        description="Your M-Taji wallet: top up via Paystack and request withdrawals."
       />
+
+      {returnNotice && <NoticeBox notice={returnNotice} />}
 
       <section className="rounded-lg border border-border-accent bg-accent-soft p-6 sm:p-8">
         <p className="meta-label text-accent">Available balance</p>
         <p className="mt-3 font-mono text-display text-ink sm:text-[2.5rem]">
-          {formatCurrency(availableBalance)}
+          {formatCurrency(available)}
         </p>
         <p className="mt-2 max-w-xl text-small text-ink-muted">
-          Combined across crowdfunding, merchandise sales, donations, and
-          transfers for {leader.honorific} {leader.name}.
+          {wallet.pendingWithdrawals > 0
+            ? `Wallet balance ${formatCurrency(wallet.balance)}, of which ${formatCurrency(
+                wallet.pendingWithdrawals
+              )} is held for pending withdrawals.`
+            : `One pooled wallet for ${ownerLabel}. Top-ups, donations and sales all land here and pay for your ads.`}
         </p>
       </section>
 
       <section>
-        <h2 className="mb-4 text-h3 text-ink">Funds by source</h2>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <h2 className="mb-4 text-h3 text-ink">Received to date</h2>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {fundCards.map((source) => {
             const Icon = source.icon;
-            const share =
-              availableBalance > 0
-                ? Math.round((source.balance / availableBalance) * 100)
-                : 0;
+            const share = totalReceived > 0 ? Math.round((source.amount / totalReceived) * 100) : 0;
             return (
-              <article
-                key={source.id}
-                className="rounded-lg border border-border bg-surface p-5"
-              >
+              <article key={source.id} className="rounded-lg border border-border bg-surface p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-md bg-bg-elevated text-accent">
                     <Icon className="h-5 w-5" aria-hidden />
                   </div>
                   <span className="text-caption text-ink-subtle">{share}%</span>
                 </div>
-                <h3 className="mt-4 text-small font-medium text-ink">
-                  {source.label}
-                </h3>
-                <p className="mt-1 text-caption text-ink-muted">
-                  {source.description}
-                </p>
-                <p className="mt-4 font-mono text-h3 text-accent">
-                  {formatCurrency(source.balance)}
-                </p>
+                <h3 className="mt-4 text-small font-medium text-ink">{source.label}</h3>
+                <p className="mt-1 text-caption text-ink-muted">{source.description}</p>
+                <p className="mt-4 font-mono text-h3 text-accent">{formatCurrency(source.amount)}</p>
               </article>
             );
           })}
         </div>
+        <p className="mt-3 text-caption text-ink-subtle">
+          Lifetime totals credited to your wallet. Spending and withdrawals come out of the one balance above.
+        </p>
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-lg border border-border bg-surface p-6">
           <h2 className="text-h3 text-ink">Add funds</h2>
           <p className="mt-1 text-small text-ink-muted">
-            Top up your wallet and choose where the funds should come from.
+            Pay through Paystack. Your balance updates once Paystack confirms the payment.
           </p>
 
           <div className="mt-6 space-y-4">
-            <AdminField label="Amount (KES)">
+            <AdminField label="Amount (KES)" hint={`Minimum ${formatCurrency(MIN_TOP_UP)}.`}>
               <AdminInput
                 type="number"
-                min={1}
+                min={MIN_TOP_UP}
                 step={100}
                 placeholder="e.g. 5000"
                 value={topUpAmount}
@@ -259,28 +351,37 @@ export default function PoliticianWalletPage() {
                 }}
               />
             </AdminField>
-            <AdminField
-              label="Source"
-              hint="Select the channel or pool you intend to pull funds from."
-            >
-              <AdminSelect
-                value={topUpSource}
-                onChange={(e) => setTopUpSource(e.target.value)}
-              >
-                {TOP_UP_SOURCES.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
+            <AdminField label="Pay with">
+              <AdminSelect value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
+                {PAY_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
                   </option>
                 ))}
               </AdminSelect>
             </AdminField>
-            <Button type="button" fullWidth onClick={handleContinuePaystack}>
-              Continue to Paystack
+            <Button type="button" fullWidth disabled={topUpBusy} onClick={() => void handleContinuePaystack()}>
+              {topUpBusy ? "Opening Paystack…" : "Continue to Paystack"}
             </Button>
-            {topUpNote && (
-              <p className="text-caption text-ink-muted" role="status">
-                {topUpNote}
-              </p>
+            {topUpNote && <NoticeBox notice={topUpNote} compact />}
+            {wallet.pendingTopUps.length > 0 && (
+              <div>
+                <p className="meta-label text-ink-subtle">Recent top-ups not yet in your balance</p>
+                <ul className="mt-2 divide-y divide-border rounded-md border border-border">
+                  {wallet.pendingTopUps.slice(0, 5).map((a) => (
+                    <li key={a.paymentId} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="font-mono text-small text-ink">{formatCurrency(a.amount)}</p>
+                        <p className="text-caption text-ink-subtle">{new Date(a.createdAt).toLocaleString()}</p>
+                      </div>
+                      <StatusBadge
+                        tone={a.state === "processing" || a.state === "awaiting-payment" ? "warning" : "error"}
+                        label={ATTEMPT_LABELS[a.state]}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         </div>
@@ -288,7 +389,7 @@ export default function PoliticianWalletPage() {
         <div className="rounded-lg border border-border bg-surface p-6">
           <h2 className="text-h3 text-ink">Withdraw funds</h2>
           <p className="mt-1 text-small text-ink-muted">
-            Request a withdrawal from your available balance.
+            Request a payout from your available balance. Requests are reviewed before money is sent.
           </p>
 
           <div className="mt-6 space-y-4">
@@ -305,37 +406,66 @@ export default function PoliticianWalletPage() {
                 }}
               />
             </AdminField>
-            <p className="text-caption text-ink-subtle">
-              Available to withdraw: {formatCurrency(availableBalance)}
-            </p>
-            <Button type="button" fullWidth onClick={handleWithdraw}>
-              Submit withdrawal
+            <AdminField label="Pay out to">
+              <AdminSelect value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value)}>
+                {PAYOUT_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </AdminSelect>
+            </AdminField>
+            <AdminField label={payoutMethod === "mpesa" ? "M-Pesa number" : "Account details"}>
+              <AdminInput
+                type="text"
+                placeholder={payout.placeholder}
+                value={destination}
+                onChange={(e) => {
+                  setDestination(e.target.value);
+                  setWithdrawNote(null);
+                }}
+              />
+            </AdminField>
+            <p className="text-caption text-ink-subtle">Available to withdraw: {formatCurrency(available)}</p>
+            <Button
+              type="button"
+              fullWidth
+              disabled={withdrawBusy || available <= 0}
+              onClick={() => void handleWithdraw()}
+            >
+              {withdrawBusy ? "Submitting…" : "Submit withdrawal"}
             </Button>
-            {withdrawNote && (
-              <p className="text-caption text-ink-muted" role="status">
-                {withdrawNote}
-              </p>
-            )}
+            {withdrawNote && <NoticeBox notice={withdrawNote} compact />}
           </div>
         </div>
       </section>
 
-      {(wallet?.movements?.length ?? 0) > 0 && (
-        <section className="mt-10">
-          <h2 className="text-h3 text-ink">Recent activity</h2>
+      <section className="mt-10">
+        <h2 className="text-h3 text-ink">Recent activity</h2>
+        {wallet.movements.length === 0 ? (
+          <p className="mt-4 text-small text-ink-muted">No wallet activity yet. Top up to get started.</p>
+        ) : (
           <ul className="mt-4 divide-y divide-border rounded-lg border border-border bg-surface">
-            {wallet?.movements?.slice(0, 15).map((m) => {
-              const incoming = m.kind === "top-up" || m.kind === "ad-refund";
+            {wallet.movements.slice(0, 15).map((m) => {
+              const incoming = m.direction === "in";
               return (
                 <li key={m.id} className="flex items-start justify-between gap-4 px-4 py-3">
                   <div className="min-w-0">
-                    <p className="text-small text-ink">{MOVEMENT_LABELS[m.kind]}</p>
+                    <p className="flex items-center gap-2 text-small text-ink">
+                      {MOVEMENT_LABELS[m.kind]}
+                      {m.status === "pending" && <StatusBadge tone="warning" label="Pending" />}
+                      {m.status === "failed" && <StatusBadge tone="error" label="Not paid" />}
+                    </p>
                     <p className="truncate text-caption text-ink-subtle">
                       {m.note ? `${m.note} · ` : ""}
                       {new Date(m.createdAt).toLocaleString()}
                     </p>
                   </div>
-                  <span className={`shrink-0 font-mono text-small ${incoming ? "text-success" : "text-ink"}`}>
+                  <span
+                    className={`shrink-0 font-mono text-small ${
+                      m.status === "failed" ? "text-ink-subtle line-through" : incoming ? "text-success" : "text-ink"
+                    }`}
+                  >
                     {incoming ? "+" : "−"}
                     {formatCurrency(m.amount)}
                   </span>
@@ -343,8 +473,31 @@ export default function PoliticianWalletPage() {
               );
             })}
           </ul>
-        </section>
-      )}
+        )}
+      </section>
     </div>
+  );
+}
+
+function NoticeBox({ notice, compact }: { notice: Notice; compact?: boolean }) {
+  return (
+    <p
+      className={`rounded-md border ${compact ? "px-3 py-2 text-caption" : "px-4 py-3 text-small"} ${NOTICE_CLASSES[notice.tone]}`}
+      role={notice.tone === "error" ? "alert" : "status"}
+    >
+      {notice.text}
+    </p>
+  );
+}
+
+function StatusBadge({ tone, label }: { tone: "warning" | "error"; label: string }) {
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 py-0.5 text-caption ${
+        tone === "warning" ? "bg-warning-muted text-warning" : "bg-error-muted text-error"
+      }`}
+    >
+      {label}
+    </span>
   );
 }

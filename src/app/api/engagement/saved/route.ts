@@ -11,7 +11,7 @@ export async function GET() {
   if (!session) {
     return NextResponse.json({ ok: false, error: "Sign in required." }, { status: 401 });
   }
-  return send(readSavedOpportunities(session));
+  return send(await readSavedOpportunities(session));
 }
 
 export async function PUT(request: Request) {
@@ -25,7 +25,7 @@ export async function PUT(request: Request) {
   } catch {
     return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
   }
-  return send(saveOpportunities(session, body));
+  return send(await saveOpportunities(session, body));
 }
 
 function send(result: ContentResult) {

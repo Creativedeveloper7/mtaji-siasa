@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
-import { withSessionCookie } from "@/server/auth/http";
 import { signUp, type SignUpInput } from "@/server/auth/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * 201 { ok, session } when the account is signed in straight away, or
+ * 201 { ok, needsConfirmation } when Supabase emails a confirmation link first.
+ */
 export async function POST(request: Request) {
   let body: SignUpInput;
   try {
@@ -18,16 +21,15 @@ export async function POST(request: Request) {
       role: undefined,
     };
   }
-  const result = signUp(body);
+  const result = await signUp(body, new URL(request.url).origin);
   if (!result.ok) {
     return NextResponse.json(
       { ok: false, error: result.error },
       { status: result.status }
     );
   }
-  return withSessionCookie(
-    { ok: true, session: result.session },
-    result.session.userId,
-    201
-  );
+  if ("needsConfirmation" in result) {
+    return NextResponse.json({ ok: true, needsConfirmation: true }, { status: 201 });
+  }
+  return NextResponse.json({ ok: true, session: result.session }, { status: 201 });
 }

@@ -4,7 +4,9 @@ import { AlertTriangle, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-url";
 import type { AdCampaign, AdCampaignStatus, AdPlatformRun } from "@/types";
+import type { TrackerAdExtras } from "@/server/tracker/adly/mapping";
 
 export const AD_STATUS: Record<AdCampaignStatus, { label: string; tone: "neutral" | "success" | "warning" | "accent" | "error" }> = {
   pending_approval: { label: "Awaiting approval", tone: "warning" },
@@ -25,7 +27,16 @@ const RUN_LABEL: Record<AdPlatformRun["status"], string> = {
   ended: "Ended",
 };
 
-export type AdCardAction = "approve" | "reject" | "pause" | "resume" | "stop" | "sync";
+export type AdCardAction = "approve" | "reject" | "publish" | "pause" | "resume" | "stop" | "sync";
+
+/** What this backend can do to a running ad. The Tracker backend has no pause/stop yet. */
+export interface AdCardControls {
+  pause: boolean;
+  resume: boolean;
+  stop: boolean;
+}
+
+const ALL_CONTROLS: AdCardControls = { pause: true, resume: true, stop: true };
 
 const number = (n?: number) => (n ?? 0).toLocaleString();
 
@@ -34,16 +45,27 @@ export function AdCampaignCard({
   busy,
   admin = false,
   owner,
+  controls = ALL_CONTROLS,
+  approvalPublishes = true,
   onAction,
 }: {
-  campaign: AdCampaign;
+  /** Tracker extras (unpaid, changes waiting for review, archived-but-on-network) are optional. */
+  campaign: AdCampaign & TrackerAdExtras;
   busy?: AdCardAction | null;
   admin?: boolean;
   /** Shown to admins: who the ad is for */
   owner?: string;
+  controls?: AdCardControls;
+  /** Legacy store: approving publishes. Tracker: approving lets the owner publish. */
+  approvalPublishes?: boolean;
   onAction: (action: AdCardAction) => void;
 }) {
-  const status = AD_STATUS[campaign.status];
+  // Archived in Siasa never means stopped on the network.
+  const status = campaign.networkMayBeRunning
+    ? { label: "Archived (check network)", tone: "warning" as const }
+    : AD_STATUS[campaign.status];
+  const unpaidKes = campaign.unpaidKes ?? 0;
+  const awaitingReview = campaign.status === "pending_approval" || Boolean(campaign.changesPendingReview);
   const running = campaign.status === "active" || campaign.status === "paused";
   const spent = campaign.platforms.reduce((sum, r) => sum + (r.spentKes ?? 0), 0);
   const impressions = campaign.platforms.reduce((sum, r) => sum + (r.impressions ?? 0), 0);
@@ -69,7 +91,11 @@ export function AdCampaignCard({
                   : ` · ${campaign.durationDays} day${campaign.durationDays === 1 ? "" : "s"}`}
               </p>
             </div>
-            <StatusBadge status={status.label} tone={status.tone} pulse={campaign.status === "active"} />
+            <div className="flex flex-wrap items-center gap-1.5">
+              {unpaidKes > 0 && <StatusBadge status="Unpaid" tone="error" />}
+              {campaign.changesPendingReview && <StatusBadge status="Changes awaiting approval" tone="warning" />}
+              <StatusBadge status={status.label} tone={status.tone} pulse={campaign.status === "active"} />
+            </div>
           </div>
 
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-caption sm:grid-cols-4">
@@ -79,7 +105,18 @@ export function AdCampaignCard({
             <Stat label="Clicks" value={number(clicks)} />
             {spent > 0 && <Stat label="Spent" value={formatCurrency(Math.round(spent))} />}
             {campaign.refundedKes > 0 && <Stat label="Refunded" value={formatCurrency(campaign.refundedKes)} />}
+            {unpaidKes > 0 && <Stat label="Unpaid" value={formatCurrency(unpaidKes)} />}
           </dl>
+
+          {unpaidKes > 0 && (
+            <p className="mt-3 flex items-start gap-1 rounded-md border border-error/30 bg-error-muted px-3 py-2 text-caption text-error" role="alert">
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+              <span>
+                Unpaid: {(campaign.unpaid ?? []).map((u) => `${u.provider === "x" ? "X" : u.provider.charAt(0).toUpperCase() + u.provider.slice(1)} ${formatCurrency(u.amountKes)}`).join(", ") || formatCurrency(unpaidKes)}
+                {" "}— the network accepted the ad but the wallet charge failed. Not retried automatically.
+              </span>
+            </p>
+          )}
 
           {campaign.statusNote && <p className="mt-3 text-caption text-ink-muted">{campaign.statusNote}</p>}
 
@@ -107,29 +144,43 @@ export function AdCampaignCard({
               <p className="mt-2 font-medium text-ink">{campaign.headline}</p>
               <p className="mt-1 whitespace-pre-wrap">{campaign.body}</p>
               <p className="mt-2">Keywords: {campaign.keywords.join(", ")}</p>
-              <a href={campaign.landingUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-accent">
-                {campaign.landingUrl} <ExternalLink className="h-3 w-3" />
-              </a>
+              {safeHttpUrl(campaign.landingUrl) ? (
+                <a href={safeHttpUrl(campaign.landingUrl)} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-accent">
+                  {campaign.landingUrl} <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                campaign.landingUrl && <p className="mt-1 break-all">{campaign.landingUrl}</p>
+              )}
             </details>
           )}
         </div>
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-border bg-bg-elevated px-4 py-3">
-        {campaign.status === "pending_approval" && admin && (
+        {awaitingReview && admin && (
           <>
             <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("reject")}>
-              {busy === "reject" ? "Rejecting…" : "Reject & refund"}
+              {busy === "reject" ? "Rejecting…" : approvalPublishes ? "Reject & refund" : "Reject"}
             </Button>
             <Button type="button" size="sm" disabled={!!busy} onClick={() => onAction("approve")}>
-              {busy === "approve" ? "Publishing…" : "Approve & publish"}
+              {busy === "approve" ? (approvalPublishes ? "Publishing…" : "Approving…") : approvalPublishes ? "Approve & publish" : "Approve"}
             </Button>
           </>
         )}
         {campaign.status === "pending_approval" && !admin && (
           <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("reject")}>
-            {busy === "reject" ? "Cancelling…" : "Cancel & refund"}
+            {busy === "reject" ? "Cancelling…" : approvalPublishes ? "Cancel & refund" : "Cancel"}
           </Button>
+        )}
+        {campaign.status === "launching" && !admin && !approvalPublishes && (
+          <>
+            <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("reject")}>
+              {busy === "reject" ? "Cancelling…" : "Cancel"}
+            </Button>
+            <Button type="button" size="sm" disabled={!!busy} onClick={() => onAction("publish")}>
+              {busy === "publish" ? "Publishing…" : "Publish now"}
+            </Button>
+          </>
         )}
         {running && (
           <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => onAction("sync")}>
@@ -137,17 +188,17 @@ export function AdCampaignCard({
             Refresh results
           </Button>
         )}
-        {campaign.status === "active" && (
+        {campaign.status === "active" && controls.pause && (
           <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => onAction("pause")}>
             {busy === "pause" ? "Pausing…" : "Pause"}
           </Button>
         )}
-        {campaign.status === "paused" && (
+        {campaign.status === "paused" && controls.resume && (
           <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => onAction("resume")}>
             {busy === "resume" ? "Resuming…" : "Resume"}
           </Button>
         )}
-        {running && (
+        {running && controls.stop && (
           <Button type="button" size="sm" variant="danger" disabled={!!busy} onClick={() => onAction("stop")}>
             {busy === "stop" ? "Stopping…" : "Stop & refund unspent"}
           </Button>
