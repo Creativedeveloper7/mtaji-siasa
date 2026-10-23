@@ -82,6 +82,9 @@ export const LEADER_TYPE_LABELS: Record<LeaderType, string> = {
   aspirant: "Aspirant",
 };
 
+/** Smallest ad budget, in KES. AD_MIN_BUDGET_KES on the server can raise it. */
+export const MIN_AD_BUDGET_KES = 100;
+
 /** Placeholder WhatsApp deep-link for Faida prototype */
 export const FAIDA_WHATSAPP_URL =
   "https://wa.me/254700000000?text=Hello%20Faida%2C%20I%20want%20to%20engage%20via%20M-Taji%20Siasa";

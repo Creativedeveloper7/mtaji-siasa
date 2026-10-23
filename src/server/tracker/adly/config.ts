@@ -1,3 +1,5 @@
+import { MIN_AD_BUDGET_KES } from "@/lib/constants";
+
 /**
  * Siasa-side ad settings on the Tracker backend. Network credentials are not
  * here: they are Supabase function secrets (GADS_*, X_*, META_*, TIKTOK_*,
@@ -12,7 +14,7 @@ export function trackerAdSettings() {
   };
   return {
     reachPerKes: number("AD_REACH_PER_KES", 10),
-    minBudgetKes: number("AD_MIN_BUDGET_KES", 500),
+    minBudgetKes: number("AD_MIN_BUDGET_KES", MIN_AD_BUDGET_KES),
     maxBudgetKes: number("AD_MAX_BUDGET_KES", 500_000),
     /** Admin approves in Siasa before the owner can publish. */
     requireApproval: process.env.ADS_REQUIRE_APPROVAL !== "false",
