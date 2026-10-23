@@ -20,3 +20,20 @@ describe("trackerAdSettings minimum budget", () => {
     expect(trackerAdSettings().minBudgetKes).toBe(750);
   });
 });
+
+describe("trackerAdSettings approval", () => {
+  const original = process.env.ADS_REQUIRE_APPROVAL;
+  afterEach(() => {
+    if (original === undefined) delete process.env.ADS_REQUIRE_APPROVAL;
+    else process.env.ADS_REQUIRE_APPROVAL = original;
+  });
+
+  it("publishes without approval unless ADS_REQUIRE_APPROVAL is true", () => {
+    delete process.env.ADS_REQUIRE_APPROVAL;
+    expect(trackerAdSettings().requireApproval).toBe(false);
+    process.env.ADS_REQUIRE_APPROVAL = "false";
+    expect(trackerAdSettings().requireApproval).toBe(false);
+    process.env.ADS_REQUIRE_APPROVAL = "true";
+    expect(trackerAdSettings().requireApproval).toBe(true);
+  });
+});

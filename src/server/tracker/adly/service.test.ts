@@ -132,7 +132,8 @@ function xAccepts() {
 }
 
 beforeEach(() => {
-  delete process.env.ADS_REQUIRE_APPROVAL;
+  // Most cases below test the admin approval gate, which is opt-in.
+  process.env.ADS_REQUIRE_APPROVAL = "true";
   delete process.env.ADS_DRY_RUN;
   h.userId = OWNER;
   h.balance = 100_000;
@@ -201,6 +202,18 @@ describe("H1: status from the client never skips approval", () => {
     expect(h.callEdge).toHaveBeenCalledWith("publish-x-ads", "token", expect.anything());
     expect(h.debit).toHaveBeenCalledTimes(1);
     expect(readSiasaMeta(stored().metadata).publishing).toBeUndefined();
+  });
+});
+
+describe("default: no approval step", () => {
+  it("publishes a pending ad straight away when ADS_REQUIRE_APPROVAL is not set", async () => {
+    delete process.env.ADS_REQUIRE_APPROVAL;
+    seed(composerRow());
+    xAccepts();
+    const res = await service.publishCampaign(leaderSession, DRAFT_ID, {});
+    expect(res.ok).toBe(true);
+    expect(h.callEdge).toHaveBeenCalledWith("publish-x-ads", "token", expect.anything());
+    expect(h.debit).toHaveBeenCalledTimes(1);
   });
 });
 

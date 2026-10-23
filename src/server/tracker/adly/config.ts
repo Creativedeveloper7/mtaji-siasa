@@ -16,8 +16,11 @@ export function trackerAdSettings() {
     reachPerKes: number("AD_REACH_PER_KES", 10),
     minBudgetKes: number("AD_MIN_BUDGET_KES", MIN_AD_BUDGET_KES),
     maxBudgetKes: number("AD_MAX_BUDGET_KES", 500_000),
-    /** Admin approves in Siasa before the owner can publish. */
-    requireApproval: process.env.ADS_REQUIRE_APPROVAL !== "false",
+    /**
+     * Admin approves in Siasa before the owner can publish. Off by default: ads
+     * are approved automatically and publish as soon as they are created.
+     */
+    requireApproval: process.env.ADS_REQUIRE_APPROVAL === "true",
     /** Ask the edge functions for a dry run (audit row only, nothing created or charged). */
     dryRun: process.env.ADS_DRY_RUN === "true",
     siteUrl: (process.env.PUBLIC_SITE_URL ?? "").replace(/\/$/, ""),

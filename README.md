@@ -34,7 +34,7 @@ Environment (`.env.local`):
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Tracker backend: the publishable (anon) key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server only. Admin pages (user directory, admin edits of other people's records, all applications, Adly interest leads) |
 | `MTAJI_STORE=memory` | Force the in-memory sample data |
-| `ADS_REQUIRE_APPROVAL` | `false` lets owners publish ads without admin approval (default `true`) |
+| `ADS_REQUIRE_APPROVAL` | `true` makes an admin approve each ad before it publishes (default `false`: ads are approved automatically) |
 | `ADS_DRY_RUN` | `true` makes the Tracker ad edge functions audit only: nothing is created or charged |
 | `PUBLIC_SITE_URL` | Public https address ads link to |
 | `AD_REACH_PER_KES`, `AD_MIN_BUDGET_KES`, `AD_MAX_BUDGET_KES` | Ad pricing shown in the composer (`AD_KES_PER_USD` for the memory demo) |
