@@ -11,6 +11,7 @@ import { AdCampaignCard, type AdCardAction, type AdCardControls } from "@/compon
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { apiJson } from "@/lib/api-client";
+import { MIN_AD_BUDGET_KES } from "@/lib/constants";
 import { cn, formatCurrency } from "@/lib/utils";
 import type { AdCampaign, AdPlatform, Project } from "@/types";
 
@@ -28,7 +29,7 @@ interface Quote {
   controls?: AdCardControls;
 }
 
-const PRESETS = [500, 1000, 2500, 5000, 10000, 25000];
+const PRESETS = [100, 500, 1000, 2500, 5000, 10000, 25000];
 
 /** Shorten to a limit without cutting a word in half. */
 function clip(text: string, limit: number): string {
@@ -125,7 +126,7 @@ export default function PoliticianAdsPage() {
 
   const limits = quote?.limits;
   const chargeOnPublish = quote?.chargeOn === "publish";
-  const min = quote?.minBudgetKes ?? 500;
+  const min = quote?.minBudgetKes ?? MIN_AD_BUDGET_KES;
   const reach = Math.round(budget * (quote?.reachPerKes ?? 10));
   const usd = budget / (quote?.kesPerUsd ?? 129);
   const perNetwork = platforms.length ? Math.floor(budget / platforms.length) : 0;

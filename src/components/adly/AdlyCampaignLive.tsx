@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { apiJson } from "@/lib/api-client";
 import { cn, formatCurrency } from "@/lib/utils";
+import { ADLY_ASK_EVENT, ADLY_CHAT_ID, ADLY_CHAT_INPUT_ID } from "@/components/adly/AdlyUI";
 
 interface Conversation {
   messages: { id: string; role: string; content: string; createdAt: string }[];
@@ -97,6 +98,16 @@ export function AdlyCampaignLive({
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [data?.messages.length]);
+
+  // The floating "Ask Adly" button hands its suggested question to this chat.
+  useEffect(() => {
+    const onAsk = (event: Event) => {
+      const text = (event as CustomEvent<string>).detail;
+      if (typeof text === "string" && text) setMessage(text);
+    };
+    window.addEventListener(ADLY_ASK_EVENT, onAsk);
+    return () => window.removeEventListener(ADLY_ASK_EVENT, onAsk);
+  }, []);
 
   if (unavailable) return <>{fallback}</>;
 
@@ -228,7 +239,7 @@ export function AdlyCampaignLive({
         )}
       </section>
 
-      <section className="rounded-lg border border-border-accent bg-accent-soft p-5 md:p-6">
+      <section id={ADLY_CHAT_ID} className="scroll-mt-6 rounded-lg border border-border-accent bg-accent-soft p-5 md:p-6">
         <h2 className="flex items-center gap-2 text-h3 text-ink">
           <Sparkles className="h-5 w-5 text-accent" aria-hidden />
           Adly
@@ -286,6 +297,8 @@ export function AdlyCampaignLive({
         </div>
         <div className="mt-3 flex items-end gap-2">
           <AdminTextarea
+            id={ADLY_CHAT_INPUT_ID}
+            aria-label="Message Adly"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Message Adly"

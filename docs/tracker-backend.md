@@ -249,8 +249,9 @@ Adly campaigns and dashboard paid ads are both `adly_campaigns` rows
 - Network credentials (`GADS_*`, `X_*`, `META_*`, `TIKTOK_*`,
   `OPENAI_API_KEY`) are Supabase function secrets in the Tracker project
   only. Siasa holds none.
-- `ADS_REQUIRE_APPROVAL` (default true) makes an admin approve before the
-  owner can publish. `ADS_DRY_RUN=true` asks the edge functions for a dry run:
+- Ads are approved automatically and publish (charging the wallet) as soon
+  as they are created. `ADS_REQUIRE_APPROVAL=true` makes an admin approve each
+  ad first; the owner then publishes it. `ADS_DRY_RUN=true` asks the edge functions for a dry run:
   an audit row only, nothing is created on a network or charged.
 - The Adly studio's posters, simulations and creatives still use the memory
   adapter. In Tracker mode a studio item tied to a project (timelapses,
