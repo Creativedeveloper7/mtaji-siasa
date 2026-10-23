@@ -42,6 +42,12 @@ function assistantContext(pathname: string) {
   return "home" as const;
 }
 
+/** The campaign id on /adly/advertising/<id>, which has its own Adly chat. */
+function campaignIdFrom(pathname: string): string | undefined {
+  const match = /^\/adly\/advertising\/([^/]+)\/?$/.exec(pathname);
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
+
 function dashboardHome(role?: string) {
   if (role === "admin") return "/admin";
   if (role === "leader" || role === "aspirant") return "/dashboard";
@@ -241,7 +247,7 @@ export function AdlyShell({ children }: { children: ReactNode }) {
                 </Button>
               </div>
               <div className="w-full">{children}</div>
-              <AdlyAssistant context={assistantContext(pathname)} />
+              <AdlyAssistant context={assistantContext(pathname)} campaignId={campaignIdFrom(pathname)} />
             </div>
           </div>
 

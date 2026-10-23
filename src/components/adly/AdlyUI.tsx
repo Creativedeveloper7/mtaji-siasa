@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
+import { useAdly } from "@/components/adly/AdlyProvider";
 
 const PROMPTS: Record<string, string[]> = {
   home: [
@@ -33,22 +35,44 @@ const PROMPTS: Record<string, string[]> = {
   ],
 };
 
+/** Event the floating assistant sends to a campaign's chat with a suggested question. */
+export const ADLY_ASK_EVENT = "adly:ask";
+export const ADLY_CHAT_ID = "adly-chat";
+export const ADLY_CHAT_INPUT_ID = "adly-chat-input";
+
+/**
+ * Floating "Ask Adly". Adly (the Tracker's adly-agent) answers inside a
+ * campaign, so on a campaign page this hands a question to that campaign's
+ * chat; elsewhere it lists the user's campaigns to open a chat with.
+ */
 export function AdlyAssistant({
   context = "home",
+  campaignId,
   className,
 }: {
   context?: keyof typeof PROMPTS;
+  campaignId?: string;
   className?: string;
 }) {
+  const { ready, backend, content } = useAdly();
   const [open, setOpen] = useState(false);
-  const [reply, setReply] = useState("");
   const prompts = PROMPTS[context] || PROMPTS.home;
+  const campaigns = useMemo(
+    () => [...content.campaigns].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5),
+    [content.campaigns]
+  );
 
-  const ask = (prompt: string) => {
-    setReply(
-      `Adly note — ${prompt} You stay in control: review any suggestion before publishing. Adly does not guarantee platform approval or fabricate completed development.`
-    );
+  const askInChat = (prompt?: string) => {
+    const chat = document.getElementById(ADLY_CHAT_ID);
+    if (!chat) return;
+    if (prompt) window.dispatchEvent(new CustomEvent(ADLY_ASK_EVENT, { detail: prompt }));
+    chat.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => document.getElementById(ADLY_CHAT_INPUT_ID)?.focus(), 300);
+    setOpen(false);
   };
+
+  // On a campaign page with a live chat, the button goes straight to it.
+  const hasChat = Boolean(campaignId) && backend === "tracker";
 
   return (
     <div className={cn("fixed bottom-5 right-5 z-40", className)}>
@@ -58,7 +82,7 @@ export function AdlyAssistant({
             <div>
               <p className="meta-label text-accent">Adly assistant</p>
               <p className="mt-1 text-caption text-ink-muted">
-                Contextual creative help
+                {hasChat ? "Pick a question to send to Adly" : "Adly answers inside a campaign"}
               </p>
             </div>
             <button
@@ -71,20 +95,53 @@ export function AdlyAssistant({
             </button>
           </div>
           <div className="space-y-2 p-4">
-            {prompts.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => ask(p)}
-                className="block w-full rounded-md border border-border bg-surface px-3 py-2.5 text-left text-small text-ink transition-colors hover:border-border-strong"
-              >
-                {p}
-              </button>
-            ))}
-            {reply && (
-              <p className="mt-3 rounded-md border border-border-accent bg-accent-soft p-3 text-caption text-ink-muted">
-                {reply}
+            {hasChat ? (
+              <>
+                {prompts.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => askInChat(p)}
+                    className="block w-full rounded-md border border-border bg-surface px-3 py-2.5 text-left text-small text-ink transition-colors hover:border-border-strong"
+                  >
+                    {p}
+                  </button>
+                ))}
+                <Button type="button" size="sm" variant="outline" className="w-full" onClick={() => askInChat()}>
+                  Write my own question
+                </Button>
+              </>
+            ) : !ready ? (
+              <p className="text-caption text-ink-subtle">Loading your campaigns…</p>
+            ) : backend !== "tracker" ? (
+              <p className="text-caption text-ink-muted">
+                Chatting with Adly needs the M-Taji Tracker backend, which is not connected on this server.
               </p>
+            ) : (
+              <>
+                {campaigns.length > 0 ? (
+                  <>
+                    <p className="text-caption text-ink-muted">Open a campaign to chat with Adly about it:</p>
+                    {campaigns.map((c) => (
+                      <Link
+                        key={c.id}
+                        href={`/adly/advertising/${encodeURIComponent(c.id)}#${ADLY_CHAT_ID}`}
+                        onClick={() => setOpen(false)}
+                        className="block w-full truncate rounded-md border border-border bg-surface px-3 py-2.5 text-left text-small text-ink transition-colors hover:border-border-strong"
+                      >
+                        {c.name}
+                      </Link>
+                    ))}
+                  </>
+                ) : (
+                  <p className="text-caption text-ink-muted">
+                    You have no campaigns yet. Plan one and Adly can help with targeting, channels and copy.
+                  </p>
+                )}
+                <Button href="/adly/advertising" size="sm" variant="outline" className="w-full">
+                  Plan a new campaign
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -94,6 +151,7 @@ export function AdlyAssistant({
         size="sm"
         onClick={() => setOpen((v) => !v)}
         className="shadow-raised"
+        aria-expanded={open}
       >
         <Sparkles className="h-4 w-4" />
         Ask Adly
