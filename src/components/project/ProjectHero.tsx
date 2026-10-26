@@ -7,6 +7,7 @@ import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants"
 import { formatDate } from "@/lib/utils";
 import { projectTypeLabel } from "@/lib/projects";
 import type { Project } from "@/types";
+import { ProjectCreator } from "@/components/project/ProjectCreator";
 
 interface ProjectHeroProps {
   project: Project;
@@ -40,6 +41,7 @@ export function ProjectHero({ project }: ProjectHeroProps) {
         <div className="mt-4 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div className="max-w-3xl">
             <h1 className="text-h1 text-ink md:text-display">{project.name}</h1>
+            <ProjectCreator project={project} size="md" link className="mt-4" />
             <p className="mt-3 text-body text-ink-muted">{project.location}</p>
           </div>
           <ShareButton title={project.name} />

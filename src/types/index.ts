@@ -115,6 +115,12 @@ export interface Project {
   mediaIds: string[];
   /** The project is looking for people, suppliers or partners through linked opportunities */
   requiresOpportunities?: boolean;
+  /**
+   * Display name of whoever created the project, for owners with no leader
+   * profile (Tracker changemakers that are not political figures).
+   * When the creator is a leader, leaderIds[0] is their profile instead.
+   */
+  creatorName?: string;
 }
 
 export interface ProjectMilestone {

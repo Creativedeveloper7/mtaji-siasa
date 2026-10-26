@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight, MapPin } from "lucide-react";
 import type { Project, ProjectStatus } from "@/types";
 import { SafeImage } from "@/components/ui/SafeImage";
+import { ProjectCreator } from "@/components/project/ProjectCreator";
 import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -64,6 +65,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
           <h3 className="mt-3 text-[1.3rem] font-extrabold leading-snug text-ink">
             {project.name}
           </h3>
+          <ProjectCreator project={project} className="mt-3" />
           <p className="mt-3 flex items-center gap-1.5 text-caption text-ink-muted">
             <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden />
             {project.location}

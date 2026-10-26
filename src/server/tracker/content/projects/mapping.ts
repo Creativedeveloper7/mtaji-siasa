@@ -583,6 +583,8 @@ export interface ProjectLinks {
    * studio offers a user only the projects they own (not commissioned ones).
    */
   ownerUserId?: string | null;
+  /** changemakers.name of the owner, when readable. Shown as "Led by" when there is no leader profile. */
+  ownerName?: string | null;
 }
 
 export const EMPTY_LINKS: ProjectLinks = {
@@ -644,6 +646,7 @@ export function mapInitiative(
     opportunityIds: [...links.opportunityIds],
     mediaIds: [...links.mediaIds],
     requiresOpportunities: links.hasPublishedOpportunity,
+    ...(links.ownerName ? { creatorName: links.ownerName } : {}),
   };
 }
 

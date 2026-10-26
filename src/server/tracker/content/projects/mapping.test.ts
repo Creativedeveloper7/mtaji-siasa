@@ -380,6 +380,13 @@ describe("milestone status", () => {
 });
 
 describe("mapInitiative", () => {
+  it("carries the changemaker name as creatorName for the Led by line", () => {
+    const named = mapInitiative(row(), links({ ownerName: "Kibra Youth Group" }), { slug: "x", today: TODAY });
+    expect(named.creatorName).toBe("Kibra Youth Group");
+    const unnamed = mapInitiative(row(), links(), { slug: "x", today: TODAY });
+    expect("creatorName" in unnamed).toBe(false);
+  });
+
   it("maps a live-like published row", () => {
     const mapped = mapInitiative(
       row(),

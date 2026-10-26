@@ -75,6 +75,33 @@ export async function changemakerOwners(
   return owners;
 }
 
+/**
+ * changemakers.id → name. Best effort: a failed read (for example no column
+ * grant for the reader) only hides the "Led by" fallback, never the project.
+ */
+export async function changemakerNames(
+  client: SupabaseClient,
+  changemakerIds: string[]
+): Promise<Map<string, string>> {
+  const ids = uuids(changemakerIds);
+  const names = new Map<string, string>();
+  if (ids.length === 0) return names;
+  try {
+    const { data, error } = (await client.from("changemakers").select("id, name").in("id", ids)) as {
+      data: Pick<ChangemakerRow, "id" | "name">[] | null;
+      error: unknown;
+    };
+    if (error || !data) return names;
+    for (const row of data) {
+      const name = typeof row.name === "string" ? row.name.trim() : "";
+      if (name) names.set(row.id, name);
+    }
+  } catch {
+    // ignore; see above
+  }
+  return names;
+}
+
 /** Figures that own (by user) or were commissioned on any of these projects. */
 async function figuresFor(
   client: SupabaseClient,
@@ -144,7 +171,7 @@ export async function loadProjectLinks(
   );
   if (ids.length === 0) return links;
 
-  const [milestones, opportunities, blogs, owners] = await Promise.all([
+  const [milestones, opportunities, blogs, owners, names] = await Promise.all([
     client
       .from("milestones")
       .select("id, initiative_id, status, target_date, created_at")
@@ -160,6 +187,7 @@ export async function loadProjectLinks(
       .in("initiative_id", ids)
       .order("created_at", { ascending: false }),
     changemakerOwners(client, rows.map((row) => row.changemaker_id)),
+    changemakerNames(client, rows.map((row) => row.changemaker_id)),
   ]);
   const figures = await figuresFor(client, [...owners.values()].filter((v): v is string => Boolean(v)), ids);
   const leaders = leaderIdsFrom(rows, owners, figures);
@@ -190,6 +218,8 @@ export async function loadProjectLinks(
     const link = links.get(row.id);
     const owner = owners.get(row.changemaker_id);
     if (link && owner) link.ownerUserId = owner;
+    const name = names.get(row.changemaker_id);
+    if (link && name) link.ownerName = name;
   }
   return links;
 }
