@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Megaphone, Users, Wallet } from "lucide-react";
+import { Megaphone, Sparkles, Users, Wallet } from "lucide-react";
 import { AdminField, AdminHeader, AdminInput, AdminSelect, AdminTextarea } from "@/components/admin/AdminUI";
 import { Button } from "@/components/ui/Button";
 import { AdPreview } from "@/components/ads/AdPreview";
 import { KeywordInput } from "@/components/ads/KeywordInput";
 import { AdCampaignCard, type AdCardAction, type AdCardControls } from "@/components/ads/AdCampaignCard";
+import { AdlyAdsAssistant, AdlyHelpCard } from "@/components/ads/AdlyAdsAssistant";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { apiJson } from "@/lib/api-client";
@@ -81,6 +82,14 @@ export default function PoliticianAdsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  // Adly side panel: open state and the ad it is working on.
+  const [adlyOpen, setAdlyOpen] = useState(false);
+  const [adlyCampaignId, setAdlyCampaignId] = useState<string | null>(null);
+  const openAdly = (id?: string | null) => {
+    setAdlyCampaignId(id ?? adlyCampaignId ?? items[0]?.id ?? null);
+    setAdlyOpen(true);
+  };
 
   const load = useCallback(async () => {
     const result = await apiJson<{ items?: AdCampaign[]; quote?: Quote; walletBalance?: number; error?: string }>("/api/ads/campaigns");
@@ -181,6 +190,7 @@ export default function PoliticianAdsPage() {
     }
     const created = result.data.item;
     setItems((current) => [created, ...current]);
+    setCreatedId(created.id);
     if (typeof result.data.walletBalance === "number") setBalance(result.data.walletBalance);
     setNotice(
       created.status === "pending_approval"
@@ -223,10 +233,16 @@ export default function PoliticianAdsPage() {
         title="Ads"
         description="Promote your projects on X and Google. Pay from your wallet, pick keywords, and preview the ad before it runs."
         action={
-          <Button href="/dashboard/wallet" variant="outline">
-            <Wallet className="h-4 w-4" />
-            {balance === null ? "Wallet" : `Wallet · ${formatCurrency(balance)}`}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => openAdly()}>
+              <Sparkles className="h-4 w-4" />
+              Ask Adly
+            </Button>
+            <Button href="/dashboard/wallet" variant="outline">
+              <Wallet className="h-4 w-4" />
+              {balance === null ? "Wallet" : `Wallet · ${formatCurrency(balance)}`}
+            </Button>
+          </div>
         }
       />
 
@@ -434,6 +450,8 @@ export default function PoliticianAdsPage() {
                   : `Pay ${formatCurrency(budget)} & launch ad`
                 : `Pay ${formatCurrency(budget)} & ${quote?.requireApproval ? "submit for approval" : "launch ad"}`}
             </Button>
+
+            <AdlyHelpCard hasAds={items.length > 0} onAsk={() => openAdly()} />
           </div>
 
           <aside className="hidden lg:sticky lg:top-24 lg:block lg:self-start">
@@ -446,9 +464,19 @@ export default function PoliticianAdsPage() {
       <section id="your-ads" className="mt-12 scroll-mt-24">
         <h2 className="text-h3 text-ink">Your ads</h2>
         {notice && (
-          <p className="mt-3 rounded-md border border-success/30 bg-success-muted px-3 py-2 text-small text-success" role="status">
-            {notice}
-          </p>
+          <div className="mt-3 rounded-md border border-success/30 bg-success-muted px-3 py-2 text-small text-success" role="status">
+            <p>{notice}</p>
+            {createdId && (
+              <button
+                type="button"
+                onClick={() => openAdly(createdId)}
+                className="mt-1 inline-flex items-center gap-1.5 font-medium underline underline-offset-2"
+              >
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                Ask Adly to review this ad
+              </button>
+            )}
+          </div>
         )}
         {items.length === 0 ? (
           <p className="mt-4 rounded-lg border border-dashed border-border px-4 py-8 text-center text-small text-ink-muted">
@@ -457,18 +485,36 @@ export default function PoliticianAdsPage() {
         ) : (
           <div className="mt-4 space-y-4">
             {items.map((campaign) => (
-              <AdCampaignCard
-                key={campaign.id}
-                campaign={campaign}
-                busy={busy?.id === campaign.id ? busy.action : null}
-                controls={quote?.controls}
-                approvalPublishes={!chargeOnPublish}
-                onAction={(action) => void act(campaign, action)}
-              />
+              <div key={campaign.id}>
+                <AdCampaignCard
+                  campaign={campaign}
+                  busy={busy?.id === campaign.id ? busy.action : null}
+                  controls={quote?.controls}
+                  approvalPublishes={!chargeOnPublish}
+                  onAction={(action) => void act(campaign, action)}
+                />
+                <button
+                  type="button"
+                  onClick={() => openAdly(campaign.id)}
+                  className="mt-1.5 inline-flex min-h-[36px] items-center gap-1.5 px-1 text-caption font-medium text-accent hover:text-accent-hover"
+                >
+                  <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                  Ask Adly about this ad
+                </button>
+              </div>
             ))}
           </div>
         )}
       </section>
+
+      <AdlyAdsAssistant
+        open={adlyOpen}
+        campaigns={items}
+        campaignId={adlyCampaignId}
+        onSelect={setAdlyCampaignId}
+        onClose={() => setAdlyOpen(false)}
+        onChanged={() => void load()}
+      />
 
       {confirming && project && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
