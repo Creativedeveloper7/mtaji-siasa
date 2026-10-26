@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { X, MessageCircle } from "lucide-react";
-import { FAIDA_WHATSAPP_URL } from "@/lib/constants";
+import { faidaWhatsAppUrl } from "@/lib/constants";
 import type { FaidaIntent } from "./FaidaProvider";
 import { Button } from "@/components/ui/Button";
 
@@ -129,14 +129,14 @@ export function WhatsAppModal({
 
           <div className="rounded-lg bg-[#0b141a] px-4 py-3">
             <p className="text-meta uppercase tracking-[0.06em] text-[#8696a0]">
-              Prototype conversation
+              Your first message
             </p>
             <div className="mt-3 max-w-[90%] rounded-lg rounded-tl-sm bg-[#005c4b] px-3 py-2 text-small text-ink">
               {copy.prompt}
             </div>
             <div className="mt-2 ml-auto max-w-[90%] rounded-lg rounded-tr-sm bg-[#202c33] px-3 py-2 text-small text-ink">
               Karibu. I can help you {copy.steps[step]?.toLowerCase() ?? "continue"}.
-              This prototype will later connect to live WhatsApp.
+              Tap Open WhatsApp and this message will be ready to send.
             </div>
           </div>
 
@@ -170,7 +170,7 @@ export function WhatsAppModal({
             <Button
               fullWidth
               type="button"
-              href={FAIDA_WHATSAPP_URL}
+              href={faidaWhatsAppUrl(contextLabel ? `${copy.prompt} (${contextLabel})` : copy.prompt)}
               className="bg-[#25D366] text-ink-inverse shadow-none hover:bg-[#20bd5c]"
             >
               Open WhatsApp

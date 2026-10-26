@@ -86,5 +86,10 @@ export const LEADER_TYPE_LABELS: Record<LeaderType, string> = {
 export const MIN_AD_BUDGET_KES = 100;
 
 /** Placeholder WhatsApp deep-link for Faida prototype */
-export const FAIDA_WHATSAPP_URL =
-  "https://wa.me/254700000000?text=Hello%20Faida%2C%20I%20want%20to%20engage%20via%20M-Taji%20Siasa";
+/** Faida's WhatsApp number (+254 741 686 073), digits only as wa.me expects. */
+export const FAIDA_WHATSAPP_NUMBER = "254741686073";
+
+/** WhatsApp chat with Faida, optionally with a message already typed in. */
+export function faidaWhatsAppUrl(message = "Hello Faida, I want to engage via M-Taji Siasa"): string {
+  return `https://wa.me/${FAIDA_WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+}
