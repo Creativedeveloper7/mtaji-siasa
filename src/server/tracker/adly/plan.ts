@@ -348,7 +348,7 @@ export function splitBudgetAcrossChannels(
 }
 
 /** Tracker platform fee taken from the client budget on each live submit. */
-export const ADLY_PLATFORM_FEE_RATE = 0.15;
+export const ADLY_PLATFORM_FEE_RATE = 0.20;
 
 export function mediaBudgetKes(clientBudgetKes: number): number {
   const gross = Math.max(0, Math.round(Number(clientBudgetKes) || 0));
