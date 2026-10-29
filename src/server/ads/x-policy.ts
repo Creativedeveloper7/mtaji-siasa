@@ -145,7 +145,7 @@ export function clipWords(text: string, limit: number): string {
   if (clean.length <= limit) return clean;
   const cut = clean.slice(0, limit + 1);
   const space = cut.lastIndexOf(" ");
-  return (space > limit * 0.5 ? cut.slice(0, space) : clean.slice(0, limit)).replace(/[\s,.;:—–-]+$/, "");
+  return (space > limit * 0.5 ? cut.slice(0, space) : clean.slice(0, limit)).replace(/[\s,.;:&—–-]+$/, "");
 }
 
 function activeRules(status?: ProjectStatus): Rule[] {

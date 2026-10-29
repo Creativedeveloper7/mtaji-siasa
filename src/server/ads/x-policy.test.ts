@@ -44,7 +44,7 @@ describe("reviewCopyForX", () => {
     );
     const rules = new Set(review.findings.map((f) => f.rule));
     expect(rules).toEqual(new Set(["political"]));
-    expect(review.suggested.headline).toBe("Nairobi River Cleaning &");
+    expect(review.suggested.headline).toBe("Nairobi River Cleaning");
     expect(review.suggested.body).toBe("The plan restores the riverbanks and builds green public spaces for families.");
     expect(review.suggested.keywords).toEqual(["Nairobi River"]);
   });
