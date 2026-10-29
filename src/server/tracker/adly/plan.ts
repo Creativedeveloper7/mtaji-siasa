@@ -406,7 +406,29 @@ export function normalizePlan(row: Pick<AdlyCampaignRow, "name" | "budget" | "ch
 // ---------------------------------------------------------------------------
 // landing page
 
-export const TRACKER_PUBLIC_ORIGIN = "https://m-taji.co.ke";
+/**
+ * The live site. The www host is the one that serves pages: the bare domain
+ * answers with a 308 redirect, and X's ad review treats a link that changes
+ * domain on the way as suspicious.
+ */
+export const TRACKER_PUBLIC_ORIGIN = "https://www.m-taji.co.ke";
+
+/** Hosts that only redirect, mapped to the host that serves the pages. */
+const CANONICAL_HOSTS: Record<string, string> = { "m-taji.co.ke": "www.m-taji.co.ke" };
+
+/** Rewrite a URL on a redirect-only host to the host that serves it; other URLs are returned unchanged. */
+export function canonicalSiteUrl(value: string): string {
+  try {
+    const u = new URL(value.trim());
+    const host = CANONICAL_HOSTS[u.hostname.toLowerCase()];
+    if (!host) return value.trim().replace(/\/$/, "");
+    u.hostname = host;
+    u.protocol = "https:";
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return value;
+  }
+}
 
 function isLocalHost(host: string): boolean {
   return (
@@ -433,16 +455,17 @@ export function isAdNetworkLandingUrl(value: string | null | undefined): boolean
 
 /**
  * Same order as the Tracker: creative.landing_page_url, else the project page
- * (campaign_type project), else the owner's profile. `siteOrigin` is the public
- * site that serves those paths.
+ * (campaign_type project), else the leader's page, else the owner's profile.
+ * `siteOrigin` is the public site that serves those paths. Links on a
+ * redirect-only host are rewritten to the host that serves the page.
  */
 export function buildLandingPageUrl(
   row: Pick<AdlyCampaignRow, "user_id" | "creative" | "metadata">,
   siteOrigin: string = TRACKER_PUBLIC_ORIGIN
 ): string {
-  const origin = isAdNetworkLandingUrl(siteOrigin) ? siteOrigin.replace(/\/$/, "") : TRACKER_PUBLIC_ORIGIN;
+  const origin = canonicalSiteUrl(isAdNetworkLandingUrl(siteOrigin) ? siteOrigin : TRACKER_PUBLIC_ORIGIN);
   const preferred = parseCreative(row.creative).landing_page_url;
-  if (preferred && isAdNetworkLandingUrl(preferred)) return preferred.trim();
+  if (preferred && isAdNetworkLandingUrl(preferred)) return canonicalSiteUrl(preferred);
   if (preferred) {
     try {
       const u = new URL(preferred, origin);
@@ -453,6 +476,10 @@ export function buildLandingPageUrl(
   }
   const scope = parseCampaignScope(row.metadata);
   if (scope.campaign_type === "project" && scope.project_id) return `${origin}/projects/${scope.project_id}`;
+  // A real leader profile (not the Phase 1 `user-<uid>` placeholder) has its own page.
+  const leaderId = str(obj(obj(row.metadata).siasa).leader_id)?.trim();
+  if (leaderId && !leaderId.startsWith("user-")) return `${origin}/leaders/${leaderId}`;
+  // /profile/<uid> forwards to the owner's leader page (src/app/profile/[id]).
   return row.user_id ? `${origin}/profile/${row.user_id}` : origin;
 }
 

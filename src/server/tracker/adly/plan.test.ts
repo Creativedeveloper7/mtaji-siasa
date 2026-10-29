@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGooglePublishPayload,
   buildLandingPageUrl,
+  canonicalSiteUrl,
   buildXPublishPayload,
   mediaBudgetKes,
   normalizePlan,
@@ -63,10 +64,31 @@ describe("plan", () => {
       "https://mtajisiasa.co.ke/projects/9c0e7d6b-1a2f-4c3d-8e9f-0a1b2c3d4e5f"
     );
     expect(buildLandingPageUrl({ user_id: OWNER, creative: {}, metadata: {} }, "http://localhost:3000")).toBe(
-      `https://m-taji.co.ke/profile/${OWNER}`
+      `https://www.m-taji.co.ke/profile/${OWNER}`
     );
     expect(buildLandingPageUrl({ user_id: OWNER, creative: { landing_page_url: "http://localhost:3000/projects/a" }, metadata: {} })).toBe(
-      "https://m-taji.co.ke/projects/a"
+      "https://www.m-taji.co.ke/projects/a"
+    );
+  });
+
+  it("links to the www host, which serves pages, not the bare domain that redirects", () => {
+    expect(
+      buildLandingPageUrl({ user_id: OWNER, creative: { landing_page_url: "https://m-taji.co.ke/projects/faida" }, metadata: {} })
+    ).toBe("https://www.m-taji.co.ke/projects/faida");
+    expect(buildLandingPageUrl({ user_id: OWNER, creative: {}, metadata: {} }, "https://m-taji.co.ke/")).toBe(
+      `https://www.m-taji.co.ke/profile/${OWNER}`
+    );
+    expect(canonicalSiteUrl("https://site.example/x/")).toBe("https://site.example/x");
+  });
+
+  it("sends ads that are not for a project to the leader's page", () => {
+    const leader = "d872692d-a2ca-4510-8fc9-32c9f8b5be9f";
+    expect(buildLandingPageUrl({ user_id: OWNER, creative: {}, metadata: { siasa: { leader_id: leader } } })).toBe(
+      `https://www.m-taji.co.ke/leaders/${leader}`
+    );
+    // The Phase 1 placeholder is not a page; fall back to /profile, which forwards.
+    expect(buildLandingPageUrl({ user_id: OWNER, creative: {}, metadata: { siasa: { leader_id: `user-${OWNER}` } } })).toBe(
+      `https://www.m-taji.co.ke/profile/${OWNER}`
     );
   });
 

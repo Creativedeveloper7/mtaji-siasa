@@ -175,8 +175,11 @@ export function ContentProvider({ children }: { children: ReactNode }) {
       deletePoll: (id) => remove(COLLECTIONS.polls, id),
       upsertProduct: (item) => save(COLLECTIONS.products, item),
       deleteProduct: (id) => remove(COLLECTIONS.products, id),
-      getLeaderBySlug: (slug) => content.leaders.find((item) => item.slug === slug),
-      getProjectBySlug: (slug) => content.projects.find((item) => item.slug === slug),
+      // Tracker-made links (ads, shares) may carry the record id instead of the slug.
+      getLeaderBySlug: (slug) =>
+        content.leaders.find((item) => item.slug === slug) ?? content.leaders.find((item) => item.id === slug),
+      getProjectBySlug: (slug) =>
+        content.projects.find((item) => item.slug === slug) ?? content.projects.find((item) => item.id === slug),
       getOpportunityBySlug: (slug) => content.opportunities.find((item) => item.slug === slug),
       getMediaBySlug: (slug) => content.media.find((item) => item.slug === slug),
       getProjectsByIds: (ids) => content.projects.filter((item) => ids.includes(item.id)),

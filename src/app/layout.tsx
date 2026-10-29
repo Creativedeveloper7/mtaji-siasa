@@ -11,6 +11,7 @@ import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { ContentProvider } from "@/components/content/ContentProvider";
 import { themeInitScript } from "@/lib/theme-script";
+import { siteUrl } from "@/server/seo";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -41,6 +42,9 @@ const caveat = Caveat({
 });
 
 export const metadata: Metadata = {
+  // Absolute base for page links and preview images (crawlers need full URLs).
+  metadataBase: new URL(siteUrl()),
+  openGraph: { siteName: "M-Taji Siasa", type: "website" },
   title: {
     default: "M-Taji Siasa — Campaigns, Projects & Opportunities for Leaders",
     template: "%s · M-Taji Siasa",
