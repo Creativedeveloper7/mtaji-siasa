@@ -46,7 +46,7 @@ function fakeStorage(files: Record<string, Uint8Array>, uploadError?: { message:
   const uploads: Upload[] = [];
   const bucket = {
     download: async (path: string) =>
-      files[path] ? { data: new Blob([files[path]]), error: null } : { data: null, error: { message: "Object not found" } },
+      files[path] ? { data: new Blob([Buffer.from(files[path])]), error: null } : { data: null, error: { message: "Object not found" } },
     upload: async (path: string, bytes: Uint8Array, options: unknown) => {
       uploads.push({ path, bytes, options });
       return { error: uploadError ?? null };

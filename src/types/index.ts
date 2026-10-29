@@ -300,3 +300,58 @@ export interface AdCampaign {
   createdAt: string;
   updatedAt: string;
 }
+
+/** Which X ad policy a finding is about (Adly's pre-publish check). */
+export type XPolicyRule =
+  | "political"
+  | "financial_promise"
+  | "unproven_claim"
+  | "progress_claim"
+  | "impersonation"
+  | "personal_attributes"
+  | "clickbait"
+  | "formatting"
+  | "image";
+
+/** One thing Adly found in an ad before it goes to X, and what it did about it. */
+export interface AdPolicyFinding {
+  rule: XPolicyRule;
+  field: "headline" | "body" | "keywords" | "image";
+  /** "fix": X would likely reject it, so Adly changed it. "advice": worth checking, not changed. */
+  severity: "fix" | "advice";
+  /** The words (or image) that triggered it */
+  found: string;
+  /** Plain-language reason, naming the X policy */
+  why: string;
+  /** What Adly changed, e.g. 'Removed the sentence "…"' */
+  change?: string;
+}
+
+/** An image Adly looked at for an X ad. */
+export interface AdImageCheck {
+  url: string;
+  ok: boolean;
+  width?: number;
+  height?: number;
+  /** X image cards need certain shapes; Adly crops the rest to 1200x628 on publish. */
+  willCrop?: boolean;
+  /** Small JPEG of what X will show (the crop), as a data URL */
+  previewDataUrl?: string;
+  /** Why it can't be used, or what to watch for */
+  notes: string[];
+}
+
+/** Adly's X policy review of a draft ad, with a version that should pass. */
+export interface AdPolicyReview {
+  network: "x";
+  /** clear: nothing to change. changed: Adly rewrote it. needs_image: no usable image; the owner must add one. */
+  status: "clear" | "changed" | "needs_image";
+  findings: AdPolicyFinding[];
+  original: { headline: string; body: string; keywords: string[]; imageUrl: string };
+  suggested: { headline: string; body: string; keywords: string[]; imageUrl: string };
+  image: AdImageCheck;
+  /** Other photos of the project, checked the same way */
+  alternatives: AdImageCheck[];
+  /** "rules" only, or "rules+ai" when the AI review also ran (copy rewrite and photo content) */
+  checkedBy: "rules" | "rules+ai";
+}

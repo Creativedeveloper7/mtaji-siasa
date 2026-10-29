@@ -2,19 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Megaphone, Sparkles, Users, Wallet } from "lucide-react";
+import { Megaphone, ShieldCheck, Sparkles, Users, Wallet } from "lucide-react";
 import { AdminField, AdminHeader, AdminInput, AdminSelect, AdminTextarea } from "@/components/admin/AdminUI";
 import { Button } from "@/components/ui/Button";
 import { AdPreview } from "@/components/ads/AdPreview";
 import { KeywordInput } from "@/components/ads/KeywordInput";
 import { AdCampaignCard, type AdCardAction, type AdCardControls } from "@/components/ads/AdCampaignCard";
 import { AdlyAdsAssistant, AdlyHelpCard } from "@/components/ads/AdlyAdsAssistant";
+import { AdlyXReview, type ApprovedAdlyVersion } from "@/components/ads/AdlyXReview";
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { apiJson } from "@/lib/api-client";
 import { MIN_AD_BUDGET_KES } from "@/lib/constants";
 import { cn, formatCurrency } from "@/lib/utils";
-import type { AdCampaign, AdPlatform, Project } from "@/types";
+import type { AdCampaign, AdPlatform, AdPolicyFinding, AdPolicyReview, Project } from "@/types";
 
 interface Quote {
   kesPerUsd: number;
@@ -83,6 +84,15 @@ export default function PoliticianAdsPage() {
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
   const [createdId, setCreatedId] = useState<string | null>(null);
+  // Photo for the ad: the project cover unless Adly's X check picked another of its photos.
+  const [imageUrl, setImageUrl] = useState("");
+  // Adly's X policy check: runs before the confirm step whenever X is selected.
+  const [reviewing, setReviewing] = useState(false);
+  const [review, setReview] = useState<AdPolicyReview | null>(null);
+  // What Adly changed, once the owner approved it; confirmed again before paying.
+  const [adlyChanges, setAdlyChanges] = useState<AdPolicyFinding[]>([]);
+  const [adlyNotes, setAdlyNotes] = useState<AdPolicyFinding[]>([]);
+  const [changesConfirmed, setChangesConfirmed] = useState(false);
   // Adly side panel: open state and the ad it is working on.
   const [adlyOpen, setAdlyOpen] = useState(false);
   const [adlyCampaignId, setAdlyCampaignId] = useState<string | null>(null);
@@ -117,6 +127,8 @@ export default function PoliticianAdsPage() {
     setHeadline(clip(next.name, quote?.limits.headline ?? 30));
     setBody(clip(next.description, quote?.limits.body ?? 220));
     setKeywords(suggestionsFor(next).slice(0, 3));
+    setImageUrl(next.image);
+    setAdlyChanges([]);
     setFormError("");
   };
 
@@ -148,7 +160,7 @@ export default function PoliticianAdsPage() {
       avatar={leader.photo}
       headline={headline}
       body={body}
-      imageUrl={project?.image ?? ""}
+      imageUrl={imageUrl || project?.image || ""}
       landingUrl={landingUrl}
       platforms={platforms}
     />
@@ -178,6 +190,7 @@ export default function PoliticianAdsPage() {
         headline: headline.trim(),
         body: body.trim(),
         keywords,
+        imageUrl: imageUrl || project?.image,
         budgetKes: budget,
         durationDays: days,
       }),
@@ -200,6 +213,44 @@ export default function PoliticianAdsPage() {
         : created.statusNote || "Your ad was submitted."
     );
     document.getElementById("your-ads")?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // Before the confirm step: Adly checks the ad against X's policies. A clean
+  // ad goes straight on; otherwise the owner sees why and approves Adly's version.
+  const continueToConfirm = async () => {
+    if (!platforms.includes("x")) {
+      setAdlyNotes([]);
+      setConfirming(true);
+      return;
+    }
+    setReviewing(true);
+    const result = await apiJson<{ review?: AdPolicyReview; error?: string }>("/api/ads/review", {
+      method: "POST",
+      body: JSON.stringify({ projectId, headline: headline.trim(), body: body.trim(), keywords, imageUrl: imageUrl || project?.image }),
+    });
+    setReviewing(false);
+    if (!result.ok || !result.data.review) {
+      setFormError(result.data.error || "Adly could not check the ad for X. Try again.");
+      return;
+    }
+    const checked = result.data.review;
+    setAdlyNotes(checked.findings.filter((f) => f.severity === "advice"));
+    if (checked.status === "clear") {
+      setConfirming(true);
+      return;
+    }
+    setReview(checked);
+  };
+
+  const approveAdlyVersion = (version: ApprovedAdlyVersion) => {
+    setHeadline(version.headline);
+    setBody(version.body);
+    setKeywords(version.keywords);
+    setImageUrl(version.imageUrl);
+    setAdlyChanges(version.changes);
+    setChangesConfirmed(false);
+    setReview(null);
+    setConfirming(true);
   };
 
   const act = async (campaign: AdCampaign, action: AdCardAction) => {
@@ -432,7 +483,7 @@ export default function PoliticianAdsPage() {
               type="button"
               size="lg"
               fullWidth
-              disabled={submitting || !quote}
+              disabled={submitting || reviewing || !quote}
               onClick={() => {
                 const problem = validate();
                 if (problem) {
@@ -440,11 +491,13 @@ export default function PoliticianAdsPage() {
                   return;
                 }
                 setFormError("");
-                setConfirming(true);
+                void continueToConfirm();
               }}
             >
-              <Megaphone className="h-4 w-4" />
-              {chargeOnPublish
+              {reviewing ? <ShieldCheck className="h-4 w-4 animate-pulse" /> : <Megaphone className="h-4 w-4" />}
+              {reviewing
+                ? "Adly is checking the ad for X…"
+                : chargeOnPublish
                 ? quote?.requireApproval
                   ? "Submit for approval"
                   : `Pay ${formatCurrency(budget)} & launch ad`
@@ -516,6 +569,21 @@ export default function PoliticianAdsPage() {
         onChanged={() => void load()}
       />
 
+      {review && (
+        <AdlyXReview
+          review={review}
+          canDropX={platforms.includes("google")}
+          onApprove={approveAdlyVersion}
+          onEdit={() => setReview(null)}
+          onDropX={() => {
+            setPlatforms((current) => current.filter((p) => p !== "x"));
+            setReview(null);
+            setAdlyNotes([]);
+            setConfirming(true);
+          }}
+        />
+      )}
+
       {confirming && project && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
           <button type="button" className="absolute inset-0 bg-bg/75 backdrop-blur-sm" aria-label="Close" onClick={() => setConfirming(false)} />
@@ -533,6 +601,38 @@ export default function PoliticianAdsPage() {
                 strong
               />
             </dl>
+            {adlyChanges.length > 0 && (
+              <div className="mt-4 rounded-md border border-accent/30 bg-accent-soft p-3 text-small">
+                <p className="flex items-center gap-1.5 font-medium text-ink">
+                  <Sparkles className="h-4 w-4 text-accent" aria-hidden />
+                  Adly changed this ad for X
+                </p>
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-caption text-ink-muted">
+                  {adlyChanges.map((c, i) => (
+                    <li key={i}>{c.change ?? c.why}</li>
+                  ))}
+                </ul>
+                <label className="mt-2 flex items-start gap-2 text-caption text-ink">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-[rgb(var(--color-accent))]"
+                    checked={changesConfirmed}
+                    onChange={(e) => setChangesConfirmed(e.target.checked)}
+                  />
+                  I&apos;ve checked Adly&apos;s changes in the preview and want to publish this version.
+                </label>
+              </div>
+            )}
+            {adlyNotes.length > 0 && (
+              <ul className="mt-3 space-y-1 text-caption text-ink-muted">
+                {adlyNotes.map((n, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" aria-hidden />
+                    <span>{n.why}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
             <p className="mt-4 text-caption text-ink-muted">
               {chargeOnPublish
                 ? quote?.requireApproval
@@ -546,7 +646,12 @@ export default function PoliticianAdsPage() {
               <Button type="button" variant="secondary" fullWidth onClick={() => setConfirming(false)}>
                 Back
               </Button>
-              <Button type="button" fullWidth disabled={submitting} onClick={() => void submit()}>
+              <Button
+                type="button"
+                fullWidth
+                disabled={submitting || (adlyChanges.length > 0 && !changesConfirmed)}
+                onClick={() => void submit()}
+              >
                 {submitting ? "Submitting…" : chargeOnPublish && quote?.requireApproval ? "Submit" : `Pay ${formatCurrency(budget)}`}
               </Button>
             </div>

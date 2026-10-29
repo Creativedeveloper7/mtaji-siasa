@@ -8,6 +8,7 @@ import { getRepositories } from "@/server";
 import { visibleAdly } from "@/server/adly/service";
 import { parseCampaign, parseCreative as parseSiasaCreative, parsePolicyReview } from "@/server/adly/parse";
 import { asString, isRecord } from "@/server/content/parse";
+import { chosenAdImage, xPolicyError } from "@/server/ads/x-review";
 import type { ContentActor, ContentResult } from "@/server/content/service";
 import { serviceClient } from "@/server/tracker/clients";
 import { AD_LIMITS, trackerAdSettings } from "@/server/tracker/adly/config";
@@ -437,6 +438,15 @@ export function approvalBlocks(row: AdlyCampaignRow, channels: TrackerChannel[] 
 }
 
 /** Admins may look at any campaign but only the owner edits or publishes it. */
+/** Adly's X policy guard for publishing an existing campaign (see xPolicyError). */
+async function xPolicyBlock(row: AdlyCampaignRow, channels: TrackerChannel[]): Promise<string | null> {
+  if (!channels.includes("x")) return null;
+  const ad = rowToAdCampaign(row);
+  if (!ad.headline && !ad.body) return null;
+  const project = ad.projectId ? await getRepositories().content.findProject(ad.projectId) : undefined;
+  return xPolicyError(project, { headline: ad.headline, body: ad.body, keywords: ad.keywords }, ad.name);
+}
+
 async function notOwned(session: { role: string }, id: string, verb: string): Promise<ContentResult> {
   if (session.role === "admin" && repo.isUuid(id)) {
     const other = await repo.findCampaign(serviceClient(), id);
@@ -461,6 +471,8 @@ export async function publishCampaign(
     const channels = resolvePublishChannels(row.channels).filter((c) => !only || c === only);
     const blocked = approvalBlocks(row, channels);
     if (blocked) return fail(409, blocked);
+    const policy = await xPolicyBlock(row, channels);
+    if (policy) return fail(422, policy);
     const outcome = await publishPlan(user, row, { origin: requestOrigin, only });
     const current = outcome.row ?? row;
     const stats = (await repo.listStats(user.client, [current.id])).get(current.id) ?? [];
@@ -595,6 +607,12 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
     new Set((Array.isArray(body.platforms) ? body.platforms : []).filter((p): p is AdPlatform => p === "x" || p === "google"))
   );
   if (!platforms.length) return fail(400, "Choose at least one network: X or Google.");
+  if (platforms.includes("x")) {
+    const blocked = xPolicyError(project, { headline, body: text, keywords }, project.name);
+    if (blocked) return fail(422, blocked);
+  }
+  // The composer may pick another of the project's photos (Adly's image check).
+  const imageUrl = await chosenAdImage(project, body.imageUrl);
 
   const budgetKes = Math.round(Number(body.budgetKes));
   if (!Number.isFinite(budgetKes) || budgetKes < settings.minBudgetKes) {
@@ -627,7 +645,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
           budgetKes,
           durationDays,
           landingUrl,
-          imageUrl: project.image,
+          imageUrl,
           projectId: project.id,
           projectTitle: project.name,
           leaderId,
@@ -640,7 +658,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
 
     // Best effort: copy the project photo into the bucket so X can attach it.
     try {
-      const asset = await repo.uploadImageFromUrl(user.client, user.userId, row.id, project.image);
+      const asset = await repo.uploadImageFromUrl(user.client, user.userId, row.id, imageUrl);
       const creative = obj(row.creative);
       const xShape = obj(obj(creative.platforms).x);
       row = await repo.updateCampaign(user.client, row, {
@@ -756,6 +774,8 @@ export async function actOnTrackerAd(
     if (action === "publish") {
       const blocked = approvalBlocks(row);
       if (blocked) return fail(409, blocked);
+      const policy = await xPolicyBlock(row, resolvePublishChannels(row.channels));
+      if (policy) return fail(422, policy);
       const outcome = await publishPlan(user, row, { origin: requestOrigin });
       const current = outcome.row ?? row;
       const stats = await repo.listStats(user.client, [current.id]);

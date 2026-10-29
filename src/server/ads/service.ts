@@ -6,6 +6,7 @@ import { asString, isRecord } from "@/server/content/parse";
 import type { ContentResult } from "@/server/content/service";
 import { trackerAdSettings } from "@/server/tracker/adly/config";
 import { chargeWallet, refundWallet, walletBalance } from "@/server/wallet/service";
+import { chosenAdImage, xPolicyError } from "@/server/ads/x-review";
 
 /**
  * Paid ads for the MEMORY store only (local demo, MTAJI_STORE=memory or no
@@ -154,6 +155,11 @@ export async function createAdCampaign(
   if (platforms.length === 0) return fail(400, "Choose at least one network: X or Google.");
   const missing = platforms.filter((p) => !platformConfigured(p));
   if (missing.length) return fail(400, `${missing.join(" and ")} ads are not set up on this server yet.`);
+  if (platforms.includes("x")) {
+    const blocked = xPolicyError(project, { headline, body: text, keywords }, project.name);
+    if (blocked) return fail(422, blocked);
+  }
+  const imageUrl = await chosenAdImage(project, body.imageUrl);
 
   const budgetKes = Math.round(Number(body.budgetKes));
   if (!Number.isFinite(budgetKes) || budgetKes < settings.minBudgetKes) {
@@ -192,7 +198,7 @@ export async function createAdCampaign(
     name: (asString(body.name) ?? `${project.name} — ad`).slice(0, 120),
     headline,
     body: text,
-    imageUrl: project.image,
+    imageUrl,
     landingUrl: link,
     keywords,
     platforms: runs,
