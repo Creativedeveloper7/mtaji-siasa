@@ -13,6 +13,7 @@ import { AdlyError, CHANGED_MESSAGE } from "@/server/tracker/adly/errors";
 import { preserveProviderIds, type RowWrite } from "@/server/tracker/adly/mapping";
 import { isAdNetworkLandingUrl, obj, parseCreative, type AdlyMediaAsset } from "@/server/tracker/adly/plan";
 import { fetchPublicImage, IMAGE_MAX_BYTES, UnsafeUrlError } from "@/server/tracker/adly/safe-fetch";
+import { cropForXCard } from "@/server/tracker/adly/x-card-image";
 import type { TrackerChannel } from "@/server/tracker/adly/rows";
 
 /**
@@ -249,6 +250,26 @@ export async function uploadImageFromUrl(
   const { error } = await client.storage.from(CREATIVE_BUCKET).upload(path, bytes, { contentType, upsert: false });
   if (error) fail("Could not store the ad image", error);
   return { id, path, kind: "image", filename, bytes: bytes.byteLength, contentType };
+}
+
+/**
+ * A creative image in a shape X's image cards accept: the original path when it
+ * already fits, else a 1200x628 crop stored beside it as `<name>-x-card.jpg`
+ * (reused when an earlier publish already made it).
+ */
+export async function xCardImagePath(client: SupabaseClient, path: string): Promise<string> {
+  const { data, error } = await client.storage.from(CREATIVE_BUCKET).download(path);
+  if (error || !data) throw new Error(`Could not read the ad image: ${error?.message ?? "not found"}`);
+  const cropped = await cropForXCard(new Uint8Array(await data.arrayBuffer()));
+  if (!cropped) return path;
+  const target = `${path.replace(/\.[^./]+$/, "")}-x-card.jpg`;
+  const { error: uploadError } = await client.storage
+    .from(CREATIVE_BUCKET)
+    .upload(target, cropped, { contentType: "image/jpeg", upsert: false });
+  if (uploadError && !/exist|duplicate/i.test(uploadError.message)) {
+    throw new Error(`Could not store the cropped ad image: ${uploadError.message}`);
+  }
+  return target;
 }
 
 // ---------------------------------------------------------------------------

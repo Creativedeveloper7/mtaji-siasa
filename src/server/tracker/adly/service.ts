@@ -130,6 +130,22 @@ function isEditorRole(role: string): boolean {
   return (EDITOR_ROLES as readonly string[]).includes(role);
 }
 
+/**
+ * Swap the first X image for a version in a shape X's image cards accept
+ * (see x-card-image.ts). Best effort: on failure the original goes, and the
+ * publish function falls back to an image + link post.
+ */
+async function withXCardImage<T extends { image_paths: string[] }>(client: SupabaseClient, payload: T): Promise<T> {
+  const [first, ...rest] = payload.image_paths;
+  if (!first) return payload;
+  try {
+    return { ...payload, image_paths: [await repo.xCardImagePath(client, first), ...rest] };
+  } catch (error) {
+    console.warn("[adly] X image not cropped:", first, error instanceof Error ? error.message : error);
+    return payload;
+  }
+}
+
 function siteOrigin(requestOrigin?: string): string | undefined {
   return trackerAdSettings().siteUrl || requestOrigin;
 }
@@ -308,7 +324,7 @@ export async function publishPlan(
         const payload =
           provider === "google"
             ? buildGooglePublishPayload(claimed, shareKes, origin)
-            : buildXPublishPayload(claimed, shareKes, origin);
+            : await withXCardImage(user.client, buildXPublishPayload(claimed, shareKes, origin));
         const res = await callEdge(PUBLISH_FUNCTION[provider], user.token, { ...payload, dry_run: settings.dryRun });
         const status = typeof res.json.status === "string" ? res.json.status : undefined;
         if (!res.ok || status === "failed") {
