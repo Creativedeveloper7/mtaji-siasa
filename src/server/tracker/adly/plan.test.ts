@@ -42,8 +42,8 @@ describe("plan", () => {
 
   it("splits budgets and applies the platform fee", () => {
     expect(splitBudgetAcrossChannels(601, ["google", "x"])).toEqual({ google: 301, x: 300 });
-    expect(mediaBudgetKes(1000)).toBe(850);
-    expect(platformFeeKes(1000)).toBe(150);
+    expect(mediaBudgetKes(1000)).toBe(800);
+    expect(platformFeeKes(1000)).toBe(200);
     expect(resolvePublishChannels(["meta", "Twitter", "google", "x", "tiktok"])).toEqual(["x", "google"]);
   });
 
@@ -76,9 +76,9 @@ describe("plan", () => {
     expect(body).toMatchObject({
       campaign_id: trackerLiveRow.id,
       campaign_name: "Kondele water kiosks",
-      budget: 255,
+      budget: 240,
       client_budget_kes: 300,
-      platform_fee_kes: 45,
+      platform_fee_kes: 60,
       target_location: ["Kisumu > Kisumu Central > Kondele", "Nairobi"],
       target_age_group: "25-34",
       duration_start: "2026-10-22T00:00:00.000Z",
@@ -95,7 +95,7 @@ describe("plan", () => {
     expect(body).toMatchObject({
       headline: "Water kiosks for Kondele",
       body_text: "Three new water kiosks in Kondele. See the work.",
-      budget_kes: 255,
+      budget_kes: 240,
       duration_days: 14,
       image_paths: [`${OWNER}/${trackerLiveRow.id}/kiosk.jpg`],
     });
