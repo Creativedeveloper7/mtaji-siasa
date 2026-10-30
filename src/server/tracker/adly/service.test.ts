@@ -516,3 +516,27 @@ describe("editTrackerAd: change who sees a running ad and its budget", () => {
     expect(stored().targeting).toMatchObject({ locations: ["Kenya"] });
   });
 });
+
+describe("summarizePublish", () => {
+  it("says which steps failed when a network updated the ad only partly", () => {
+    expect(
+      service.summarizePublish([
+        { provider: "x", ok: true, status: "updated", issues: ["setting the ad's locations failed: bad value", "no new post was created on X"] },
+      ])
+    ).toBe("X: updated. Not everything went through: setting the ad's locations failed: bad value; no new post was created on X.");
+    expect(service.summarizePublish([{ provider: "x", ok: true, status: "updated", issues: [] }])).toBe("X: updated.");
+  });
+
+  it("keeps the issues the X function reports on the publish result", async () => {
+    process.env.ADS_REQUIRE_APPROVAL = "false";
+    seed(composerRow({ status: "live", metadata: withSiasaMeta({ x_campaign_id: "x-123", x_line_item_id: "li-9" }, { source: "ads" }) }, true));
+    h.callEdge.mockImplementation(async (name: string) =>
+      name === "publish-x-ads"
+        ? { status: 200, ok: true, json: { status: "updated", issues: ["no new post was created on X"] } }
+        : { status: 200, ok: true, json: {} }
+    );
+    const res = await service.publishCampaign(leaderSession, DRAFT_ID, {});
+    expect(res.ok).toBe(true);
+    if (res.ok) expect((res.body as { summary: string }).summary).toMatch(/Not everything went through: no new post was created on X/);
+  });
+});

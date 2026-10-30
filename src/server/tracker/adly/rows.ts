@@ -93,5 +93,7 @@ export interface ChannelPublishResult {
   status?: string;
   error?: string;
   message?: string;
+  /** Steps the network function reports as failed although it accepted the ad */
+  issues?: string[];
   walletWarning?: string;
 }

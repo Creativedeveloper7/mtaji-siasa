@@ -361,6 +361,9 @@ export async function publishPlan(
           ok: true,
           status,
           message: typeof res.json.message === "string" ? res.json.message : undefined,
+          issues: Array.isArray(res.json.issues)
+            ? res.json.issues.filter((i): i is string => typeof i === "string" && i.trim() !== "")
+            : undefined,
           walletWarning,
         });
       } catch (error) {
@@ -395,7 +398,11 @@ export function summarizePublish(results: ChannelPublishResult[]): string {
       if (!r.ok) return `${name}: ${r.error || "failed"}`;
       const extra = r.walletWarning ? ` Wallet: ${r.walletWarning}` : "";
       if (r.status === "dry_run") return `${name}: dry run, not live. ${r.message ?? ""}`.trim() + extra;
-      if (r.status === "updated") return `${name}: updated.${extra}`;
+      // "Updated" alone hid that a step failed (e.g. the location or a new post).
+      if (r.status === "updated") {
+        const failed = r.issues?.length ? ` Not everything went through: ${r.issues.join("; ")}.` : "";
+        return `${name}: updated.${failed}${extra}`;
+      }
       return `${name}: ${r.message || "submitted live."}${extra}`;
     })
     .join(" · ");
