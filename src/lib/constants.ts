@@ -21,6 +21,32 @@ export const COUNTIES = [
   "Nyeri",
 ] as const;
 
+/** All 47 counties, for ad targeting. */
+export const KENYA_COUNTIES = [
+  "Baringo", "Bomet", "Bungoma", "Busia", "Elgeyo Marakwet", "Embu", "Garissa", "Homa Bay", "Isiolo", "Kajiado",
+  "Kakamega", "Kericho", "Kiambu", "Kilifi", "Kirinyaga", "Kisii", "Kisumu", "Kitui", "Kwale", "Laikipia",
+  "Lamu", "Machakos", "Makueni", "Mandera", "Marsabit", "Meru", "Migori", "Mombasa", "Murang'a", "Nairobi",
+  "Nakuru", "Nandi", "Narok", "Nyamira", "Nyandarua", "Nyeri", "Samburu", "Siaya", "Taita Taveta", "Tana River",
+  "Tharaka Nithi", "Trans Nzoia", "Turkana", "Uasin Gishu", "Vihiga", "Wajir", "West Pokot",
+] as const;
+
+/** An ad's location when it runs everywhere. */
+export const AD_ALL_KENYA = "Kenya";
+export const AD_MAX_COUNTIES = 5;
+
+/**
+ * Age groups an ad can target, in the Tracker's "min-max" form. Each one is an
+ * age bucket X accepts (AGE_OVER_18 is left out: "all adults" adds no filter).
+ */
+export const AD_AGE_GROUPS = [
+  { value: "18-65+", label: "All adults (18+)" },
+  { value: "18-24", label: "18–24" },
+  { value: "18-34", label: "18–34" },
+  { value: "25-49", label: "25–49" },
+  { value: "35-65+", label: "35 and over" },
+  { value: "50-65+", label: "50 and over" },
+] as const;
+
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   planned: "Planned",
   "in-progress": "In Progress",

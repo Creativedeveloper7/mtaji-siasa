@@ -473,3 +473,46 @@ describe("L1: raw errors stay on the server", () => {
     if (!res.ok) expect(res.error).not.toMatch(/relation|permission denied/);
   });
 });
+
+describe("editTrackerAd: change who sees a running ad and its budget", () => {
+  const live = () =>
+    composerRow({ status: "live", metadata: withSiasaMeta({ x_campaign_id: "x-123", x_line_item_id: "li-9" }, { source: "ads" }) }, true);
+
+  it("stores the counties, age group and a bigger budget", async () => {
+    process.env.ADS_REQUIRE_APPROVAL = "false";
+    seed(live());
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, {
+      action: "edit",
+      locations: ["Nairobi"],
+      ageGroup: "18-34",
+      budgetKes: 3000,
+    });
+    expect(res.ok).toBe(true);
+    expect(stored().targeting).toMatchObject({ locations: ["Nairobi"], age_group: "18-34", duration_days: 5 });
+    expect(Number(stored().budget)).toBe(3000);
+    expect(stored().budget_daily).toBe(600);
+    expect(readSiasaMeta(stored().metadata).review?.state).toBe("approved");
+  });
+
+  it("refuses to lower a running ad's budget", async () => {
+    seed(live());
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: [], budgetKes: 1000 });
+    expect(res).toMatchObject({ ok: false, status: 400 });
+    expect(Number(stored().budget)).toBe(2000);
+  });
+
+  it("sends an approved ad back for review when approval is on", async () => {
+    seed(live());
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: ["Kiambu"] });
+    expect(res.ok).toBe(true);
+    expect(readSiasaMeta(stored().metadata).review?.state).toBe("pending");
+  });
+
+  it("does not edit someone else's ad", async () => {
+    seed(live());
+    h.userId = OTHER;
+    const res = await service.editTrackerAd({ ...leaderSession, userId: OTHER }, DRAFT_ID, { locations: ["Kiambu"] });
+    expect(res.ok).toBe(false);
+    expect(stored().targeting).toMatchObject({ locations: ["Kenya"] });
+  });
+});

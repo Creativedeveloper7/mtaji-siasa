@@ -3,7 +3,7 @@ import { usesTracker } from "@/server";
 import { readRequestSession } from "@/server/auth/http";
 import { asString, isRecord } from "@/server/content/parse";
 import { actOnAdCampaign, asAction } from "@/server/ads/service";
-import { actOnTrackerAd, asTrackerAdAction } from "@/server/tracker/adly/service";
+import { actOnTrackerAd, asTrackerAdAction, editTrackerAd } from "@/server/tracker/adly/service";
 import { readBody, send } from "@/server/tracker/adly/http";
 
 export const runtime = "nodejs";
@@ -12,7 +12,10 @@ export const maxDuration = 60;
 
 type Context = { params: Promise<{ id: string }> };
 
-/** { action: approve | reject | publish | pause | resume | stop | sync, note? } */
+/**
+ * { action: approve | reject | publish | pause | resume | stop | sync, note? },
+ * or { action: "edit", locations, ageGroup, budgetKes } (Tracker only).
+ */
 export async function POST(request: Request, context: Context) {
   const session = await readRequestSession();
   if (!session) return NextResponse.json({ ok: false, error: "Sign in required." }, { status: 401 });
@@ -24,6 +27,7 @@ export async function POST(request: Request, context: Context) {
     if (!action) return NextResponse.json({ ok: false, error: "Unknown action." }, { status: 400 });
     return send(await actOnAdCampaign(session, id, action, note));
   }
+  if (isRecord(body) && body.action === "edit") return send(await editTrackerAd(session, id, body));
   const action = isRecord(body) ? asTrackerAdAction(body.action) : null;
   if (!action) return NextResponse.json({ ok: false, error: "Unknown action." }, { status: 400 });
   // Same gate as /api/ads/publish/[id]: publishing and syncing are for leaders, aspirants and admins.

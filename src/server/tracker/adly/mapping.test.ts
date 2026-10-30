@@ -245,6 +245,35 @@ describe("paid ads (AdCampaign)", () => {
     expect(toAdCampaignStatus({ ...trackerDraftRow, status: "failed" })).toBe("failed");
   });
 
+  it("stores the composer's counties and age group and reads them back", () => {
+    const w = adComposerToRow(
+      {
+        name: "Ruiru bypass — ad",
+        headline: "Ruiru bypass is open",
+        body: "See the project.",
+        keywords: ["Ruiru"],
+        locations: ["Kiambu", "Nairobi"],
+        ageGroup: "18-34",
+        platforms: ["x"],
+        budgetKes: 1000,
+        durationDays: 5,
+        landingUrl: "https://mtajisiasa.co.ke/projects/ruiru-bypass",
+        imageUrl: "https://cdn.example/bypass.jpg",
+        projectId: "proj-ruiru",
+        projectTitle: "Ruiru bypass",
+        leaderId: "pf-2",
+        estimatedReach: 10000,
+        requireApproval: false,
+      },
+      OWNER
+    );
+    expect(w.targeting).toMatchObject({ locations: ["Kiambu", "Nairobi"], age_group: "18-34" });
+    expect(rowToAdCampaign({ ...trackerDraftRow, ...w } as AdlyCampaignRow)).toMatchObject({
+      locations: ["Kiambu", "Nairobi"],
+      ageGroup: "18-34",
+    });
+  });
+
   it("writes the composer into a Tracker row and reads it back", () => {
     const w = adComposerToRow(
       {

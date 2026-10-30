@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Megaphone, ShieldCheck, Sparkles, Users, Wallet } from "lucide-react";
 import { AdminField, AdminHeader, AdminInput, AdminSelect, AdminTextarea } from "@/components/admin/AdminUI";
 import { Button } from "@/components/ui/Button";
+import { AdAudienceFields, audienceBody, audienceFromAd, type AdAudienceValue } from "@/components/ads/AdAudienceFields";
 import { AdPreview } from "@/components/ads/AdPreview";
 import { KeywordInput } from "@/components/ads/KeywordInput";
 import { AdCampaignCard, type AdCardAction, type AdCardControls } from "@/components/ads/AdCampaignCard";
@@ -13,7 +14,7 @@ import { AdlyXReview, type ApprovedAdlyVersion } from "@/components/ads/AdlyXRev
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { apiJson } from "@/lib/api-client";
-import { MIN_AD_BUDGET_KES } from "@/lib/constants";
+import { AD_AGE_GROUPS, MIN_AD_BUDGET_KES } from "@/lib/constants";
 import { cn, formatCurrency } from "@/lib/utils";
 import type { AdCampaign, AdPlatform, AdPolicyFinding, AdPolicyReview, Project } from "@/types";
 
@@ -79,6 +80,7 @@ export default function PoliticianAdsPage() {
   const [keywords, setKeywords] = useState<string[]>([]);
   const [budget, setBudget] = useState(1000);
   const [days, setDays] = useState(7);
+  const [audience, setAudience] = useState<AdAudienceValue>(() => audienceFromAd(undefined, undefined));
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
@@ -191,6 +193,7 @@ export default function PoliticianAdsPage() {
         body: body.trim(),
         keywords,
         imageUrl: imageUrl || project?.image,
+        ...audienceBody(audience),
         budgetKes: budget,
         durationDays: days,
       }),
@@ -394,7 +397,11 @@ export default function PoliticianAdsPage() {
               />
             </Step>
 
-            <Step n={4} title="Budget">
+            <Step n={4} title="Audience">
+              <AdAudienceFields value={audience} onChange={setAudience} />
+            </Step>
+
+            <Step n={5} title="Budget">
               <div className="rounded-lg border border-border bg-bg-elevated p-4">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
@@ -593,6 +600,8 @@ export default function PoliticianAdsPage() {
               <Row label="Project" value={project.name} />
               <Row label="Networks" value={platforms.map((p) => (p === "x" ? "X" : "Google")).join(" + ")} />
               <Row label="Duration" value={`${days} day${days === 1 ? "" : "s"}`} />
+              <Row label="Where" value={audience.counties.length ? audience.counties.join(", ") : "All of Kenya"} />
+              <Row label="Age" value={AD_AGE_GROUPS.find((g) => g.value === audience.ageGroup)?.label ?? audience.ageGroup} />
               <Row label="Keywords" value={`${keywords.length}`} />
               <Row label="Estimated reach" value={`~${reach.toLocaleString()} people`} />
               <Row

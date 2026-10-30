@@ -8,6 +8,8 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { apiJson } from "@/lib/api-client";
 import { cn, formatCurrency } from "@/lib/utils";
 import { ADLY_ASK_EVENT, ADLY_CHAT_ID, ADLY_CHAT_INPUT_ID } from "@/components/adly/AdlyUI";
+import { AdUpdateDialog } from "@/components/ads/AdUpdateDialog";
+import type { AdCampaign } from "@/types";
 
 interface Conversation {
   messages: { id: string; role: string; content: string; createdAt: string }[];
@@ -55,14 +57,18 @@ const statusTone = (s: string): "success" | "warning" | "error" | "neutral" => {
  */
 export function AdlyCampaignLive({
   campaignId,
+  ad,
   fallback,
   onChanged,
 }: {
   campaignId: string;
+  /** A dashboard ad: "Update on networks" first lets the owner change its audience and budget */
+  ad?: AdCampaign;
   fallback?: ReactNode;
   /** Called after publish / sync so the page can reload the campaign */
   onChanged?: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const [data, setData] = useState<Conversation | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState("");
@@ -111,9 +117,10 @@ export function AdlyCampaignLive({
 
   if (unavailable) return <>{fallback}</>;
 
-  const publish = async () => {
+  /** `confirmed`: the owner already confirmed in the update dialog. */
+  const publish = async (confirmed = false) => {
     if (busy) return;
-    if (!confirm("Publish this campaign to the selected networks? Your wallet pays each network that accepts it.")) return;
+    if (!confirmed && !confirm("Publish this campaign to the selected networks? Your wallet pays each network that accepts it.")) return;
     setBusy("publish");
     setNotice("");
     const result = await apiJson<{ summary?: string; warnings?: string[]; error?: string }>(`/api/ads/publish/${encodeURIComponent(campaignId)}`, {
@@ -179,6 +186,16 @@ export function AdlyCampaignLive({
 
   return (
     <div className="space-y-10">
+      {editing && ad && (
+        <AdUpdateDialog
+          ad={ad}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            void publish(true);
+          }}
+        />
+      )}
       <section className="rounded-lg border border-border bg-surface p-5 md:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -198,7 +215,7 @@ export function AdlyCampaignLive({
               type="button"
               size="sm"
               disabled={!!busy || !data || !data.publishable.length || Boolean(data.awaitingApproval) || Boolean(data.publishing)}
-              onClick={() => void publish()}
+              onClick={() => (live && ad ? setEditing(true) : void publish())}
             >
               {busy === "publish" ? "Publishing…" : live ? "Update on networks" : "Publish"}
             </Button>

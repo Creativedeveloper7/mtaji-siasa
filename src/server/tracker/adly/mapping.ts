@@ -808,6 +808,8 @@ export function rowToAdCampaign(row: AdlyCampaignRow, ctx: AdCampaignContext = {
     imageUrl: siasa.image_url ?? ctx.imageUrl ?? "",
     landingUrl: creative.landing_page_url ?? "",
     keywords: plan.interests,
+    locations: plan.locations,
+    ageGroup: plan.ageGroup,
     platforms,
     budgetKes: plan.budgetKes,
     durationDays: plan.durationDays,
@@ -865,6 +867,10 @@ export interface AdComposerInput {
   headline: string;
   body: string;
   keywords: string[];
+  /** Counties, or ["Kenya"] (default) */
+  locations?: string[];
+  /** Default: every adult */
+  ageGroup?: string;
   platforms: AdPlatform[];
   budgetKes: number;
   durationDays: number;
@@ -903,8 +909,8 @@ export function adComposerToRow(input: AdComposerInput, userId: string, now = ne
     budget_daily: Math.round(budget / days),
     channels: input.platforms,
     targeting: {
-      locations: ["Kenya"],
-      age_group: ALL_ADULTS_AGE_GROUP,
+      locations: input.locations?.length ? input.locations : ["Kenya"],
+      age_group: input.ageGroup || ALL_ADULTS_AGE_GROUP,
       interests: input.keywords,
       duration_days: days,
     },

@@ -8,6 +8,7 @@ import { getRepositories } from "@/server";
 import { visibleAdly } from "@/server/adly/service";
 import { parseCampaign, parseCreative as parseSiasaCreative, parsePolicyReview } from "@/server/adly/parse";
 import { asString, isRecord } from "@/server/content/parse";
+import { parseAdAudience } from "@/server/ads/audience";
 import { chosenAdImage, xPolicyError } from "@/server/ads/x-review";
 import type { ContentActor, ContentResult } from "@/server/content/service";
 import { serviceClient } from "@/server/tracker/clients";
@@ -16,6 +17,7 @@ import { callEdge, EdgeError, edgeErrorMessage } from "@/server/tracker/adly/edg
 import { AdlyError, PUBLISHING_MESSAGE } from "@/server/tracker/adly/errors";
 import {
   adComposerToRow,
+  applyEditReview,
   campaignIdFromCreativeId,
   campaignToRow,
   channelLabel,
@@ -41,6 +43,7 @@ import {
   PUBLISH_FUNCTION,
   buildGooglePublishPayload,
   buildXPublishPayload,
+  clampDuration,
   normalizePlan,
   obj,
   parseCreative,
@@ -611,6 +614,8 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
     const blocked = xPolicyError(project, { headline, body: text, keywords }, project.name);
     if (blocked) return fail(422, blocked);
   }
+  const audience = parseAdAudience(body);
+  if (typeof audience === "string") return fail(400, audience);
   // The composer may pick another of the project's photos (Adly's image check).
   const imageUrl = await chosenAdImage(project, body.imageUrl);
 
@@ -641,6 +646,8 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
           headline,
           body: text,
           keywords,
+          locations: audience.locations,
+          ageGroup: audience.ageGroup,
           platforms,
           budgetKes,
           durationDays,
@@ -695,6 +702,53 @@ export function asTrackerAdAction(value: unknown): TrackerAdAction | null {
   return ["approve", "reject", "publish", "pause", "resume", "stop", "sync"].includes(value as string)
     ? (value as TrackerAdAction)
     : null;
+}
+
+/**
+ * POST /api/ads/campaigns/[id] { action: "edit", locations, ageGroup, budgetKes }:
+ * the owner changes where an ad runs, its age group and its budget, before
+ * "Update on networks" republishes it. A running ad's budget can only go up:
+ * the wallet has already paid the networks for the current amount.
+ */
+export async function editTrackerAd(session: AuthSession, id: string, body: unknown): Promise<ContentResult> {
+  if (!isEditorRole(session.role)) return fail(403, "Only leaders, aspirants and admins can edit ads.");
+  if (!isRecord(body)) return fail(400, "Send the changes as JSON.");
+  const audience = parseAdAudience(body);
+  if (typeof audience === "string") return fail(400, audience);
+  return guard(async () => {
+    const settings = trackerAdSettings();
+    const user = await signedIn(session.userId);
+    const row = await repo.findCampaign(user.client, id);
+    if (!row) return notOwned(session, id, "edit");
+    if (row.status === "archived") return fail(400, "This ad was cancelled, so it can't be edited.");
+
+    const current = normalizePlan(row).budgetKes;
+    const budgetKes = body.budgetKes === undefined ? current : Math.round(Number(body.budgetKes));
+    if (!Number.isFinite(budgetKes)) return fail(400, "Enter the budget in KES.");
+    if (hasProviderCampaign(row) && budgetKes < current) {
+      return fail(400, `A running ad's budget can only go up (it is KES ${current.toLocaleString()}).`);
+    }
+    if (budgetKes < settings.minBudgetKes) return fail(400, `The minimum budget is KES ${settings.minBudgetKes.toLocaleString()}.`);
+    if (budgetKes > settings.maxBudgetKes) return fail(400, `The maximum budget is KES ${settings.maxBudgetKes.toLocaleString()}.`);
+
+    const targeting = obj(row.targeting);
+    const days = clampDuration(targeting.duration_days) ?? 7;
+    const write = applyEditReview(
+      row,
+      {
+        targeting: { ...targeting, locations: audience.locations, age_group: audience.ageGroup },
+        budget: budgetKes,
+        budget_daily: Math.round(budgetKes / days),
+      },
+      { requireApproval: settings.requireApproval }
+    );
+    const saved = await repo.updateCampaign(user.client, row, write);
+    const stats = (await repo.listStats(user.client, [saved.id])).get(saved.id) ?? [];
+    return ok({
+      ok: true,
+      item: rowToAdCampaign(saved, { stats, fallbackLeaderId: session.leaderId, reachPerKes: settings.reachPerKes }),
+    });
+  });
 }
 
 export async function actOnTrackerAd(

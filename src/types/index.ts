@@ -285,6 +285,10 @@ export interface AdCampaign {
   imageUrl: string;
   landingUrl: string;
   keywords: string[];
+  /** Counties the ad runs in, or ["Kenya"] (Tracker ads) */
+  locations?: string[];
+  /** Age group, e.g. "18-34" or "18-65+" (Tracker ads) */
+  ageGroup?: string;
   platforms: AdPlatformRun[];
   budgetKes: number;
   durationDays: number;

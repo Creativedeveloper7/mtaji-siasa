@@ -77,6 +77,7 @@ export function AdlyAdsAssistant({
                 <AdlyCampaignLive
                   key={selected.id}
                   campaignId={selected.id}
+                  ad={selected}
                   onChanged={onChanged}
                   fallback={
                     <p className="rounded-md border border-border bg-surface px-3 py-3 text-small text-ink-muted">
