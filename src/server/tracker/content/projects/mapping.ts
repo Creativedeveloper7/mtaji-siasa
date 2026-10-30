@@ -211,6 +211,9 @@ export function readProjectStatus(status: string | null | undefined, facts: Stat
     case "stalled":
       return "on-hold";
     case "published": {
+      // A start date still ahead is the leader's word that work hasn't begun,
+      // even though new projects get a "Planning" milestone in progress.
+      if (facts.startDate && facts.startDate.slice(0, 10) > facts.today) return "planned";
       const started = facts.milestoneStatuses.some((s) => s === "in_progress" || s === "completed");
       const due = Boolean(facts.startDate && facts.startDate.slice(0, 10) <= facts.today);
       return started || due ? "in-progress" : "planned";

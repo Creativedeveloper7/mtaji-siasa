@@ -330,6 +330,9 @@ describe("project status", () => {
     expect(readProjectStatus("published", { ...facts, milestoneStatuses: ["completed"] })).toBe("in-progress");
     expect(readProjectStatus("published", { ...facts, startDate: "2026-10-22" })).toBe("in-progress");
     expect(readProjectStatus("published", { ...facts, startDate: "2026-11-01" })).toBe("planned");
+    expect(
+      readProjectStatus("published", { ...facts, startDate: "2026-11-01", milestoneStatuses: ["in_progress"] })
+    ).toBe("planned");
     expect(readProjectStatus("active", facts)).toBe("in-progress");
     expect(readProjectStatus("completed", facts)).toBe("completed");
     expect(readProjectStatus("stalled", facts)).toBe("on-hold");
