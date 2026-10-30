@@ -17,6 +17,7 @@ import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
 import { Play } from "lucide-react";
 import { useContent } from "@/components/content/ContentProvider";
 import { LoadingState } from "@/components/ui/EmptyState";
+import { useInitialProject } from "@/components/project/InitialProject";
 
 const tabs = [
   { id: "about", label: "About" },
@@ -41,8 +42,13 @@ export default function ProjectDetailPage({
     content,
   } = useContent();
   const [active, setActive] = useState("about");
+  const initial = useInitialProject();
 
-  const project = getProjectBySlug(slug);
+  // Until the content store loads, show the project the server read (the
+  // server HTML used to be just "Loading…", which X's ad review rejected).
+  const key = decodeURIComponent(slug);
+  const project =
+    getProjectBySlug(slug) ?? (!ready && initial && (initial.slug === key || initial.id === key) ? initial : undefined);
 
   const milestones = useMemo(
     () => (project ? getMilestonesByProject(project.id) : []),
@@ -64,7 +70,7 @@ export default function ProjectDetailPage({
     [project, content.leaders]
   );
 
-  if (!ready) return <LoadingState />;
+  if (!project && !ready) return <LoadingState />;
   if (!project) notFound();
 
   return (
