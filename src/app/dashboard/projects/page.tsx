@@ -322,6 +322,31 @@ export default function PoliticianProjectsPage() {
                 }
               />
             </AdminField>
+            {/* A start date in the future keeps a published project "Planned". */}
+            <div className="grid grid-cols-2 gap-3">
+              <AdminField label="Start date">
+                <AdminInput
+                  type="date"
+                  value={editing.startDate}
+                  onChange={(e) =>
+                    setEditing({ ...editing, startDate: e.target.value })
+                  }
+                />
+              </AdminField>
+              <AdminField label="Expected completion">
+                <AdminInput
+                  type="date"
+                  min={editing.startDate || undefined}
+                  value={editing.expectedCompletion}
+                  onChange={(e) =>
+                    setEditing({
+                      ...editing,
+                      expectedCompletion: e.target.value,
+                    })
+                  }
+                />
+              </AdminField>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <AdminField label="Latitude">
                 <AdminInput
