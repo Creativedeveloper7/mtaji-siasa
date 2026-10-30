@@ -122,4 +122,10 @@ describe("plan", () => {
       image_paths: [`${OWNER}/${trackerLiveRow.id}/kiosk.jpg`],
     });
   });
+
+  it("runs dashboard ads on X for reach, whatever goal the row holds", () => {
+    const composerRow = { ...trackerLiveRow, objective: "traffic", metadata: { siasa: { source: "ads" } } };
+    expect(buildXPublishPayload(composerRow, 300).objective).toBe("awareness");
+    expect(buildXPublishPayload({ ...trackerLiveRow, objective: "traffic" }, 300).objective).toBe("traffic");
+  });
 });

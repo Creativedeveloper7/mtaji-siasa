@@ -552,6 +552,16 @@ export function buildGooglePublishPayload(row: PlanRow, budgetKes: number, siteO
   };
 }
 
+/**
+ * Goal sent to publish-x-ads. The dashboard ads composer saves every ad as
+ * "traffic", which X runs pay-per-click; on Siasa's small budgets X barely showed
+ * those ads, so they run for reach (pay per impression) instead.
+ */
+function xObjective(row: PlanRow): string {
+  if (obj(obj(row.metadata).siasa).source === "ads") return "awareness";
+  return row.objective || "awareness";
+}
+
 /** Body for publish-x-ads. */
 export function buildXPublishPayload(row: PlanRow, budgetKes: number, siteOrigin?: string) {
   const plan = normalizePlan({ ...row, budget: budgetKes });
@@ -570,7 +580,7 @@ export function buildXPublishPayload(row: PlanRow, budgetKes: number, siteOrigin
     target_age_group: plan.ageGroup,
     duration_days: plan.durationDays,
     interests: plan.interests,
-    objective: row.objective || "awareness",
+    objective: xObjective(row),
     image_paths: assignedImagePaths(creative, x?.asset_ids),
   };
 }
