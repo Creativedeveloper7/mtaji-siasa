@@ -314,6 +314,27 @@ export async function adminUpdateMetadata(
   return updateCampaign(service, existing, { metadata, ...(status ? { status } : {}) });
 }
 
+/**
+ * X posts of a project's published ads, newest first, for the public project
+ * page. Service role because adly_campaigns RLS is owner-only; only post ids
+ * leave this function, and the posts themselves are public on X.
+ */
+export async function projectXPostIds(service: SupabaseClient, projectId: string, limit = 5): Promise<string[]> {
+  if (!isUuid(projectId)) return [];
+  const { data, error } = await service
+    .from("adly_campaigns")
+    .select("metadata")
+    .eq("metadata->>campaign_type", "project")
+    .eq("metadata->>project_id", projectId)
+    .in("status", ["live", "paused", "completed"])
+    .not("metadata->>x_tweet_id", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(limit * 2);
+  if (error) fail("Could not load the project's ads", error);
+  const ids = (data ?? []).map((r) => String((r.metadata as Record<string, unknown> | null)?.x_tweet_id ?? ""));
+  return Array.from(new Set(ids.filter(Boolean))).slice(0, limit);
+}
+
 export function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }

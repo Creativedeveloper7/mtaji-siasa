@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { RefreshCw, Send, Sparkles, X } from "lucide-react";
+import { ExternalLink, RefreshCw, Send, Sparkles, X } from "lucide-react";
 import { AdminTextarea } from "@/components/admin/AdminUI";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { apiJson } from "@/lib/api-client";
+import { adXPostUrl } from "@/lib/x-post";
 import { cn, formatCurrency } from "@/lib/utils";
 import { ADLY_ASK_EVENT, ADLY_CHAT_ID, ADLY_CHAT_INPUT_ID } from "@/components/adly/AdlyUI";
 import { AdUpdateDialog } from "@/components/ads/AdUpdateDialog";
@@ -204,7 +205,17 @@ export function AdlyCampaignLive({
               Published through M-Taji to Google Ads and X. Results come from the networks.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {ad && adXPostUrl(ad.platforms) && (
+              <a
+                href={adXPostUrl(ad.platforms)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-small text-accent hover:text-accent-hover"
+              >
+                View post on X <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+              </a>
+            )}
             {live && (
               <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => void sync()}>
                 <RefreshCw className={cn("h-4 w-4", busy === "sync" && "animate-spin")} />

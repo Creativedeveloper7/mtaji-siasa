@@ -51,6 +51,7 @@ import {
   splitBudgetAcrossChannels,
 } from "@/server/tracker/adly/plan";
 import * as repo from "@/server/tracker/adly/repository";
+import { xPostUrl } from "@/lib/x-post";
 import type { AdlyCampaignRow, ChannelPublishResult, TrackerChannel } from "@/server/tracker/adly/rows";
 import {
   debitWalletForAdSpend,
@@ -1134,4 +1135,15 @@ export async function syncCampaignInsights(session: AuthSession, campaignId: str
       campaign: rowToCampaign(current, { stats: synced.stats, fallbackLeaderId: session.leaderId }),
     });
   });
+}
+
+/** Links to the X posts a project was advertised with, for its public page. Empty when they can't be read. */
+export async function projectXPostUrls(projectId: string): Promise<string[]> {
+  try {
+    const ids = await repo.projectXPostIds(serviceClient(), projectId);
+    return ids.flatMap((id) => xPostUrl(id) ?? []);
+  } catch (err) {
+    console.error("[adly] project X posts:", err instanceof Error ? err.message : err);
+    return [];
+  }
 }

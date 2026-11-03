@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { safeHttpUrl } from "@/lib/safe-url";
+import { xPostUrl } from "@/lib/x-post";
 import type { AdCampaign, AdCampaignStatus, AdPlatformRun } from "@/types";
 import type { TrackerAdExtras } from "@/server/tracker/adly/mapping";
 
@@ -128,6 +129,16 @@ export function AdCampaignCard({
                   {RUN_LABEL[run.status]}
                 </span>
                 <span className="text-ink-subtle">{formatCurrency(run.budgetKes)}</span>
+                {run.platform === "x" && xPostUrl(run.externalIds?.x_tweet_id) && (
+                  <a
+                    href={xPostUrl(run.externalIds?.x_tweet_id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-accent hover:text-accent-hover"
+                  >
+                    View post on X <ExternalLink className="h-3 w-3" aria-hidden />
+                  </a>
+                )}
                 {run.error && (
                   <span className="flex w-full items-start gap-1 text-error">
                     <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />

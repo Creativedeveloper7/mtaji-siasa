@@ -14,10 +14,10 @@ import { CardCarousel } from "@/components/ui/CardCarousel";
 import { SafeImage } from "@/components/ui/SafeImage";
 import { formatDate } from "@/lib/utils";
 import { MEDIA_CATEGORY_LABELS } from "@/lib/constants";
-import { Play } from "lucide-react";
+import { ExternalLink, Play } from "lucide-react";
 import { useContent } from "@/components/content/ContentProvider";
 import { LoadingState } from "@/components/ui/EmptyState";
-import { useInitialProject } from "@/components/project/InitialProject";
+import { useInitialProject, useProjectXPosts } from "@/components/project/InitialProject";
 
 const tabs = [
   { id: "about", label: "About" },
@@ -43,6 +43,7 @@ export default function ProjectDetailPage({
   } = useContent();
   const [active, setActive] = useState("about");
   const initial = useInitialProject();
+  const xPosts = useProjectXPosts();
 
   // Until the content store loads, show the project the server read (the
   // server HTML used to be just "Loading…", which X's ad review rejected).
@@ -91,6 +92,26 @@ export default function ProjectDetailPage({
               <p className="mt-4 text-body text-ink-muted">{project.description}</p>
             </div>
             <ProjectStats project={project} />
+            {xPosts.length > 0 && (
+              <div>
+                <h3 className="text-h3 text-ink">Promoted on X</h3>
+                <ul className="mt-4 space-y-2">
+                  {xPosts.map((url, i) => (
+                    <li key={url}>
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-small text-accent hover:text-accent-hover"
+                      >
+                        {i === 0 ? "View the ad post on X" : `Earlier ad post ${i}`}
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {projectLeaders.length > 0 && (
               <div>
                 <h3 className="text-h3 text-ink">Led by</h3>

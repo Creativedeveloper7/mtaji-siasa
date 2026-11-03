@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { InitialProjectProvider } from "@/components/project/InitialProject";
 import { findPublicProject, projectMetadata } from "@/server/seo";
+import { projectXPostUrls } from "@/server/tracker/adly/service";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -18,5 +19,10 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 export default async function ProjectLayout({ children, params }: Params & { children: ReactNode }) {
   const { slug } = await params;
   const project = (await findPublicProject(decodeURIComponent(slug))) ?? null;
-  return <InitialProjectProvider project={project}>{children}</InitialProjectProvider>;
+  const xPosts = project ? await projectXPostUrls(project.id) : [];
+  return (
+    <InitialProjectProvider project={project} xPosts={xPosts}>
+      {children}
+    </InitialProjectProvider>
+  );
 }

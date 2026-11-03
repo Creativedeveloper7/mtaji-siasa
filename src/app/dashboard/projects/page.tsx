@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import {
   AdminDrawer,
@@ -20,7 +21,9 @@ import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfil
 import { useSaveAction } from "@/components/admin/useSaveAction";
 import { useContent } from "@/components/content/ContentProvider";
 import { createId, slugify } from "@/lib/store";
-import type { Project, ProjectCategory, ProjectStatus } from "@/types";
+import type { AdCampaign, Project, ProjectCategory, ProjectStatus } from "@/types";
+import { apiJson } from "@/lib/api-client";
+import { adXPostUrl } from "@/lib/x-post";
 import { COUNTIES, OPPORTUNITY_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants";
 
 function emptyProject(leaderId: string): Project {
@@ -59,6 +62,24 @@ export default function PoliticianProjectsPage() {
   } = useContent();
   const [editing, setEditing] = useState<Project | null>(null);
   const { saving, error, setError, notice, setNotice, run, remove } = useSaveAction();
+  // Newest X ad post per project, as proof the project was advertised.
+  const [xPosts, setXPosts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiJson<{ items?: AdCampaign[] }>("/api/ads/campaigns").then(({ ok, data }) => {
+      if (cancelled || !ok) return;
+      const next: Record<string, string> = {};
+      for (const ad of data.items ?? []) {
+        const url = adXPostUrl(ad.platforms);
+        if (ad.projectId && url && !next[ad.projectId]) next[ad.projectId] = url;
+      }
+      setXPosts(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const open = (project: Project) => {
     setError("");
@@ -151,6 +172,16 @@ export default function PoliticianProjectsPage() {
             <td className="px-4 py-3 max-w-[220px]">
               <p className="truncate text-ink">{p.name}</p>
               <p className="truncate text-caption text-ink-subtle">{p.location}</p>
+              {xPosts[p.id] && (
+                <a
+                  href={xPosts[p.id]}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 text-caption text-accent hover:text-accent-hover"
+                >
+                  Ad post on X <ExternalLink className="h-3 w-3" aria-hidden />
+                </a>
+              )}
             </td>
             <td className="px-4 py-3 text-ink-muted">
               {PROJECT_STATUS_LABELS[p.status]}
