@@ -524,7 +524,7 @@ describe("minimum budget on each network", () => {
     const res = await service.publishCampaign(leaderSession, DRAFT_ID, {});
     expect(res).toMatchObject({ ok: true, status: 207, body: { ok: false } });
     expect(h.callEdge.mock.calls.filter(([name]) => name === "publish-x-ads")).toHaveLength(0);
-    expect(JSON.stringify(res)).toContain("KES 150");
+    expect(JSON.stringify(res)).toContain("KES 200");
   });
 
   it("makes the owner raise a too-small budget when updating the ad", async () => {

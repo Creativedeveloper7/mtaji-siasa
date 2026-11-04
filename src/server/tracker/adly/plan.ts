@@ -8,6 +8,7 @@
  * payloads match what the Tracker frontend sends. Keep them in step.
  */
 import type { AdlyCampaignRow, TrackerChannel } from "@/server/tracker/adly/rows";
+import { AD_KES_PER_USD, AD_PLATFORM_FEE_RATE, adMediaKes } from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // jsonb shapes
@@ -348,12 +349,10 @@ export function splitBudgetAcrossChannels(
 }
 
 /** Tracker platform fee taken from the client budget on each live submit. */
-export const ADLY_PLATFORM_FEE_RATE = 0.20;
+export const ADLY_PLATFORM_FEE_RATE = AD_PLATFORM_FEE_RATE;
 
 export function mediaBudgetKes(clientBudgetKes: number): number {
-  const gross = Math.max(0, Math.round(Number(clientBudgetKes) || 0));
-  if (gross <= 0) return 0;
-  return Math.max(1, Math.round(gross * (1 - ADLY_PLATFORM_FEE_RATE)));
+  return adMediaKes(clientBudgetKes, ADLY_PLATFORM_FEE_RATE);
 }
 
 export function platformFeeKes(clientBudgetKes: number): number {
@@ -362,7 +361,7 @@ export function platformFeeKes(clientBudgetKes: number): number {
 }
 
 /** KES per USD the Google edge function uses to convert budgets. */
-export const TRACKER_KES_PER_USD = 134;
+export const TRACKER_KES_PER_USD = AD_KES_PER_USD;
 
 // ---------------------------------------------------------------------------
 // normalized plan

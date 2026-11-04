@@ -13,7 +13,7 @@ import { chosenAdImage, xPolicyError } from "@/server/ads/x-review";
 import type { ContentActor, ContentResult } from "@/server/content/service";
 import { serviceClient } from "@/server/tracker/clients";
 import { AD_LIMITS, trackerAdSettings } from "@/server/tracker/adly/config";
-import { MIN_AD_NETWORK_KES, minAdBudgetKes } from "@/lib/constants";
+import { AD_KES_PER_USD, AD_PLATFORM_FEE_RATE, MIN_AD_NETWORK_KES, minAdBudgetKes } from "@/lib/constants";
 import { callEdge, EdgeError, edgeErrorMessage } from "@/server/tracker/adly/edge";
 import { AdlyError, PUBLISHING_MESSAGE } from "@/server/tracker/adly/errors";
 import {
@@ -526,7 +526,9 @@ export async function publishCampaign(
 export function trackerAdQuote() {
   const s = trackerAdSettings();
   return {
-    kesPerUsd: 134,
+    kesPerUsd: AD_KES_PER_USD,
+    /** Kept as the platform fee; the rest of the budget goes to the networks. */
+    feeRate: AD_PLATFORM_FEE_RATE,
     reachPerKes: s.reachPerKes,
     minBudgetKes: s.minBudgetKes,
     maxBudgetKes: s.maxBudgetKes,

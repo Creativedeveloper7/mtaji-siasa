@@ -114,22 +114,41 @@ export const MIN_AD_BUDGET_KES = 100;
 /** Longest ad headline and text, in characters (Google headlines are 30). */
 export const AD_TEXT_LIMITS = { headline: 30, body: 220 } as const;
 
+/** Share of a Tracker ad budget kept as the platform fee; the rest goes to the networks. */
+export const AD_PLATFORM_FEE_RATE = 0.2;
+
+/** KES per US$ the publish functions use to convert budgets for the networks. */
+export const AD_KES_PER_USD = 134;
+
+/** KES of an ad budget that reaches the networks after the platform fee. */
+export function adMediaKes(budgetKes: number, feeRate: number = AD_PLATFORM_FEE_RATE): number {
+  const gross = Math.max(0, Math.round(Number(budgetKes) || 0));
+  return gross > 0 ? Math.max(1, Math.round(gross * (1 - feeRate))) : 0;
+}
+
 /**
- * Smallest budget on each network, in KES: about US$1, one day of delivery.
- * X accepts less but barely shows it (a KES 40 ad never ran); the X publish
- * spends at least $1 a day, so a small budget runs fewer days, not thinner.
+ * Smallest budget on each network, in KES. After the 20% fee KES 160 (≈ $1.19)
+ * reaches the network: one day of delivery. X accepts less but barely shows it
+ * (a KES 40 ad never ran); the X publish spends at least $1 a day, so a small
+ * budget runs fewer days, not thinner.
  */
-export const MIN_AD_NETWORK_KES = 150;
+export const MIN_AD_NETWORK_KES = 200;
 
 /** Smallest total budget for an ad split evenly over `networks` networks. */
 export function minAdBudgetKes(networks: number, floor: number = MIN_AD_BUDGET_KES): number {
   return Math.max(floor, MIN_AD_NETWORK_KES * Math.max(1, networks));
 }
 
-/** Days an ad's budget lasts when each network spends at least MIN_AD_NETWORK_KES a day. */
-export function adRunDays(budgetKes: number, networks: number, days: number): number {
-  const perNetwork = budgetKes / Math.max(1, networks);
-  return Math.max(1, Math.min(days, Math.floor(perNetwork / MIN_AD_NETWORK_KES)));
+/** Days an ad's budget lasts when each network spends at least $1 a day. */
+export function adRunDays(budgetKes: number, networks: number, days: number, feeRate: number = AD_PLATFORM_FEE_RATE): number {
+  const usdPerNetwork = adMediaKes(budgetKes, feeRate) / Math.max(1, networks) / AD_KES_PER_USD;
+  return Math.max(1, Math.min(days, Math.floor(usdPerNetwork)));
+}
+
+/** Budget, in KES rounded up to 50, that gives each network $1 a day for `days` days. */
+export function adBudgetForDays(days: number, networks: number, feeRate: number = AD_PLATFORM_FEE_RATE): number {
+  const kes = (AD_KES_PER_USD * Math.max(1, days) * Math.max(1, networks)) / (1 - feeRate);
+  return Math.max(minAdBudgetKes(networks), Math.ceil(kes / 50) * 50);
 }
 
 /** Placeholder WhatsApp deep-link for Faida prototype */
