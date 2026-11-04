@@ -19,6 +19,7 @@ import { AdlyError, PUBLISHING_MESSAGE } from "@/server/tracker/adly/errors";
 import {
   adComposerToRow,
   applyEditReview,
+  withAdCopy,
   campaignIdFromCreativeId,
   campaignToRow,
   channelLabel,
@@ -758,6 +759,24 @@ export async function editTrackerAd(session: AuthSession, id: string, body: unkn
     if (budgetKes < minKes) return fail(400, `The minimum budget is KES ${minKes.toLocaleString()}.`);
     if (budgetKes > settings.maxBudgetKes) return fail(400, `The maximum budget is KES ${settings.maxBudgetKes.toLocaleString()}.`);
 
+    // New text is optional; when sent it gets the composer's checks, and the
+    // republish posts it as a fresh X post.
+    const ad = rowToAdCampaign(row);
+    const headline = body.headline === undefined ? ad.headline : (asString(body.headline) ?? "").trim();
+    const text = body.body === undefined ? ad.body : (asString(body.body) ?? "").trim();
+    const copyChanged = headline !== ad.headline || text !== ad.body;
+    if (copyChanged) {
+      if (!headline) return fail(400, "Add a headline.");
+      if (headline.length > AD_LIMITS.headline) return fail(400, `Keep the headline to ${AD_LIMITS.headline} characters.`);
+      if (!text) return fail(400, "Add the ad text.");
+      if (text.length > AD_LIMITS.body) return fail(400, `Keep the ad text to ${AD_LIMITS.body} characters.`);
+      if (resolvePublishChannels(row.channels).includes("x")) {
+        const project = ad.projectId ? await getRepositories().content.findProject(ad.projectId) : undefined;
+        const blocked = xPolicyError(project, { headline, body: text, keywords: ad.keywords }, ad.name);
+        if (blocked) return fail(422, blocked);
+      }
+    }
+
     const targeting = obj(row.targeting);
     const days = clampDuration(targeting.duration_days) ?? 7;
     const write = applyEditReview(
@@ -766,6 +785,7 @@ export async function editTrackerAd(session: AuthSession, id: string, body: unkn
         targeting: { ...targeting, locations: audience.locations, age_group: audience.ageGroup },
         budget: budgetKes,
         budget_daily: Math.round(budgetKes / days),
+        ...(copyChanged ? { creative: withAdCopy(row.creative, headline, text) } : {}),
       },
       { requireApproval: settings.requireApproval }
     );

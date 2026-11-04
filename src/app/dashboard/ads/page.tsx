@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Megaphone, ShieldCheck, Sparkles, Users, Wallet } from "lucide-react";
-import { AdminField, AdminHeader, AdminInput, AdminSelect, AdminTextarea } from "@/components/admin/AdminUI";
+import { AdminField, AdminHeader, AdminInput, AdminSelect } from "@/components/admin/AdminUI";
+import { AdTextField } from "@/components/ads/AdTextField";
 import { Button } from "@/components/ui/Button";
 import { AdAudienceFields, audienceBody, audienceFromAd, type AdAudienceValue } from "@/components/ads/AdAudienceFields";
 import { AdPreview } from "@/components/ads/AdPreview";
@@ -376,12 +377,15 @@ export default function PoliticianAdsPage() {
             </Step>
 
             <Step n={2} title="The ad">
-              <AdminField label={`Headline (${headline.length}/${limits?.headline ?? 30})`}>
-                <AdminInput value={headline} maxLength={limits?.headline ?? 30} onChange={(e) => setHeadline(e.target.value)} />
-              </AdminField>
-              <AdminField label={`Ad text (${body.length}/${limits?.body ?? 220})`} hint="Google shows the first 90 characters; X shows it all.">
-                <AdminTextarea value={body} maxLength={limits?.body ?? 220} onChange={(e) => setBody(e.target.value)} />
-              </AdminField>
+              <AdTextField label="Headline" value={headline} maxLength={limits?.headline ?? 30} onChange={setHeadline} />
+              <AdTextField
+                label="Ad text"
+                multiline
+                value={body}
+                maxLength={limits?.body ?? 220}
+                onChange={setBody}
+                hint="Google shows the first 90 characters; X shows it all."
+              />
               <p className="text-caption text-ink-subtle">
                 The ad uses the project&apos;s photo and links to its public project page.
               </p>

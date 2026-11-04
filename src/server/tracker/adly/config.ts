@@ -1,4 +1,4 @@
-import { MIN_AD_BUDGET_KES } from "@/lib/constants";
+import { AD_TEXT_LIMITS, MIN_AD_BUDGET_KES } from "@/lib/constants";
 
 /**
  * Siasa-side ad settings on the Tracker backend. Network credentials are not
@@ -28,8 +28,8 @@ export function trackerAdSettings() {
 }
 
 export const AD_LIMITS = {
-  headline: 30,
-  body: 220,
+  headline: AD_TEXT_LIMITS.headline,
+  body: AD_TEXT_LIMITS.body,
   keywords: 20,
   keywordLength: 80,
   minDays: 1,

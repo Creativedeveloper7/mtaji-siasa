@@ -535,6 +535,37 @@ describe("minimum budget on each network", () => {
   });
 });
 
+describe("editTrackerAd: fix the ad text", () => {
+  const live = () =>
+    composerRow({ status: "live", metadata: withSiasaMeta({ x_campaign_id: "x-123", x_line_item_id: "li-9" }, { source: "ads" }) }, true);
+
+  it("stores new text where the X post and Google ads read it", async () => {
+    process.env.ADS_REQUIRE_APPROVAL = "false";
+    seed(live());
+    const text = "New roads in Githurai are open. See the progress and what comes next.";
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: [], headline: "Githurai roads open", body: text });
+    expect(res.ok).toBe(true);
+    expect(stored().creative).toMatchObject({
+      headline: "Githurai roads open",
+      body: text,
+      platforms: { x: { post: text }, google: { headlines: ["Githurai roads open"], descriptions: [text.slice(0, 90)] } },
+    });
+  });
+
+  it("refuses text that is too long", async () => {
+    seed(live());
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: [], body: "a".repeat(221) });
+    expect(res).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it("runs the X policy check on new text", async () => {
+    seed(live());
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: [], body: "Vote for us in 2027 for better roads." });
+    expect(res).toMatchObject({ ok: false, status: 422 });
+    expect(stored().creative).toMatchObject({ body: "See the progress on the Githurai roads." });
+  });
+});
+
 describe("summarizePublish", () => {
   it("says which steps failed when a network updated the ad only partly", () => {
     expect(

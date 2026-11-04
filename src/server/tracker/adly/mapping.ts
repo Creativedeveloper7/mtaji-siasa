@@ -929,6 +929,25 @@ export function adComposerToRow(input: AdComposerInput, userId: string, now = ne
 }
 
 /**
+ * New ad copy on an existing creative, written where the composer puts it: the
+ * X post is `platforms.x.post`, Google gets its own trimmed headline and description.
+ */
+export function withAdCopy(creative: unknown, headline: string, body: string): Record<string, unknown> {
+  const base = obj(creative);
+  const platforms = obj(base.platforms);
+  return {
+    ...base,
+    headline,
+    body,
+    platforms: {
+      ...platforms,
+      google: { ...obj(platforms.google), headlines: [headline.slice(0, 30)], descriptions: [body.slice(0, 90)] },
+      x: { ...obj(platforms.x), post: body },
+    },
+  };
+}
+
+/**
  * Rows the paid-ads screens list: Siasa composer ads, anything sent for Siasa
  * review, and anything that has reached a network. Tracker wizard drafts stay
  * in the Adly workspace.

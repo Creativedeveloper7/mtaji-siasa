@@ -6,13 +6,14 @@ import { AdAudienceFields, audienceBody, audienceFromAd, type AdAudienceValue } 
 import { Button } from "@/components/ui/Button";
 import { apiJson } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/utils";
-import { minAdBudgetKes } from "@/lib/constants";
+import { AD_TEXT_LIMITS, minAdBudgetKes } from "@/lib/constants";
+import { AdTextField } from "@/components/ads/AdTextField";
 import type { AdCampaign } from "@/types";
 
 /**
- * Before "Update on networks": the owner checks and changes where the ad runs,
- * its age group and its budget. Saving stores the changes; `onSaved` then
- * republishes. The post text and photo stay as they were approved.
+ * Before "Update on networks": the owner checks and changes the ad text, where
+ * the ad runs, its age group and its budget. Saving stores the changes;
+ * `onSaved` then republishes. The photo stays as it was approved.
  */
 export function AdUpdateDialog({
   ad,
@@ -25,6 +26,8 @@ export function AdUpdateDialog({
 }) {
   const [audience, setAudience] = useState<AdAudienceValue>(() => audienceFromAd(ad.locations, ad.ageGroup));
   const [budget, setBudget] = useState(() => Math.max(ad.budgetKes, minAdBudgetKes(ad.platforms.length)));
+  const [headline, setHeadline] = useState(ad.headline);
+  const [text, setText] = useState(ad.body);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const increase = budget - ad.budgetKes;
@@ -40,11 +43,15 @@ export function AdUpdateDialog({
       setError(`The minimum budget is ${formatCurrency(minBudget)}: below that the networks barely show the ad.`);
       return;
     }
+    if (!headline.trim() || !text.trim()) {
+      setError("Add a headline and the ad text.");
+      return;
+    }
     setSaving(true);
     setError("");
     const result = await apiJson<{ item?: AdCampaign; error?: string }>(`/api/ads/campaigns/${encodeURIComponent(ad.id)}`, {
       method: "POST",
-      body: JSON.stringify({ action: "edit", ...audienceBody(audience), budgetKes: budget }),
+      body: JSON.stringify({ action: "edit", ...audienceBody(audience), budgetKes: budget, headline, body: text }),
     });
     setSaving(false);
     if (!result.ok || !result.data.item) {
@@ -68,11 +75,14 @@ export function AdUpdateDialog({
             Update this ad
           </h2>
           <p className="mt-1 text-small text-ink-muted">
-            Check who sees the ad and its budget, then send the update to the networks. The text and photo stay as they are.
+            Check the text, who sees the ad and its budget, then send the update to the networks. On X a changed ad goes
+            out as a new post, which X reviews again. The photo stays as it is.
           </p>
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto p-5">
+          <AdTextField label="Headline" value={headline} maxLength={AD_TEXT_LIMITS.headline} onChange={setHeadline} />
+          <AdTextField label="Ad text" multiline value={text} maxLength={AD_TEXT_LIMITS.body} onChange={setText} />
           <AdAudienceFields value={audience} onChange={setAudience} />
           <AdminField
             label="Total budget (KES)"

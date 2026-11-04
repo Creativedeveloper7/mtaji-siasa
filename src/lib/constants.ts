@@ -111,6 +111,9 @@ export const LEADER_TYPE_LABELS: Record<LeaderType, string> = {
 /** Smallest ad budget, in KES. AD_MIN_BUDGET_KES on the server can raise it. */
 export const MIN_AD_BUDGET_KES = 100;
 
+/** Longest ad headline and text, in characters (Google headlines are 30). */
+export const AD_TEXT_LIMITS = { headline: 30, body: 220 } as const;
+
 /**
  * Smallest budget on each network, in KES: about US$1, one day of delivery.
  * X accepts less but barely shows it (a KES 40 ad never ran); the X publish
