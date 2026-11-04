@@ -13,6 +13,7 @@ import { chosenAdImage, xPolicyError } from "@/server/ads/x-review";
 import type { ContentActor, ContentResult } from "@/server/content/service";
 import { serviceClient } from "@/server/tracker/clients";
 import { AD_LIMITS, trackerAdSettings } from "@/server/tracker/adly/config";
+import { MIN_AD_NETWORK_KES, minAdBudgetKes } from "@/lib/constants";
 import { callEdge, EdgeError, edgeErrorMessage } from "@/server/tracker/adly/edge";
 import { AdlyError, PUBLISHING_MESSAGE } from "@/server/tracker/adly/errors";
 import {
@@ -298,8 +299,24 @@ export async function publishPlan(
     };
   }
 
-  const { row: claimed, claim } = await claimPublish(user, row, options.now);
+  // Every path (composer, Adly chat, admin) ends here: a network share under
+  // MIN_AD_NETWORK_KES is accepted by X but never shown (a KES 40 ad didn't run).
   const shares = splitBudgetAcrossChannels(plan.budgetKes, selected);
+  const minKes = minAdBudgetKes(selected.length);
+  if (channels.some((c) => (shares[c] ?? plan.budgetKes) < MIN_AD_NETWORK_KES)) {
+    return {
+      ok: false,
+      row,
+      unpaid: [],
+      results: channels.map((provider) => ({
+        provider,
+        ok: false,
+        error: `The budget is too small for the networks to show the ad. Raise it to at least KES ${minKes.toLocaleString()}.`,
+      })),
+    };
+  }
+
+  const { row: claimed, claim } = await claimPublish(user, row, options.now);
   const settings = trackerAdSettings();
   const origin = siteOrigin(options.origin);
   const results: ChannelPublishResult[] = [];
@@ -628,8 +645,9 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   const imageUrl = await chosenAdImage(project, body.imageUrl);
 
   const budgetKes = Math.round(Number(body.budgetKes));
-  if (!Number.isFinite(budgetKes) || budgetKes < settings.minBudgetKes) {
-    return fail(400, `The minimum budget is KES ${settings.minBudgetKes.toLocaleString()}.`);
+  const minKes = minAdBudgetKes(platforms.length, settings.minBudgetKes);
+  if (!Number.isFinite(budgetKes) || budgetKes < minKes) {
+    return fail(400, `The minimum budget is KES ${minKes.toLocaleString()}.`);
   }
   if (budgetKes > settings.maxBudgetKes) return fail(400, `The maximum budget is KES ${settings.maxBudgetKes.toLocaleString()}.`);
   const durationDays = Math.round(Number(body.durationDays));
@@ -736,7 +754,8 @@ export async function editTrackerAd(session: AuthSession, id: string, body: unkn
     if (hasProviderCampaign(row) && budgetKes < current) {
       return fail(400, `A running ad's budget can only go up (it is KES ${current.toLocaleString()}).`);
     }
-    if (budgetKes < settings.minBudgetKes) return fail(400, `The minimum budget is KES ${settings.minBudgetKes.toLocaleString()}.`);
+    const minKes = minAdBudgetKes(resolvePublishChannels(row.channels).length, settings.minBudgetKes);
+    if (budgetKes < minKes) return fail(400, `The minimum budget is KES ${minKes.toLocaleString()}.`);
     if (budgetKes > settings.maxBudgetKes) return fail(400, `The maximum budget is KES ${settings.maxBudgetKes.toLocaleString()}.`);
 
     const targeting = obj(row.targeting);

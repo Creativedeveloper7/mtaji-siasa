@@ -24,7 +24,7 @@ import {
 } from "@/data/adly";
 import { mockPolicyReviewService, mockAdsPlatformService } from "@/lib/services/adly";
 import { createId, slugify } from "@/lib/store";
-import { COUNTIES, MIN_AD_BUDGET_KES } from "@/lib/constants";
+import { COUNTIES, minAdBudgetKes } from "@/lib/constants";
 import { formatCurrency, cn } from "@/lib/utils";
 import type {
   AdPlatformId,
@@ -100,8 +100,9 @@ export default function AdlyAdvertisingPage() {
   const createCampaign = async () => {
     const selected = platforms.filter(isAdPlatformAvailable);
     if (!name.trim() || !selected.length || !leaderId) return;
-    if (!Number.isFinite(budget) || budget < MIN_AD_BUDGET_KES) {
-      setReviewNote(`The minimum budget is ${formatCurrency(MIN_AD_BUDGET_KES)}.`);
+    const minBudget = minAdBudgetKes(selected.length);
+    if (!Number.isFinite(budget) || budget < minBudget) {
+      setReviewNote(`The minimum budget is ${formatCurrency(minBudget)}: below that the networks barely show the ad.`);
       return;
     }
     setBusy(true);
@@ -377,7 +378,7 @@ export default function AdlyAdvertisingPage() {
           <AdminField label="Budget (KES)">
             <AdminInput
               type="number"
-              min={MIN_AD_BUDGET_KES}
+              min={minAdBudgetKes(platforms.filter(isAdPlatformAvailable).length)}
               step={100}
               value={budget}
               onChange={(e) => setBudget(Number(e.target.value))}

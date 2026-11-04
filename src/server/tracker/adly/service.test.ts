@@ -517,6 +517,24 @@ describe("editTrackerAd: change who sees a running ad and its budget", () => {
   });
 });
 
+describe("minimum budget on each network", () => {
+  it("does not publish an ad too small for X to show (a KES 40 ad never ran)", async () => {
+    seed(composerRow({ budget: 40, budget_daily: 8 }, true));
+    xAccepts();
+    const res = await service.publishCampaign(leaderSession, DRAFT_ID, {});
+    expect(res).toMatchObject({ ok: true, status: 207, body: { ok: false } });
+    expect(h.callEdge.mock.calls.filter(([name]) => name === "publish-x-ads")).toHaveLength(0);
+    expect(JSON.stringify(res)).toContain("KES 150");
+  });
+
+  it("makes the owner raise a too-small budget when updating the ad", async () => {
+    seed(composerRow({ budget: 40, budget_daily: 8, status: "live", metadata: withSiasaMeta({ x_campaign_id: "x-123" }, { source: "ads" }) }, true));
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: [], budgetKes: 40 });
+    expect(res).toMatchObject({ ok: false, status: 400 });
+    expect(Number(stored().budget)).toBe(40);
+  });
+});
+
 describe("summarizePublish", () => {
   it("says which steps failed when a network updated the ad only partly", () => {
     expect(

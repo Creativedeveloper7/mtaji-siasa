@@ -6,6 +6,7 @@ import { AdAudienceFields, audienceBody, audienceFromAd, type AdAudienceValue } 
 import { Button } from "@/components/ui/Button";
 import { apiJson } from "@/lib/api-client";
 import { formatCurrency } from "@/lib/utils";
+import { minAdBudgetKes } from "@/lib/constants";
 import type { AdCampaign } from "@/types";
 
 /**
@@ -23,14 +24,20 @@ export function AdUpdateDialog({
   onClose: () => void;
 }) {
   const [audience, setAudience] = useState<AdAudienceValue>(() => audienceFromAd(ad.locations, ad.ageGroup));
-  const [budget, setBudget] = useState(ad.budgetKes);
+  const [budget, setBudget] = useState(() => Math.max(ad.budgetKes, minAdBudgetKes(ad.platforms.length)));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const increase = budget - ad.budgetKes;
+  // An ad published below the minimum (e.g. KES 40) has to be raised before it can run.
+  const minBudget = Math.max(ad.budgetKes, minAdBudgetKes(ad.platforms.length));
 
   const save = async () => {
     if (budget < ad.budgetKes) {
       setError(`A running ad's budget can only go up (it is ${formatCurrency(ad.budgetKes)}).`);
+      return;
+    }
+    if (budget < minBudget) {
+      setError(`The minimum budget is ${formatCurrency(minBudget)}: below that the networks barely show the ad.`);
       return;
     }
     setSaving(true);
@@ -70,14 +77,16 @@ export function AdUpdateDialog({
           <AdminField
             label="Total budget (KES)"
             hint={
-              increase > 0
-                ? `${formatCurrency(increase)} more is paid from your wallet when the networks accept the update.`
-                : "The budget can only go up while the ad is running."
+              ad.budgetKes < minBudget
+                ? `This budget is too small for the networks to show the ad. Raise it to at least ${formatCurrency(minBudget)}.`
+                : increase > 0
+                  ? `${formatCurrency(increase)} more is paid from your wallet when the networks accept the update.`
+                  : "The budget can only go up while the ad is running."
             }
           >
             <AdminInput
               type="number"
-              min={ad.budgetKes}
+              min={minBudget}
               step={100}
               value={budget}
               onChange={(e) => setBudget(Math.max(0, Math.round(Number(e.target.value) || 0)))}

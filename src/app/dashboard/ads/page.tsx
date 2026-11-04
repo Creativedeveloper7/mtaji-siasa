@@ -14,7 +14,7 @@ import { AdlyXReview, type ApprovedAdlyVersion } from "@/components/ads/AdlyXRev
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { apiJson } from "@/lib/api-client";
-import { AD_AGE_GROUPS, MIN_AD_BUDGET_KES } from "@/lib/constants";
+import { AD_AGE_GROUPS, MIN_AD_BUDGET_KES, MIN_AD_NETWORK_KES, adRunDays, minAdBudgetKes } from "@/lib/constants";
 import { cn, formatCurrency } from "@/lib/utils";
 import type { AdCampaign, AdPlatform, AdPolicyFinding, AdPolicyReview, Project } from "@/types";
 
@@ -149,7 +149,8 @@ export default function PoliticianAdsPage() {
 
   const limits = quote?.limits;
   const chargeOnPublish = quote?.chargeOn === "publish";
-  const min = quote?.minBudgetKes ?? MIN_AD_BUDGET_KES;
+  const min = minAdBudgetKes(platforms.length, quote?.minBudgetKes ?? MIN_AD_BUDGET_KES);
+  const runDays = adRunDays(budget, platforms.length, days);
   const reach = Math.round(budget * (quote?.reachPerKes ?? 10));
   const usd = budget / (quote?.kesPerUsd ?? 129);
   const perNetwork = platforms.length ? Math.floor(budget / platforms.length) : 0;
@@ -175,7 +176,11 @@ export default function PoliticianAdsPage() {
     if (!headline.trim()) return "Add a headline.";
     if (!body.trim()) return "Add the ad text.";
     if (keywords.length === 0) return "Add at least one keyword.";
-    if (budget < min) return `The minimum budget is ${formatCurrency(min)}.`;
+    if (budget < min) {
+      return `The minimum budget is ${formatCurrency(min)}${
+        platforms.length > 1 ? ` (${formatCurrency(MIN_AD_NETWORK_KES)} on each network)` : ""
+      }: below that the networks barely show the ad.`;
+    }
     // On the Tracker backend an ad awaiting approval is charged later, at publish.
     if (insufficient && !(chargeOnPublish && quote?.requireApproval)) return "Your wallet balance is too low for this budget.";
     return "";
@@ -462,9 +467,24 @@ export default function PoliticianAdsPage() {
                   </AdminField>
                 </div>
                 <ul className="mt-4 space-y-1 text-caption text-ink-muted">
-                  <li>
-                    About {formatCurrency(Math.round(budget / days))} per day for {days} day{days === 1 ? "" : "s"}.
-                  </li>
+                  {budget < min ? (
+                    <li className="flex flex-wrap items-center gap-2 text-warning">
+                      The minimum is {formatCurrency(min)}: below that the networks barely show the ad.
+                      <button type="button" className="underline" onClick={() => setBudget(min)}>
+                        Use {formatCurrency(min)}
+                      </button>
+                    </li>
+                  ) : runDays < days ? (
+                    <li>
+                      Each network spends at least {formatCurrency(MIN_AD_NETWORK_KES)} a day so the ad gets seen, so this
+                      budget runs for about {runDays} day{runDays === 1 ? "" : "s"}. Raise it to{" "}
+                      {formatCurrency(MIN_AD_NETWORK_KES * Math.max(1, platforms.length) * days)} to run all {days} days.
+                    </li>
+                  ) : (
+                    <li>
+                      About {formatCurrency(Math.round(budget / days))} per day for {days} day{days === 1 ? "" : "s"}.
+                    </li>
+                  )}
                   {platforms.length > 1 && <li>Split evenly: {formatCurrency(perNetwork)} on X and {formatCurrency(budget - perNetwork)} on Google.</li>}
                   <li>
                     Paid to the networks as ≈ US${usd.toFixed(2)} (KES {quote?.kesPerUsd ?? 129} = $1).{" "}

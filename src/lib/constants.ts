@@ -111,6 +111,24 @@ export const LEADER_TYPE_LABELS: Record<LeaderType, string> = {
 /** Smallest ad budget, in KES. AD_MIN_BUDGET_KES on the server can raise it. */
 export const MIN_AD_BUDGET_KES = 100;
 
+/**
+ * Smallest budget on each network, in KES: about US$1, one day of delivery.
+ * X accepts less but barely shows it (a KES 40 ad never ran); the X publish
+ * spends at least $1 a day, so a small budget runs fewer days, not thinner.
+ */
+export const MIN_AD_NETWORK_KES = 150;
+
+/** Smallest total budget for an ad split evenly over `networks` networks. */
+export function minAdBudgetKes(networks: number, floor: number = MIN_AD_BUDGET_KES): number {
+  return Math.max(floor, MIN_AD_NETWORK_KES * Math.max(1, networks));
+}
+
+/** Days an ad's budget lasts when each network spends at least MIN_AD_NETWORK_KES a day. */
+export function adRunDays(budgetKes: number, networks: number, days: number): number {
+  const perNetwork = budgetKes / Math.max(1, networks);
+  return Math.max(1, Math.min(days, Math.floor(perNetwork / MIN_AD_NETWORK_KES)));
+}
+
 /** Placeholder WhatsApp deep-link for Faida prototype */
 /** Faida's WhatsApp number (+254 741 686 073), digits only as wa.me expects. */
 export const FAIDA_WHATSAPP_NUMBER = "254741686073";
