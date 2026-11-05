@@ -61,7 +61,10 @@ async function resolveRecipient(target: DonationTarget): Promise<DonationResult<
     const project = await content.findProject(target.id).catch(() => undefined);
     if (!project) return fail(404, "This project could not be found.");
     const ownerId = await content.projectOwnerUserId?.(project.id).catch(() => undefined);
-    if (!ownerId) return fail(503, NOT_SET_UP);
+    if (!ownerId) {
+      console.error(`[donations] project ${project.id} has no owner account (initiatives -> changemakers.user_id), so there is no wallet to pay.`);
+      return fail(503, NOT_SET_UP);
+    }
     return {
       ok: true,
       status: 200,
@@ -72,7 +75,10 @@ async function resolveRecipient(target: DonationTarget): Promise<DonationResult<
   if (!leader) return fail(404, "This leader could not be found.");
   // political_figures.user_id: the account behind the profile, whose wallet it is.
   const ownerId = ownerUserIdOf(leader);
-  if (!ownerId) return fail(503, NOT_SET_UP);
+  if (!ownerId) {
+    console.error(`[donations] leader ${leader.id} has no account behind it (political_figures.user_id), so there is no wallet to pay.`);
+    return fail(503, NOT_SET_UP);
+  }
   return {
     ok: true,
     status: 200,
@@ -98,7 +104,12 @@ async function recipientsCampaign(recipient: Recipient): Promise<DonationResult<
   const existing = (data ?? [])[0] as { id?: string } | undefined;
   if (existing?.id) return { ok: true, status: 200, data: { campaignId: existing.id } };
 
-  if (!hasServiceRole()) return fail(503, NOT_SET_UP);
+  if (!hasServiceRole()) {
+    console.error(
+      `[donations] "${recipient.title}" has no active fundraising campaign owned by ${recipient.ownerId}, and SUPABASE_SERVICE_ROLE_KEY is not set on this server, so none can be created. Set it to enable donations.`
+    );
+    return fail(503, NOT_SET_UP);
+  }
   // Service role: only the owner may insert under RLS, and the donor is not the
   // owner. owner_id comes from the project or leader record, never from the request.
   const { data: created, error: insertError } = await serviceClient()
