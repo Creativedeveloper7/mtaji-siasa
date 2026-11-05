@@ -545,6 +545,119 @@ export function imageNameMismatch(text: string, projectName: string): string[] |
   return null;
 }
 
+/** What an opportunity ad's landing page shows (src/types Opportunity, the fields Adly reads). */
+export interface OpportunityListing {
+  title: string;
+  category: string;
+  status?: string;
+  deadline?: string;
+  description?: string;
+  eligibility?: string;
+  requirements?: string[];
+  benefits?: string[];
+  applicationSteps?: string[];
+}
+
+const APPLICATION_FEE =
+  /\b(?:(?:application|registration|processing|recruitment|interview|training|enrol(?:l)?ment|medical) fees?|fee to (?:apply|register)|pay (?:a |the |an )?(?:fee|ksh|kes|deposit)|(?:non-)?refundable (?:fee|deposit)|fee of (?:ksh|kes)\b)/i;
+
+const DISCRIMINATION: RegExp[] = [
+  /\b(?:men|women|males?|females?|ladies|gentlemen) only\b/i,
+  /\bonly (?:men|women|males?|females?|ladies)\b/i,
+  /\b(?:must|should) be (?:a )?(?:male|female|man|woman|christian|muslim|married|single)\b/i,
+  /\b(?:from|of) the [A-Z][a-z]+ (?:community|tribe)\b/,
+  /\b(?:tribe|tribal|ethnic(?:ity)?)\b/i,
+  /\b(?:aged?|ages?|between) \d{2}\s*(?:-|–|to|and)\s*\d{2}\b/i,
+  /\b(?:below|under|over|above) (?:the age of )?\d{2}(?: years)?\b/i,
+];
+
+/**
+ * Adly's checks for advertising an opportunity on X, beyond the copy rules:
+ * - closed (status, or the deadline has passed): X rejects ads whose landing
+ *   page no longer offers what they promote, and applicants can't apply;
+ * - funding (grants, loans, bursaries): X's Deceptive & Fraudulent Content and
+ *   financial services rules reject "money available to you" (the Faida ads);
+ * - a fee to apply: the classic job-scam pattern X rejects;
+ * - tenders (advice): usually public procurement, which can read as a
+ *   government endorsement;
+ * - wording that limits who may apply by sex, religion, tribe or age
+ *   (advice): X's ads policies and Kenya's Employment Act; youth programmes
+ *   may set an age range, so this only asks the owner to check.
+ */
+export function opportunityProblemsForX(listing: OpportunityListing, now = Date.now()): AdPolicyFinding[] {
+  const findings: AdPolicyFinding[] = [];
+  const deadline = listing.deadline ? Date.parse(listing.deadline) : NaN;
+  if (listing.status === "closed" || (Number.isFinite(deadline) && deadline < now - 86_400_000)) {
+    findings.push({
+      rule: "opportunity",
+      field: "landing",
+      severity: "block",
+      found: listing.status === "closed" || !listing.deadline ? "Marked closed" : `Deadline ${listing.deadline.slice(0, 10)}`,
+      why: "This opportunity is closed, so people who click the ad can't apply. X rejects ads that promote something the landing page no longer offers. Extend the deadline or reopen it first.",
+    });
+  }
+  if (listing.category === "funding") {
+    findings.push({
+      rule: "opportunity",
+      field: "landing",
+      severity: "block",
+      found: "Funding opportunity",
+      why: "X's Deceptive & Fraudulent Content and financial services policies reject ads that offer money (grants, loans, bursaries, funding), the same reason the earlier Faida ads were rejected. Run this one on Google only.",
+    });
+  }
+  const text = [
+    listing.title,
+    listing.description,
+    listing.eligibility,
+    ...(listing.requirements ?? []),
+    ...(listing.benefits ?? []),
+    ...(listing.applicationSteps ?? []),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const fee = text.match(APPLICATION_FEE);
+  if (fee) {
+    findings.push({
+      rule: "opportunity",
+      field: "landing",
+      severity: "block",
+      found: fee[0],
+      why: "The listing asks applicants to pay. X rejects job and training ads that charge to apply (it's the most common scam pattern), and so does Kenyan law for recruitment. Remove the fee from the opportunity before advertising it.",
+    });
+  }
+  if (listing.category === "tenders") {
+    findings.push({
+      rule: "opportunity",
+      field: "landing",
+      severity: "advice",
+      found: "Tender",
+      why: "Tenders are usually public procurement. X may read an ad for one as implying a government endorsement, or as government content. Name the procuring organisation and keep the ad to what is being bought and how to bid.",
+    });
+  }
+  for (const pattern of DISCRIMINATION) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    findings.push({
+      rule: "opportunity",
+      field: "landing",
+      severity: "advice",
+      found: match[0],
+      why: "The listing limits who may apply by sex, religion, tribe or age. X's ads policies and Kenya's Employment Act don't allow job ads that discriminate; an age range is fine for a youth programme. Check this is a real requirement.",
+    });
+    break;
+  }
+  return findings;
+}
+
+/**
+ * The opportunity problems that stop an ad on every network, not only X:
+ * advertising a closed listing, or one that charges applicants (Google's
+ * policies reject that too). Funding stays an X-only block.
+ */
+export function opportunityBlocksAnyNetwork(listing: OpportunityListing, now = Date.now()): AdPolicyFinding[] {
+  return opportunityProblemsForX(listing, now).filter((f) => f.severity === "block" && f.found !== "Funding opportunity");
+}
+
 /** One line for an error message: what X would reject and why. */
 export function describeProblems(findings: AdPolicyFinding[]): string {
   const seen = new Set<XPolicyRule>();
@@ -567,4 +680,5 @@ export const RULE_LABELS: Record<XPolicyRule, string> = {
   clickbait: "clickbait",
   formatting: "formatting",
   image: "image",
+  opportunity: "opportunity listing",
 };

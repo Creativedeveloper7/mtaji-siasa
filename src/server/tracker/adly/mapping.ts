@@ -75,6 +75,8 @@ export interface SiasaReview {
 export interface SiasaMeta {
   /** political_figures.id the ad is for */
   leader_id?: string;
+  /** opportunities.id, when the ad promotes an opportunity (it links to its page) */
+  opportunity_id?: string;
   /** Exact Siasa objective when the Tracker column holds a coarser one */
   objective?: CampaignObjective;
   start_date?: string;
@@ -118,6 +120,7 @@ export function readSiasaMeta(metadata: unknown): SiasaMeta {
   const policy = obj(s.policy_review);
   return clean<SiasaMeta>({
     leader_id: str(s.leader_id),
+    opportunity_id: str(s.opportunity_id),
     objective: OBJECTIVES.includes(s.objective as CampaignObjective) ? (s.objective as CampaignObjective) : undefined,
     start_date: str(s.start_date),
     end_date: str(s.end_date),
@@ -802,6 +805,7 @@ export function rowToAdCampaign(row: AdlyCampaignRow, ctx: AdCampaignContext = {
     leaderId: siasa.leader_id ?? ctx.fallbackLeaderId ?? "",
     createdBy: row.user_id,
     projectId: scope.project_id ?? "",
+    ...(siasa.opportunity_id ? { opportunityId: siasa.opportunity_id } : {}),
     name: row.name,
     headline: creative.headline ?? row.name,
     body: creative.body ?? "",
@@ -876,8 +880,11 @@ export interface AdComposerInput {
   durationDays: number;
   landingUrl: string;
   imageUrl: string;
-  projectId: string;
-  projectTitle: string;
+  /** The project the ad promotes; omitted for an opportunity ad */
+  projectId?: string;
+  projectTitle?: string;
+  /** The opportunity the ad promotes (its page is landingUrl) */
+  opportunityId?: string;
   leaderId: string;
   estimatedReach: number;
   requireApproval: boolean;
@@ -887,12 +894,17 @@ export interface AdComposerInput {
 export function adComposerToRow(input: AdComposerInput, userId: string, now = new Date()): RowWrite & { user_id: string } {
   const days = clampDuration(input.durationDays) ?? 7;
   const budget = Math.max(0, Math.round(input.budgetKes));
+  // An opportunity ad isn't a project campaign: it links to the opportunity's
+  // page (creative.landing_page_url), which the publishers use first.
   let metadata: Record<string, unknown> = withCampaignScope(
     {},
-    { campaign_type: "project", project_id: input.projectId, project_title: input.projectTitle }
+    input.projectId
+      ? { campaign_type: "project", project_id: input.projectId, project_title: input.projectTitle ?? null }
+      : { campaign_type: "manifesto", project_id: null, project_title: null }
   );
   metadata = withSiasaMeta(metadata, {
     leader_id: input.leaderId,
+    ...(input.opportunityId ? { opportunity_id: input.opportunityId } : {}),
     image_url: input.imageUrl || undefined,
     estimated_reach: input.estimatedReach,
     source: "ads",

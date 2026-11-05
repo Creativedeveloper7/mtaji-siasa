@@ -12,6 +12,7 @@ import {
   describeProblems,
   imageNameMismatch,
   imageTextProblems,
+  opportunityProblemsForX,
   reviewCopyForX,
   suggestLandingForX,
   xCopyProblems,
@@ -21,7 +22,8 @@ import {
   type LandingPage,
 } from "@/server/ads/x-policy";
 import { aiCheckImage, aiReviewConfigured, aiReviewCopy, aiRewriteLanding } from "@/server/ads/x-policy-ai";
-import type { AdImageCheck, AdPolicyFinding, AdPolicyReview, Leader, Project } from "@/types";
+import type { AdImageCheck, AdPolicyFinding, AdPolicyReview, Leader, Opportunity, Project } from "@/types";
+import { ownerUserIdOf } from "@/server/tracker/content/media/shared";
 import type { AuthSession } from "@/types/auth";
 
 /** X image cards need at least 600 px across. */
@@ -101,7 +103,7 @@ export function officeTitleBlock(leader: Leader | undefined, projectName: string
 
 /** Photos an ad for this project may use: the cover, then its media posts and their galleries. */
 export async function projectAdImages(project: Project): Promise<string[]> {
-  const media = project.mediaIds.length ? await getRepositories().content.listMediaByIds(project.mediaIds) : [];
+  const media = project.mediaIds?.length ? await getRepositories().content.listMediaByIds(project.mediaIds).catch(() => []) : [];
   const urls = [project.image, ...media.filter((m) => m.type === "image").flatMap((m) => [m.image, ...(m.gallery ?? [])])];
   return Array.from(new Set(urls.filter((u): u is string => Boolean(u && u.trim()))));
 }
@@ -246,44 +248,165 @@ async function reviewCopy(copy: AdCopy, context: CopyContext, useAi: boolean): P
 }
 
 /**
- * Adly's version of a political project page: the AI rewrite when it is on
+ * What an ad promotes, as Adly's checks see it: a project, or an opportunity
+ * (a job, training, tender ...). The landing page is the project's or the
+ * opportunity's own page.
+ */
+export interface AdSubject {
+  kind: "project" | "opportunity";
+  id: string;
+  /** Project name or opportunity title */
+  name: string;
+  /** "project" / "opportunity", for messages */
+  noun: string;
+  /** The landing page path: /projects/<slug> or /opportunities/<slug> */
+  path: string;
+  /** The project an opportunity belongs to, or the project itself */
+  projectId?: string;
+  context: CopyContext;
+  officials: { names: string[]; leader?: Leader };
+  /** What X's reviewers read on the landing page that the owner can edit here */
+  page: LandingPage;
+  /** Further text on the landing page that is checked for political content */
+  extraPages: LandingPage[];
+  /** Photos the ad may use; the first is the default */
+  images: string[];
+  /** Opportunity checks (closed, funding, fee to apply, tenders, discriminatory wording) */
+  listingFindings: AdPolicyFinding[];
+}
+
+export async function projectSubject(project: Project): Promise<AdSubject> {
+  const officials = await projectOfficials(project);
+  return {
+    kind: "project",
+    id: project.id,
+    name: project.name,
+    noun: "project",
+    path: `/projects/${project.slug}`,
+    projectId: project.id,
+    context: copyContext(project, officials.names),
+    officials,
+    page: { name: project.name, description: project.description ?? "" },
+    extraPages: [],
+    images: await projectAdImages(project),
+    listingFindings: [],
+  };
+}
+
+export async function opportunitySubject(opportunity: Opportunity): Promise<AdSubject> {
+  const content = getRepositories().content;
+  const [leader, project] = await Promise.all([
+    opportunity.leaderId ? content.findLeader(opportunity.leaderId).catch(() => undefined) : Promise.resolve(undefined),
+    opportunity.projectId ? content.findProject(opportunity.projectId).catch(() => undefined) : Promise.resolve(undefined),
+  ]);
+  const names = [leader?.name, project?.creatorName].filter((n): n is string => typeof n === "string" && Boolean(n.trim()));
+  const projectImages = project ? await projectAdImages(project) : [];
+  const images = Array.from(new Set([opportunity.image, ...projectImages].filter((u): u is string => Boolean(u && u.trim()))));
+  return {
+    kind: "opportunity",
+    id: opportunity.id,
+    name: opportunity.title,
+    noun: "opportunity",
+    path: `/opportunities/${opportunity.slug}`,
+    projectId: opportunity.projectId,
+    context: {
+      projectName: opportunity.title,
+      county: opportunity.county || undefined,
+      limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body },
+      officialNames: names,
+      // The ad is the listing itself, so "jobs" is backed by the page.
+      hasOpportunities: true,
+    },
+    officials: { names, leader },
+    page: { name: opportunity.title, description: opportunity.description ?? "" },
+    extraPages: [
+      {
+        name: opportunity.organization ?? "",
+        description: [opportunity.eligibility, ...(opportunity.requirements ?? []), ...(opportunity.benefits ?? [])]
+          .filter(Boolean)
+          .join(". "),
+      },
+    ],
+    images,
+    listingFindings: opportunityProblemsForX(opportunity),
+  };
+}
+
+/** The opportunity, when this account may advertise it (its author, by auth user id). */
+export async function ownOpportunity(session: AuthSession, opportunityId: string): Promise<Opportunity | null> {
+  if (!opportunityId) return null;
+  const opportunity = await getRepositories().content.findOpportunity(opportunityId).catch(() => undefined);
+  if (!opportunity) return null;
+  if (usesTracker()) return ownerUserIdOf(opportunity) === session.userId ? opportunity : null;
+  return session.leaderId && opportunity.leaderId === session.leaderId ? opportunity : null;
+}
+
+/** The subject named in a request body ({ projectId } or { opportunityId }), when this account owns it. */
+export async function ownSubject(session: AuthSession, body: Record<string, unknown>): Promise<AdSubject | null> {
+  const opportunityId = asString(body.opportunityId);
+  if (opportunityId) {
+    const opportunity = await ownOpportunity(session, opportunityId);
+    return opportunity ? opportunitySubject(opportunity) : null;
+  }
+  const project = await ownProject(session, asString(body.projectId) ?? "");
+  return project ? projectSubject(project) : null;
+}
+
+/** Political content anywhere on the landing page. */
+function landingProblemsFor(subject: AdSubject): AdPolicyFinding[] {
+  const found = [subject.page, ...subject.extraPages].flatMap((page) => xLandingProblems(page, subject.context));
+  return found.slice(0, 3);
+}
+
+/** Everything on the landing page that stops an X ad. */
+function landingBlocksFor(subject: AdSubject): { political: AdPolicyFinding[]; blocks: AdPolicyFinding[] } {
+  const political = landingProblemsFor(subject);
+  const office = officeTitleBlock(subject.officials.leader, subject.name);
+  const listing = subject.listingFindings.filter((f) => f.severity === "block");
+  return { political, blocks: [...political, ...(office ? [office] : []), ...listing] };
+}
+
+/**
+ * Adly's version of a political landing page: the AI rewrite when it is on
  * and the rules pass it, else the rules' version.
  */
 async function suggestLanding(
-  project: Project,
-  context: CopyContext,
+  subject: AdSubject,
   useAi: boolean
 ): Promise<{ page: LandingPage; by: "rules" | "ai" }> {
-  const page = { name: project.name, description: project.description ?? "" };
+  const page = subject.page;
   if (useAi) {
-    const ai = await aiRewriteLanding(page, context);
-    if (ai && xLandingProblems(ai, context).length === 0) return { page: ai, by: "ai" };
+    const ai = await aiRewriteLanding(page, subject.context);
+    if (ai && xLandingProblems(ai, subject.context).length === 0) return { page: ai, by: "ai" };
   }
-  return { page: suggestLandingForX(page, context), by: "rules" };
+  return { page: suggestLandingForX(page, subject.context), by: "rules" };
 }
 
 /**
  * POST /api/ads/review: Adly's X policy review of a draft ad.
- * Body: { projectId, headline, body, keywords, imageUrl? }.
+ * Body: { projectId | opportunityId, headline, body, keywords, imageUrl? }.
  */
 export async function reviewAdForX(session: AuthSession, body: unknown): Promise<ContentResult> {
   if (!["leader", "aspirant", "admin"].includes(session.role)) {
     return { ok: false, status: 403, error: "Only leaders and aspirants can run ads." };
   }
   if (!isRecord(body)) return { ok: false, status: 400, error: "Send the draft ad as JSON." };
-  const project = await ownProject(session, asString(body.projectId) ?? "");
-  if (!project) return { ok: false, status: 400, error: "Choose one of your own projects to promote." };
+  const subject = await ownSubject(session, body);
+  if (!subject) {
+    return {
+      ok: false,
+      status: 400,
+      error: body.opportunityId ? "Choose one of your own opportunities to promote." : "Choose one of your own projects to promote.",
+    };
+  }
 
   const copy = copyFromBody(body);
-  const officials = await projectOfficials(project);
-  const context = copyContext(project, officials.names);
-  const political = xLandingProblems(project, context);
-  const office = officeTitleBlock(officials.leader, project.name);
-  const landing = office ? [...political, office] : political;
-  const imageContext = { projectName: project.name, officialNames: officials.names };
-  const images = await projectAdImages(project);
+  const { context, officials } = subject;
+  const { political, blocks } = landingBlocksFor(subject);
+  const imageContext = { projectName: subject.name, officialNames: officials.names };
+  const images = subject.images;
   const requested = asString(body.imageUrl);
-  // Only the project's own photos: the URL is fetched server-side.
+  // Only the subject's own photos: the URL is fetched server-side.
   const imageUrl = requested && images.includes(requested) ? requested : images[0] ?? "";
   const useAi = aiReviewConfigured();
 
@@ -291,13 +414,14 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
     reviewCopy(copy, context, useAi),
     imageUrl
       ? checkImage(imageUrl, useAi, imageContext)
-      : Promise.resolve<AdImageCheck>({ url: "", ok: false, notes: ["This project has no photo yet."] }),
-    political.length ? suggestLanding(project, context, useAi) : Promise.resolve(null),
+      : Promise.resolve<AdImageCheck>({ url: "", ok: false, notes: [`This ${subject.noun} has no photo yet.`] }),
+    political.length ? suggestLanding(subject, useAi) : Promise.resolve(null),
   ]);
 
-  const findings = [...landing, ...copyReview.findings];
-  const byline = landing.length ? null : leaderBylineAdvice(officials.leader);
+  const findings = [...blocks, ...copyReview.findings];
+  const byline = blocks.length ? null : leaderBylineAdvice(officials.leader);
   if (byline) findings.push(byline);
+  findings.push(...subject.listingFindings.filter((f) => f.severity === "advice"));
   for (const note of image.advice ?? []) {
     findings.push({ rule: "image", field: "image", severity: "advice", found: "Name on the photo", why: note });
   }
@@ -315,7 +439,7 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
       severity: "fix",
       found: "The chosen photo",
       why: image.notes.join(" "),
-      change: usable ? "Switched to another photo of this project" : undefined,
+      change: usable ? `Switched to another photo of this ${subject.noun}` : undefined,
     });
   } else if (image.willCrop) {
     findings.push({ rule: "image", field: "image", severity: "advice", found: "Photo shape", why: image.notes.join(" ") });
@@ -335,7 +459,7 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
   const usableImage = image.ok || alternatives.some((a) => a.ok);
   const review: AdPolicyReview = {
     network: "x",
-    status: landing.length
+    status: blocks.length
       ? "not_for_x"
       : !usableImage
         ? "needs_image"
@@ -349,8 +473,9 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
     ...(landingSuggestion
       ? {
           landing: {
-            projectId: project.id,
-            original: { name: project.name, description: project.description ?? "" },
+            kind: subject.kind,
+            ...(subject.kind === "project" ? { projectId: subject.id } : { opportunityId: subject.id }),
+            original: subject.page,
             suggested: landingSuggestion.page,
             by: landingSuggestion.by,
           },
@@ -362,29 +487,37 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
 
 /**
  * Server-side guard for create and publish: the message to refuse an X ad
- * with, or null when its copy passes. The composer runs the full review
- * first, so this only trips when someone skips Adly's version.
+ * with, or null when it passes. The composer runs the full review first, so
+ * this only trips when someone skips Adly's version.
  */
-export async function xPolicyError(project: Project | undefined, copy: AdCopy, fallbackName: string): Promise<string | null> {
-  const officials = project ? await projectOfficials(project) : { names: [] as string[], leader: undefined };
-  const names = officials.names;
-  const leader = officials.leader;
-  const context = project
-    ? copyContext(project, names)
-    : { projectName: fallbackName, limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body } };
-  if (project) {
-    const office = officeTitleBlock(leader, project.name);
-    if (office) {
-      return `Adly stopped this ad before it went to X: ${office.why} ${office.change}.`;
+export async function xPolicyErrorFor(subject: AdSubject | undefined, copy: AdCopy, fallbackName: string): Promise<string | null> {
+  const context = subject?.context ?? { projectName: fallbackName, limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body } };
+  if (subject) {
+    const office = officeTitleBlock(subject.officials.leader, subject.name);
+    if (office) return `Adly stopped this ad before it went to X: ${office.why} ${office.change}.`;
+    const listing = subject.listingFindings.filter((f) => f.severity === "block");
+    if (listing.length) {
+      return `Adly stopped this ad before it went to X, which would reject it: ${listing.map((f) => f.why).join(" ")}`;
     }
-    const landing = xLandingProblems(project, context);
+    const landing = landingProblemsFor(subject);
     if (landing.length) {
-      return `Adly stopped this ad before it went to X. X doesn't allow political ads aimed at Kenya, and its reviewers read the project page the ad links to, which has political content: ${describeProblems(landing)}. Edit the project so its name and description describe the work itself, or run the ad on Google only.`;
+      return `Adly stopped this ad before it went to X. X doesn't allow political ads aimed at Kenya, and its reviewers read the ${subject.noun} page the ad links to, which has political content: ${describeProblems(landing)}. Edit the ${subject.noun} so it describes the work itself, or run the ad on Google only.`;
     }
   }
   const problems = xCopyProblems(copy, context);
   if (!problems.length) return null;
   return `Adly stopped this ad before it went to X, which would likely reject it for: ${describeProblems(problems)}. Open the ad composer and let Adly review it, or run it on Google only.`;
+}
+
+/** xPolicyErrorFor a project ad. */
+export async function xPolicyError(project: Project | undefined, copy: AdCopy, fallbackName: string): Promise<string | null> {
+  return xPolicyErrorFor(project ? await projectSubject(project) : undefined, copy, fallbackName);
+}
+
+/** The image to use: one of the subject's own photos, else its first. */
+export function chosenSubjectImage(subject: AdSubject, requested: unknown): string {
+  const url = asString(requested);
+  return url && subject.images.includes(url) ? url : subject.images[0] ?? "";
 }
 
 /** The image to use: one of the project's own photos, else its cover. */

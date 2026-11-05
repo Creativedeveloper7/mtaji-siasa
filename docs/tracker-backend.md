@@ -245,7 +245,18 @@ Adly campaigns and dashboard paid ads are both `adly_campaigns` rows
   `image_url`, `estimated_reach`, `source` (`ads` / `adly`), `review` (the
   admin approval gate), `policy_review`, `publishing` (one publish at a time)
   and `unpaid` (networks that accepted the ad but whose wallet debit failed;
-  returned as `warnings` by the publish routes and shown on the campaign).
+  returned as `warnings` by the publish routes and shown on the campaign),
+  and `opportunity_id`.
+- A dashboard ad promotes a project or an opportunity (`POST /api/ads/campaigns`
+  and `/api/ads/review` take `projectId` or `opportunityId`; ownership is the
+  record's owner auth user id). An opportunity ad is not a project campaign
+  (`campaign_type` manifesto), stores `metadata.siasa.opportunity_id`, and
+  links to `/opportunities/<slug>` through `creative.landing_page_url`, which
+  the publish functions use first. Opportunity pages render their title,
+  description and image on the server for X's reviewers. Adly's checks
+  (`opportunityProblemsForX`): a closed listing or a fee to apply blocks every
+  network; funding blocks X; tenders and wording that limits who may apply
+  (sex, religion, tribe, age) are advice.
 - Network credentials (`GADS_*`, `X_*`, `META_*`, `TIKTOK_*`,
   `OPENAI_API_KEY`) are Supabase function secrets in the Tracker project
   only. Siasa holds none.

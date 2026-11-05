@@ -17,6 +17,7 @@ import { useContent } from "@/components/content/ContentProvider";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { ApplyModal } from "@/components/opportunities/ApplyModal";
 import { useApplications } from "@/components/opportunities/useApplications";
+import { useInitialOpportunity } from "@/components/opportunities/InitialOpportunity";
 import { apiJson } from "@/lib/api-client";
 import {
   APPLICATION_STATUS_LABELS,
@@ -73,7 +74,12 @@ export default function OpportunityDetailPage({
   const [applyOpen, setApplyOpen] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
 
-  const raw = getOpportunityBySlug(slug);
+  const initial = useInitialOpportunity();
+  // Until the content store loads, show the opportunity the server read (X's
+  // ad review reads the server HTML and would otherwise see only "Loading…").
+  const key = decodeURIComponent(slug);
+  const raw =
+    getOpportunityBySlug(slug) ?? (!ready && initial && (initial.slug === key || initial.id === key) ? initial : undefined);
   const opportunity = raw ? opportunityDetailDefaults(raw) : undefined;
 
   const pool = useMemo(
@@ -133,7 +139,7 @@ export default function OpportunityDetailPage({
     window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
   }, [opportunityId]);
 
-  if (!ready) return <LoadingState label="Loading opportunity…" />;
+  if (!ready && !opportunity) return <LoadingState label="Loading opportunity…" />;
   if (!opportunity) {
     return (
       <section className="container-wide section-y">

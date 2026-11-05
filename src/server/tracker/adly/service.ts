@@ -9,7 +9,8 @@ import { visibleAdly } from "@/server/adly/service";
 import { parseCampaign, parseCreative as parseSiasaCreative, parsePolicyReview } from "@/server/adly/parse";
 import { asString, isRecord } from "@/server/content/parse";
 import { parseAdAudience } from "@/server/ads/audience";
-import { chosenAdImage, xPolicyError } from "@/server/ads/x-review";
+import { chosenSubjectImage, opportunitySubject, ownSubject, projectSubject, xPolicyErrorFor, type AdSubject } from "@/server/ads/x-review";
+import { opportunityBlocksAnyNetwork } from "@/server/ads/x-policy";
 import type { ContentActor, ContentResult } from "@/server/content/service";
 import { serviceClient } from "@/server/tracker/clients";
 import { AD_LIMITS, trackerAdSettings } from "@/server/tracker/adly/config";
@@ -466,14 +467,30 @@ export function approvalBlocks(row: AdlyCampaignRow, channels: TrackerChannel[] 
   return "An admin has to approve this ad before it can be published.";
 }
 
+/** The opportunity's listing fields, for the checks that apply on every network. */
+async function opportunityListing(id: string) {
+  const opportunity = await getRepositories().content.findOpportunity(id).catch(() => undefined);
+  return opportunity ?? { title: "", category: "other" };
+}
+
+/** What an existing ad promotes: its opportunity, else its project. */
+async function adSubject(ad: { projectId?: string; opportunityId?: string }): Promise<AdSubject | undefined> {
+  const content = getRepositories().content;
+  if (ad.opportunityId) {
+    const opportunity = await content.findOpportunity(ad.opportunityId).catch(() => undefined);
+    return opportunity ? opportunitySubject(opportunity) : undefined;
+  }
+  const project = ad.projectId ? await content.findProject(ad.projectId).catch(() => undefined) : undefined;
+  return project ? projectSubject(project) : undefined;
+}
+
 /** Admins may look at any campaign but only the owner edits or publishes it. */
-/** Adly's X policy guard for publishing an existing campaign (see xPolicyError). */
+/** Adly's X policy guard for publishing an existing campaign (see xPolicyErrorFor). */
 async function xPolicyBlock(row: AdlyCampaignRow, channels: TrackerChannel[]): Promise<string | null> {
   if (!channels.includes("x")) return null;
   const ad = rowToAdCampaign(row);
   if (!ad.headline && !ad.body) return null;
-  const project = ad.projectId ? await getRepositories().content.findProject(ad.projectId) : undefined;
-  return await xPolicyError(project, { headline: ad.headline, body: ad.body, keywords: ad.keywords }, ad.name);
+  return await xPolicyErrorFor(await adSubject(ad), { headline: ad.headline, body: ad.body, keywords: ad.keywords }, ad.name);
 }
 
 async function notOwned(session: { role: string }, id: string, verb: string): Promise<ContentResult> {
@@ -606,12 +623,15 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   const leaderId = session.leaderId;
   const settings = trackerAdSettings();
 
-  const project = await getRepositories().content.findProject(asString(body.projectId) ?? "");
-  // Ownership rule: the project's owner auth user id, never a leader id.
-  if (!project || !(await ownsProject(project.id, session.userId))) {
-    return fail(400, "Choose one of your own projects to promote.");
+  // A project or an opportunity. Ownership rule: the owner's auth user id, never a leader id.
+  const subject = await ownSubject(session, body);
+  if (!subject) {
+    return fail(400, body.opportunityId ? "Choose one of your own opportunities to promote." : "Choose one of your own projects to promote.");
   }
-  if (!project.image) return fail(400, "Add a project image before running an ad.");
+  if (!subject.images.length) return fail(400, `Add a photo to the ${subject.noun} before running an ad.`);
+  // Closed listings and fees to apply are refused on every network, not only X.
+  const listingBlocks = subject.kind === "opportunity" ? opportunityBlocksAnyNetwork(await opportunityListing(subject.id)) : [];
+  if (listingBlocks.length) return fail(422, listingBlocks.map((f) => f.why).join(" "));
 
   const headline = asString(body.headline) ?? "";
   const text = asString(body.body) ?? "";
@@ -639,13 +659,13 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   );
   if (!platforms.length) return fail(400, "Choose at least one network: X or Google.");
   if (platforms.includes("x")) {
-    const blocked = await xPolicyError(project, { headline, body: text, keywords }, project.name);
+    const blocked = await xPolicyErrorFor(subject, { headline, body: text, keywords }, subject.name);
     if (blocked) return fail(422, blocked);
   }
   const audience = parseAdAudience(body);
   if (typeof audience === "string") return fail(400, audience);
-  // The composer may pick another of the project's photos (Adly's image check).
-  const imageUrl = await chosenAdImage(project, body.imageUrl);
+  // The composer may pick another of the subject's photos (Adly's image check).
+  const imageUrl = chosenSubjectImage(subject, body.imageUrl);
 
   const budgetKes = Math.round(Number(body.budgetKes));
   const minKes = minAdBudgetKes(platforms.length, settings.minBudgetKes);
@@ -659,7 +679,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   }
 
   const origin = siteOrigin(requestOrigin) ?? requestOrigin;
-  const landingUrl = `${origin.replace(/\/$/, "")}/projects/${project.slug}`;
+  const landingUrl = `${origin.replace(/\/$/, "")}${subject.path}`;
 
   return guard(async () => {
     const user = await signedIn(session.userId);
@@ -671,7 +691,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
       user.client,
       adComposerToRow(
         {
-          name: (asString(body.name) ?? `${project.name} — ad`).slice(0, 120),
+          name: (asString(body.name) ?? `${subject.name} — ad`).slice(0, 120),
           headline,
           body: text,
           keywords,
@@ -682,8 +702,9 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
           durationDays,
           landingUrl,
           imageUrl,
-          projectId: project.id,
-          projectTitle: project.name,
+          ...(subject.kind === "project"
+            ? { projectId: subject.id, projectTitle: subject.name }
+            : { opportunityId: subject.id }),
           leaderId,
           estimatedReach: Math.round(budgetKes * settings.reachPerKes),
           requireApproval: settings.requireApproval,
@@ -796,8 +817,7 @@ export async function editTrackerAd(session: AuthSession, id: string, body: unkn
     // Every X update is checked, not only changed text: the project page may
     // have changed, and the republish would be refused anyway.
     if (resolvePublishChannels(row.channels).includes("x")) {
-      const project = ad.projectId ? await getRepositories().content.findProject(ad.projectId) : undefined;
-      const blocked = await xPolicyError(project, { headline, body: text, keywords }, ad.name);
+      const blocked = await xPolicyErrorFor(await adSubject(ad), { headline, body: text, keywords }, ad.name);
       if (blocked) return fail(422, blocked);
     }
 

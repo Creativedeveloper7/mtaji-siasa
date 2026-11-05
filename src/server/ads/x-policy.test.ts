@@ -3,6 +3,8 @@ import {
   imageNameMismatch,
   imageTextProblems,
   nameVariants,
+  opportunityBlocksAnyNetwork,
+  opportunityProblemsForX,
   reviewCopyForX,
   suggestLandingForX,
   xCopyProblems,
@@ -225,5 +227,43 @@ describe("jobs without openings", () => {
   it("keeps it when the project lists opportunities, or when that isn't known", () => {
     expect(xCopyProblems(copy, { ...context, hasOpportunities: true })).toEqual([]);
     expect(xCopyProblems(copy, context)).toEqual([]);
+  });
+});
+
+describe("opportunityProblemsForX", () => {
+  const now = Date.parse("2026-11-05T12:00:00Z");
+  const job = {
+    title: "Site supervisor, Thika feeder roads",
+    category: "jobs",
+    deadline: "2026-12-01",
+    description: "Supervise grading and drainage works. Apply on this page with your CV.",
+    eligibility: "Diploma in civil engineering and two years on road works.",
+  };
+
+  it("passes an open, complete job listing", () => {
+    expect(opportunityProblemsForX(job, now)).toEqual([]);
+  });
+
+  it("blocks closed listings, funding and fees to apply", () => {
+    const rules = (listing: Parameters<typeof opportunityProblemsForX>[0]) =>
+      opportunityProblemsForX(listing, now).map((f) => [f.severity, f.found]);
+    expect(rules({ ...job, deadline: "2026-10-01" })).toEqual([["block", "Deadline 2026-10-01"]]);
+    expect(rules({ ...job, status: "closed" })).toEqual([["block", "Marked closed"]]);
+    expect(rules({ ...job, category: "funding" })).toEqual([["block", "Funding opportunity"]]);
+    expect(rules({ ...job, applicationSteps: ["Pay a registration fee of KES 500 to M-Pesa."] })).toEqual([
+      ["block", "registration fee"],
+    ]);
+  });
+
+  it("only advises on tenders and on who may apply", () => {
+    expect(opportunityProblemsForX({ ...job, category: "tenders" }, now).map((f) => f.severity)).toEqual(["advice"]);
+    expect(opportunityProblemsForX({ ...job, eligibility: "Women only, aged 18-35." }, now)).toEqual([
+      expect.objectContaining({ severity: "advice", found: "Women only" }),
+    ]);
+  });
+
+  it("stops closed and fee-charging listings on every network, funding only on X", () => {
+    expect(opportunityBlocksAnyNetwork({ ...job, category: "funding" }, now)).toEqual([]);
+    expect(opportunityBlocksAnyNetwork({ ...job, deadline: "2026-10-01" }, now)).toHaveLength(1);
   });
 });

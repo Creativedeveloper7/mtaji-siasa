@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   callEdge: vi.fn(),
   findProject: vi.fn(),
   projectOwner: vi.fn(),
+  findOpportunity: vi.fn(),
 }));
 
 vi.mock("@/server/tracker/clients", () => ({
@@ -44,10 +45,14 @@ vi.mock("@/server/tracker/adly/edge", async (importOriginal) => ({
 }));
 
 vi.mock("@/server", () => ({
+  usesTracker: () => true,
   getRepositories: () => ({
     content: {
       findProject: (id: string) => h.findProject(id),
       projectOwnerUserId: (id: string) => h.projectOwner(id),
+      findOpportunity: (id: string) => h.findOpportunity(id),
+      findLeader: async () => undefined,
+      listMediaByIds: async () => [],
     },
   }),
 }));
@@ -616,5 +621,53 @@ describe("summarizePublish", () => {
     const res = await service.publishCampaign(leaderSession, DRAFT_ID, {});
     expect(res.ok).toBe(true);
     if (res.ok) expect((res.body as { summary: string }).summary).toMatch(/Not everything went through: no new post was created on X/);
+  });
+});
+
+describe("createTrackerAd: an opportunity", () => {
+  const OPPORTUNITY = "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e";
+  const listing = {
+    id: OPPORTUNITY,
+    slug: "site-supervisor-thika",
+    title: "Site supervisor, Thika roads",
+    category: "jobs",
+    location: "Thika",
+    county: "Kiambu",
+    deadline: "2099-01-01",
+    eligibility: "Diploma in civil engineering.",
+    description: "Supervise grading and drainage works. Apply on this page.",
+    image: "https://example.org/supervisor.jpg",
+    leaderId: "pf-1",
+    ownerUserId: OWNER,
+  };
+  const body = {
+    opportunityId: OPPORTUNITY,
+    headline: "Site supervisor wanted",
+    body: "Supervise grading and drainage works in Thika. See the requirements and apply on the page.",
+    keywords: ["Thika jobs"],
+    platforms: ["google"],
+    budgetKes: 1000,
+    durationDays: 7,
+    locations: ["Kiambu"],
+  };
+
+  it("links the ad to the opportunity's page and records the opportunity", async () => {
+    process.env.ADS_REQUIRE_APPROVAL = "true";
+    h.findOpportunity.mockResolvedValue(listing);
+    const res = await service.createTrackerAd(leaderSession, body, "https://www.m-taji.co.ke");
+    expect(res).toMatchObject({ ok: true, status: 201 });
+    const row = stored((res as unknown as { body: { item: { id: string } } }).body.item.id);
+    expect(row.creative).toMatchObject({ landing_page_url: "https://www.m-taji.co.ke/opportunities/site-supervisor-thika" });
+    expect(readSiasaMeta(row.metadata).opportunity_id).toBe(OPPORTUNITY);
+    expect(row.metadata).not.toHaveProperty("project_id");
+    expect((res as unknown as { body: { item: { opportunityId?: string } } }).body.item.opportunityId).toBe(OPPORTUNITY);
+  });
+
+  it("refuses someone else's opportunity, and a closed one on any network", async () => {
+    process.env.ADS_REQUIRE_APPROVAL = "true";
+    h.findOpportunity.mockResolvedValue({ ...listing, ownerUserId: OTHER });
+    expect(await service.createTrackerAd(leaderSession, body, "https://x.co")).toMatchObject({ ok: false, status: 400 });
+    h.findOpportunity.mockResolvedValue({ ...listing, deadline: "2020-01-01" });
+    expect(await service.createTrackerAd(leaderSession, body, "https://x.co")).toMatchObject({ ok: false, status: 422 });
   });
 });

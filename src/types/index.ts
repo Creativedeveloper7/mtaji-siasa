@@ -278,7 +278,10 @@ export interface AdCampaign {
   leaderId: string;
   /** Account that created it */
   createdBy: string;
+  /** The project it promotes ("" for an opportunity ad) */
   projectId: string;
+  /** The opportunity it promotes, when it is an opportunity ad (it links to its page) */
+  opportunityId?: string;
   name: string;
   headline: string;
   body: string;
@@ -315,7 +318,9 @@ export type XPolicyRule =
   | "personal_attributes"
   | "clickbait"
   | "formatting"
-  | "image";
+  | "image"
+  /** Opportunity ads: closed, funding, a fee to apply, tenders, discriminatory wording */
+  | "opportunity";
 
 /** One thing Adly found in an ad before it goes to X, and what it did about it. */
 export interface AdPolicyFinding {
@@ -368,11 +373,14 @@ export interface AdPolicyReview {
   suggested: { headline: string; body: string; keywords: string[]; imageUrl: string };
   image: AdImageCheck;
   /**
-   * When the project page is political (status not_for_x): the page as it is
-   * and Adly's version of it, which the owner can edit and save to the project.
+   * When the landing page (the project's or the opportunity's) is political
+   * (status not_for_x): the page as it is and Adly's version of it, which the
+   * owner can edit and save. name is the project name or opportunity title.
    */
   landing?: {
-    projectId: string;
+    kind: "project" | "opportunity";
+    projectId?: string;
+    opportunityId?: string;
     original: { name: string; description: string };
     suggested: { name: string; description: string };
     /** "ai" when the AI rewrite passed the rules, else the rules' version */

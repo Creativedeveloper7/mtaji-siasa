@@ -51,7 +51,7 @@ export function AdUpdateDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [pageNotice, setPageNotice] = useState("");
-  const { content, upsertProject } = useContent();
+  const { content, upsertProject, upsertOpportunity } = useContent();
   const increase = budget - ad.budgetKes;
   // An ad published below the minimum (e.g. KES 40) has to be raised before it can run.
   const minBudget = Math.max(ad.budgetKes, minAdBudgetKes(ad.platforms.length));
@@ -75,7 +75,13 @@ export function AdUpdateDialog({
       setReviewing(true);
       const checked = await apiJson<{ review?: AdPolicyReview; error?: string }>("/api/ads/review", {
         method: "POST",
-        body: JSON.stringify({ projectId: ad.projectId, headline: headline.trim(), body: text.trim(), keywords, imageUrl: ad.imageUrl }),
+        body: JSON.stringify({
+          ...(ad.opportunityId ? { opportunityId: ad.opportunityId } : { projectId: ad.projectId }),
+          headline: headline.trim(),
+          body: text.trim(),
+          keywords,
+          imageUrl: ad.imageUrl,
+        }),
       });
       setReviewing(false);
       if (checked.ok && checked.data.review) {
@@ -117,13 +123,22 @@ export function AdUpdateDialog({
         onEdit={() => setReview(null)}
         onDropX={() => setReview(null)}
         onApplyLanding={async (page) => {
-          const project = content.projects.find((p) => p.id === ad.projectId);
-          if (!project) return "Adly could not find this ad's project. Edit it from Projects.";
-          const saved = await upsertProject({ ...project, name: page.name, description: page.description });
-          if (!saved.ok) return saved.error || "Could not save the project.";
+          if (ad.opportunityId) {
+            const opportunity = content.opportunities.find((o) => o.id === ad.opportunityId);
+            if (!opportunity) return "Adly could not find this ad's opportunity. Edit it from Opportunities.";
+            const saved = await upsertOpportunity({ ...opportunity, title: page.name, description: page.description });
+            if (!saved.ok) return saved.error || "Could not save the opportunity.";
+          } else {
+            const project = content.projects.find((p) => p.id === ad.projectId);
+            if (!project) return "Adly could not find this ad's project. Edit it from Projects.";
+            const saved = await upsertProject({ ...project, name: page.name, description: page.description });
+            if (!saved.ok) return saved.error || "Could not save the project.";
+          }
           // Back to the form: "Save and update" checks the ad again before anything is charged.
           setCheckedKey("");
-          setPageNotice("Project page updated. Press “Save and update”: Adly checks the ad again before it goes out.");
+          setPageNotice(
+            `${ad.opportunityId ? "Opportunity" : "Project"} page updated. Press “Save and update”: Adly checks the ad again before it goes out.`
+          );
           setReview(null);
           return null;
         }}

@@ -2,7 +2,7 @@ import "server-only";
 import type { Metadata } from "next";
 import { getRepositories } from "@/server";
 import { canonicalSiteUrl, isAdNetworkLandingUrl, TRACKER_PUBLIC_ORIGIN } from "@/server/tracker/adly/plan";
-import type { Leader, Project } from "@/types";
+import type { Leader, Opportunity, Project } from "@/types";
 
 /**
  * Per-page title, description and image in the server HTML. Crawlers (X ad
@@ -80,6 +80,26 @@ export async function findPublicProject(key: string): Promise<Project | undefine
 export async function findPublicLeader(key: string): Promise<Leader | undefined> {
   const content = getRepositories().content;
   return findBySlugOrId((s) => content.findLeaderBySlug(s), (id) => content.findLeader(id), key);
+}
+
+export async function findPublicOpportunity(key: string): Promise<Opportunity | undefined> {
+  const content = getRepositories().content;
+  return findBySlugOrId((s) => content.findOpportunityBySlug(s), (id) => content.findOpportunity(id), key);
+}
+
+export async function opportunityMetadata(key: string): Promise<Metadata> {
+  const opportunity = await findPublicOpportunity(key);
+  if (!opportunity) return {};
+  const place = [opportunity.location, opportunity.county && !opportunity.location.includes(opportunity.county) ? `${opportunity.county} County` : ""]
+    .filter(Boolean)
+    .join(", ");
+  const by = opportunity.organization ? ` with ${opportunity.organization}` : "";
+  return pageMetadata({
+    title: opportunity.title,
+    description: clip(opportunity.description || `${opportunity.title}${by}${place ? ` in ${place}` : ""}. How to apply on M-Taji Siasa.`, 200),
+    path: `/opportunities/${opportunity.slug}`,
+    image: opportunity.image,
+  });
 }
 
 export async function projectMetadata(key: string): Promise<Metadata> {

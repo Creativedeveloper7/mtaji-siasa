@@ -78,3 +78,25 @@ describe("officeTitleBlock", () => {
     expect(officeTitleBlock(undefined, "x")).toBeNull();
   });
 });
+
+describe("reviewAdForX for an opportunity", () => {
+  it("reviews one of the leader's own opportunities and its photo", async () => {
+    const { reviewAdForX } = await import("@/server/ads/x-review");
+    const result = await reviewAdForX(leader, {
+      opportunityId: "opp-001",
+      headline: "Local supplier openings",
+      body: "Supply materials to the Thika roads works. See the requirements and apply on the page.",
+      keywords: ["Thika suppliers"],
+    });
+    expect(result.ok).toBe(true);
+    const r = (result as unknown as { body: { review: AdPolicyReview } }).body.review;
+    expect(r.image.ok).toBe(true);
+    expect(r.findings.filter((f) => f.severity === "block")).toEqual([]);
+  });
+
+  it("refuses an opportunity the account doesn't own", async () => {
+    const { reviewAdForX } = await import("@/server/ads/x-review");
+    const result = await reviewAdForX(leader, { opportunityId: "opp-003", headline: "a", body: "b", keywords: ["c"] });
+    expect(result).toMatchObject({ ok: false, status: 400, error: "Choose one of your own opportunities to promote." });
+  });
+});

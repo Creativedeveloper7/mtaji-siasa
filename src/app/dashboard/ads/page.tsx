@@ -15,9 +15,10 @@ import { AdlyXReview, type ApprovedAdlyVersion } from "@/components/ads/AdlyXRev
 import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfile";
 import { useContent } from "@/components/content/ContentProvider";
 import { apiJson } from "@/lib/api-client";
+import { OPPORTUNITY_CATEGORY_LABELS } from "@/lib/constants";
 import { AD_AGE_GROUPS, MIN_AD_BUDGET_KES, MIN_AD_NETWORK_KES, adBudgetForDays, adMediaKes, adRunDays, minAdBudgetKes } from "@/lib/constants";
 import { cn, formatCurrency } from "@/lib/utils";
-import type { AdCampaign, AdPlatform, AdPolicyFinding, AdPolicyReview, Project } from "@/types";
+import type { AdCampaign, AdPlatform, AdPolicyFinding, AdPolicyReview, Opportunity, Project } from "@/types";
 
 interface Quote {
   kesPerUsd: number;
@@ -65,10 +66,37 @@ function suggestionsFor(project: Project | undefined): string[] {
   );
 }
 
+function opportunitySuggestions(opportunity: Opportunity | undefined): string[] {
+  if (!opportunity) return [];
+  return Array.from(
+    new Set(
+      [
+        opportunity.title.split(/[—–-]/)[0],
+        opportunity.county ? `${opportunity.county} County` : "",
+        OPPORTUNITY_CATEGORY_LABELS[opportunity.category]?.toLowerCase(),
+        opportunity.organization,
+        opportunity.location.split(",")[0],
+      ]
+        .map((s) => s?.trim())
+        .filter((s): s is string => Boolean(s && s.length <= 80))
+    )
+  );
+}
+
+/** An opportunity's deadline has passed, or it is marked closed. */
+function isClosed(opportunity: Opportunity): boolean {
+  const deadline = Date.parse(opportunity.deadline);
+  return opportunity.status === "closed" || (Number.isFinite(deadline) && deadline < Date.now() - 86_400_000);
+}
+
 export default function PoliticianAdsPage() {
   const { leader } = usePoliticianProfile();
-  const { getProjectsByIds, upsertProject } = useContent();
+  const { getProjectsByIds, getOpportunitiesByIds, upsertProject, upsertOpportunity } = useContent();
   const projects = useMemo(() => (leader ? getProjectsByIds(leader.projectIds) : []), [leader, getProjectsByIds]);
+  const opportunities = useMemo(
+    () => (leader ? getOpportunitiesByIds(leader.opportunityIds ?? []) : []),
+    [leader, getOpportunitiesByIds]
+  );
 
   const [items, setItems] = useState<AdCampaign[]>([]);
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -76,7 +104,10 @@ export default function PoliticianAdsPage() {
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState<{ id: string; action: AdCardAction } | null>(null);
 
+  // What the ad promotes: a project, or one of the leader's opportunities (jobs, training ...).
+  const [kind, setKind] = useState<"project" | "opportunity">("project");
   const [projectId, setProjectId] = useState("");
+  const [opportunityId, setOpportunityId] = useState("");
   const [platforms, setPlatforms] = useState<AdPlatform[]>(["x", "google"]);
   const [headline, setHeadline] = useState("");
   const [body, setBody] = useState("");
@@ -123,6 +154,13 @@ export default function PoliticianAdsPage() {
   }, [load]);
 
   const project = projects.find((p) => p.id === projectId);
+  const opportunity = opportunities.find((o) => o.id === opportunityId);
+  // The thing the ad links to, whichever kind it is.
+  const subject =
+    kind === "opportunity"
+      ? opportunity && { name: opportunity.title, image: opportunity.image ?? "", path: `/opportunities/${opportunity.slug}`, noun: "opportunity" }
+      : project && { name: project.name, image: project.image, path: `/projects/${project.slug}`, noun: "project" };
+  const subjectBody = kind === "opportunity" ? { opportunityId } : { projectId };
 
   // Pick a project: fill the copy from it (the user can edit everything).
   const chooseProject = (id: string) => {
@@ -137,10 +175,38 @@ export default function PoliticianAdsPage() {
     setFormError("");
   };
 
+  // Pick an opportunity: the copy starts from its title and description.
+  const chooseOpportunity = (id: string) => {
+    setOpportunityId(id);
+    const next = opportunities.find((o) => o.id === id);
+    if (!next) return;
+    setHeadline(clip(next.title, quote?.limits.headline ?? 30));
+    setBody(clip(next.description, quote?.limits.body ?? 220));
+    setKeywords(opportunitySuggestions(next).slice(0, 3));
+    setImageUrl(next.image ?? "");
+    setAdlyChanges([]);
+    setFormError("");
+  };
+
+  const chooseKind = (next: "project" | "opportunity") => {
+    setKind(next);
+    if (next === "project") {
+      const id = projectId || projects[0]?.id;
+      if (id) chooseProject(id);
+    } else {
+      const id = opportunityId || opportunities[0]?.id;
+      if (id) chooseOpportunity(id);
+    }
+  };
+
   useEffect(() => {
     if (!projectId && projects[0] && quote) chooseProject(projects[0].id);
+    else if (!projectId && !projects[0] && opportunities[0] && quote) {
+      setKind("opportunity");
+      chooseOpportunity(opportunities[0].id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projects, quote]);
+  }, [projects, opportunities, quote]);
 
   // Default to the networks that are actually set up.
   useEffect(() => {
@@ -161,7 +227,7 @@ export default function PoliticianAdsPage() {
   const usd = mediaKes / (quote?.kesPerUsd ?? 129);
   const perNetwork = platforms.length ? Math.floor(mediaKes / platforms.length) : 0;
   const insufficient = balance !== null && budget > balance;
-  const landingUrl = project ? `${typeof window === "undefined" ? "" : window.location.origin}/projects/${project.slug}` : "";
+  const landingUrl = subject ? `${typeof window === "undefined" ? "" : window.location.origin}${subject.path}` : "";
 
   const preview = (
     <AdPreview
@@ -169,15 +235,22 @@ export default function PoliticianAdsPage() {
       avatar={leader.photo}
       headline={headline}
       body={body}
-      imageUrl={imageUrl || project?.image || ""}
+      imageUrl={imageUrl || subject?.image || ""}
       landingUrl={landingUrl}
       platforms={platforms}
     />
   );
 
   const validate = (): string => {
-    if (!project) return "Choose a project to promote.";
-    if (!project.image) return "This project has no image. Add one on the Projects page first.";
+    if (!subject) return kind === "opportunity" ? "Choose an opportunity to promote." : "Choose a project to promote.";
+    if (!subject.image && !imageUrl) {
+      return kind === "opportunity"
+        ? "This opportunity has no image. Add one on the Opportunities page first."
+        : "This project has no image. Add one on the Projects page first.";
+    }
+    if (opportunity && kind === "opportunity" && isClosed(opportunity)) {
+      return "This opportunity is closed. Extend its deadline or reopen it before advertising it.";
+    }
     if (platforms.length === 0) return "Choose X, Google or both.";
     if (!headline.trim()) return "Add a headline.";
     if (!body.trim()) return "Add the ad text.";
@@ -198,12 +271,12 @@ export default function PoliticianAdsPage() {
     const result = await apiJson<{ item?: AdCampaign; walletBalance?: number; error?: string }>("/api/ads/campaigns", {
       method: "POST",
       body: JSON.stringify({
-        projectId,
+        ...subjectBody,
         platforms,
         headline: headline.trim(),
         body: body.trim(),
         keywords,
-        imageUrl: imageUrl || project?.image,
+        imageUrl: imageUrl || subject?.image,
         ...audienceBody(audience),
         budgetKes: budget,
         durationDays: days,
@@ -240,7 +313,7 @@ export default function PoliticianAdsPage() {
     setReviewing(true);
     const result = await apiJson<{ review?: AdPolicyReview; error?: string }>("/api/ads/review", {
       method: "POST",
-      body: JSON.stringify({ projectId, headline: headline.trim(), body: body.trim(), keywords, imageUrl: imageUrl || project?.image }),
+      body: JSON.stringify({ ...subjectBody, headline: headline.trim(), body: body.trim(), keywords, imageUrl: imageUrl || subject?.image }),
     });
     setReviewing(false);
     if (!result.ok || !result.data.review) {
@@ -256,8 +329,16 @@ export default function PoliticianAdsPage() {
     setReview(checked);
   };
 
-  // Adly's version of a political project page: save it to the project, then check the ad again.
+  // Adly's version of a political project or opportunity page: save it, then check the ad again.
   const applyLanding = async (page: { name: string; description: string }): Promise<string | null> => {
+    if (kind === "opportunity") {
+      if (!opportunity) return "Choose the opportunity first.";
+      const saved = await upsertOpportunity({ ...opportunity, title: page.name, description: page.description });
+      if (!saved.ok) return saved.error || "Could not save the opportunity.";
+      setReview(null);
+      await continueToConfirm();
+      return null;
+    }
     if (!project) return "Choose the project first.";
     const saved = await upsertProject({ ...project, name: page.name, description: page.description });
     if (!saved.ok) return saved.error || "Could not save the project.";
@@ -325,9 +406,9 @@ export default function PoliticianAdsPage() {
         <p className="mb-6 rounded-md border border-error/30 bg-error-muted px-3 py-2 text-small text-error">{loadError}</p>
       )}
 
-      {projects.length === 0 ? (
+      {projects.length === 0 && opportunities.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center">
-          <p className="text-small text-ink-muted">Add a project with a photo first — ads promote your projects.</p>
+          <p className="text-small text-ink-muted">Add a project or an opportunity with a photo first — ads promote them.</p>
           <Button href="/dashboard/projects" size="sm" className="mt-4">
             Go to projects
           </Button>
@@ -336,18 +417,75 @@ export default function PoliticianAdsPage() {
         <section className="grid gap-8 [&>*]:min-w-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
           <div className="space-y-6">
             <Step n={1} title="What to promote">
-              <AdminField label="Project">
-                <AdminSelect value={projectId} onChange={(e) => chooseProject(e.target.value)}>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </AdminSelect>
-              </AdminField>
-              {project && !project.image && (
+              <div className="grid grid-cols-2 gap-2" role="group" aria-label="What to promote">
+                {(
+                  [
+                    { id: "project", label: "A project", hint: `${projects.length} of yours`, count: projects.length },
+                    { id: "opportunity", label: "An opportunity", hint: "Job, training, tender …", count: opportunities.length },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={kind === option.id}
+                    disabled={option.count === 0}
+                    onClick={() => chooseKind(option.id)}
+                    className={cn(
+                      "rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                      kind === option.id ? "border-accent/40 bg-accent-soft" : "border-border bg-surface hover:border-border-strong"
+                    )}
+                  >
+                    <span className="block text-small font-medium text-ink">{option.label}</span>
+                    <span className="block text-caption text-ink-muted">{option.count === 0 ? "None yet" : option.hint}</span>
+                  </button>
+                ))}
+              </div>
+              {kind === "project" ? (
+                <AdminField label="Project">
+                  <AdminSelect value={projectId} onChange={(e) => chooseProject(e.target.value)}>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </AdminSelect>
+                </AdminField>
+              ) : (
+                <AdminField label="Opportunity">
+                  <AdminSelect value={opportunityId} onChange={(e) => chooseOpportunity(e.target.value)}>
+                    {opportunities.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.title} · {OPPORTUNITY_CATEGORY_LABELS[o.category]}
+                        {isClosed(o) ? " (closed)" : ""}
+                      </option>
+                    ))}
+                  </AdminSelect>
+                </AdminField>
+              )}
+              {kind === "project" && project && !project.image && (
                 <p className="text-caption text-error">
                   This project has no image yet. <Link href="/dashboard/projects" className="underline">Add one</Link> to use it in an ad.
+                </p>
+              )}
+              {kind === "opportunity" && opportunity && !opportunity.image && (
+                <p className="text-caption text-error">
+                  This opportunity has no image yet. <Link href="/dashboard/opportunities" className="underline">Add one</Link> to use it in an ad.
+                </p>
+              )}
+              {kind === "opportunity" && opportunity && isClosed(opportunity) && (
+                <p className="text-caption text-error">
+                  This opportunity is closed, so people who click the ad couldn&apos;t apply.{" "}
+                  <Link href="/dashboard/opportunities" className="underline">Extend its deadline</Link> first.
+                </p>
+              )}
+              {kind === "opportunity" && opportunity?.category === "funding" && (
+                <p className="text-caption text-warning">
+                  X rejects ads that offer funding, grants or loans, so this can only run on Google.
+                </p>
+              )}
+              {kind === "opportunity" && opportunity?.category === "tenders" && (
+                <p className="text-caption text-ink-muted">
+                  Tip: name the procuring organisation and say what is being bought and how to bid; X may read a tender as government content.
                 </p>
               )}
               <div>
@@ -402,7 +540,9 @@ export default function PoliticianAdsPage() {
                 hint="Google shows the first 90 characters; X shows it all."
               />
               <p className="text-caption text-ink-subtle">
-                The ad uses the project&apos;s photo and links to its public project page.
+                {kind === "opportunity"
+                  ? "The ad uses the opportunity's photo and links to its public page, where people apply."
+                  : "The ad uses the project's photo and links to its public project page."}
               </p>
               {/* Phones: show the preview here, before the budget and the pay button. */}
               <div className="border-t border-border pt-4 lg:hidden">
@@ -415,7 +555,7 @@ export default function PoliticianAdsPage() {
               <KeywordInput
                 value={keywords}
                 onChange={setKeywords}
-                suggestions={suggestionsFor(project)}
+                suggestions={kind === "opportunity" ? opportunitySuggestions(opportunity) : suggestionsFor(project)}
                 max={limits?.keywords ?? 20}
                 maxLength={limits?.keywordLength ?? 80}
               />
@@ -653,13 +793,13 @@ export default function PoliticianAdsPage() {
         />
       )}
 
-      {confirming && project && (
+      {confirming && subject && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
           <button type="button" className="absolute inset-0 bg-bg/75 backdrop-blur-sm" aria-label="Close" onClick={() => setConfirming(false)} />
           <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-md rounded-t-lg border border-border bg-bg-elevated p-5 shadow-raised sm:rounded-lg">
             <h2 className="text-h3 text-ink">{chargeOnPublish && quote?.requireApproval ? "Confirm ad" : "Confirm ad payment"}</h2>
             <dl className="mt-4 space-y-2 text-small">
-              <Row label="Project" value={project.name} />
+              <Row label={kind === "opportunity" ? "Opportunity" : "Project"} value={subject.name} />
               <Row label="Networks" value={platforms.map((p) => (p === "x" ? "X" : "Google")).join(" + ")} />
               <Row label="Duration" value={`${days} day${days === 1 ? "" : "s"}`} />
               <Row label="Where" value={audience.counties.length ? audience.counties.join(", ") : "All of Kenya"} />
