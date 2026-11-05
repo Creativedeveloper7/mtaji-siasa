@@ -107,13 +107,18 @@ describe("startDonation", () => {
     expect(h.edgeCalls).toEqual([]);
   });
 
-  it("doesn't send the donor to a checkout an older payment function opened", async () => {
+  it("doesn't send a leader's donor to a checkout an older payment function opened", async () => {
     h.edgeResponse = { ok: true, status: 200, payload: { authorization_url: "https://checkout.paystack.com/abc", reference: "ref-123456" } };
     expect(await startDonation({ leaderId: FIGURE, amount: 500 }, "https://x.co")).toMatchObject({
       ok: false,
       status: 503,
       reason: "payment_function_outdated",
     });
+  });
+
+  it("lets a project donation through an older payment function (it records project_id)", async () => {
+    h.edgeResponse = { ok: true, status: 200, payload: { authorization_url: "https://checkout.paystack.com/abc", reference: "ref-123456" } };
+    expect(await startDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: true, status: 201 });
   });
 
   it("passes on the payment function's own 'not set up' refusal", async () => {

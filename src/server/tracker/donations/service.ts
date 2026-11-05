@@ -21,10 +21,11 @@ import { parseDonationInput, type DonationTarget } from "@/lib/donations";
  * - donation_recipient_owner (the same lookup settlement uses) must find an
  *   owner. If the function is missing, that migration isn't applied and this
  *   Tracker would refuse to settle a donation without a campaign.
- * - initialize-paystack-payment must answer `recipient_checked`: an older
- *   deployment ignores figure_id and doesn't check the recipient, so Siasa
+ * - for a leader, initialize-paystack-payment must answer
+ *   `recipient_checked`: an older deployment drops figure_id, so Siasa
  *   doesn't send the donor to its checkout (the pending payment row is
- *   simply never paid).
+ *   simply never paid). A project donation works with either version: both
+ *   record project_id, which the migration's settlement pays.
  *
  * Donors pay as guests (the anon key), signed in or not: the donation is the
  * recipient's money, and a guest payment can be verified by whoever returns
@@ -143,9 +144,13 @@ export async function startDonation(
     if (res.status === 400 && /not set up/i.test(message)) return fail(503, NOT_SET_UP, "no_owner");
     return fail(502, "Paystack could not start the payment. Try again shortly.");
   }
-  if (res.payload.recipient_checked !== true) {
+  // An older initialize-paystack-payment still records project_id (so the
+  // migration's settlement pays the project's owner, whom donation_recipient_owner
+  // found above), but it drops figure_id: a leader donation would be paid to no
+  // one. So only leader donations need the version that answers recipient_checked.
+  if ("figure_id" in recipient.data.ref && res.payload.recipient_checked !== true) {
     console.error(
-      "[donations] initialize-paystack-payment did not confirm the recipient: deploy the M-taji-Tracker version that supports direct donations."
+      "[donations] initialize-paystack-payment did not confirm the recipient: deploy the M-taji-Tracker version that supports leader donations (figure_id)."
     );
     return fail(503, NOT_SET_UP, "payment_function_outdated");
   }
