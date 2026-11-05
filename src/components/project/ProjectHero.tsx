@@ -8,6 +8,7 @@ import { formatDate } from "@/lib/utils";
 import { projectTypeLabel } from "@/lib/projects";
 import type { Project } from "@/types";
 import { ProjectCreator } from "@/components/project/ProjectCreator";
+import { DonateButton } from "@/components/project/DonateButton";
 
 interface ProjectHeroProps {
   project: Project;
@@ -44,7 +45,10 @@ export function ProjectHero({ project }: ProjectHeroProps) {
             <ProjectCreator project={project} size="md" link className="mt-4" />
             <p className="mt-3 text-body text-ink-muted">{project.location}</p>
           </div>
-          <ShareButton title={project.name} />
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <ShareButton title={project.name} />
+            <DonateButton projectId={project.id} projectName={project.name} />
+          </div>
         </div>
         <div className="mt-8 max-w-md">
           <ProgressBar value={project.progress} />

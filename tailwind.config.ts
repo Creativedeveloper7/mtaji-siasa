@@ -44,6 +44,7 @@ const config: Config = {
           "green-hover": withAlpha("--color-brand-green-hover"),
           red: withAlpha("--color-brand-red"),
           "red-hover": withAlpha("--color-brand-red-hover"),
+          orange: withAlpha("--color-brand-orange"),
         },
         success: {
           DEFAULT: withAlpha("--color-success"),

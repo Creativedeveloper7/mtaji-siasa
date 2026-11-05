@@ -278,6 +278,32 @@ The legacy `/api/wallet`, `/api/wallet/top-up` and `/api/wallet/withdraw`
 answer 410 in Tracker mode, and the Tracker repositories have no wallet or
 ad-campaign store (they throw), so nothing can fall back to a memory wallet.
 
+## Donations
+
+"Donate now" on a project page (`src/components/project/DonateButton.tsx`)
+runs on the Tracker's donation flow (`src/server/tracker/donations`):
+
+| Route | Does |
+|---|---|
+| `POST /api/donations` | `{ projectId, amount, method?, email?, phone?, name? }`: starts a Paystack checkout, answers `{ checkoutUrl, reference }`. No sign-in. |
+| `POST /api/donations/verify` | `{ reference }`: confirms it when the donor returns (`/projects/<slug>?donation=1&reference=...`) |
+
+- A donation is a `payments` row with `payment_type 'donation'` and a
+  `campaign_id`. When Paystack confirms it (webhook or verify),
+  `settle_payment_to_wallets` credits the wallet of
+  `fundraising_campaigns.owner_id` (source `crowdfunding`).
+- Siasa uses only the active campaign whose `owner_id` is the project's owner
+  (initiatives -> changemakers). RLS lets any signed-in user create a campaign
+  for any project with themselves as owner, so "a campaign for this project"
+  could pay someone else. When the owner has none, Siasa creates one with the
+  service role, owner taken from the project. Without
+  `SUPABASE_SERVICE_ROLE_KEY` such a project answers "not set up to receive
+  donations yet".
+- Donors always pay as guests (anon key), so whoever returns from Paystack
+  can verify the payment. KES 50 to 250,000, M-Pesa or card.
+- The leader profile's Support > Donate (`SupportModal`) is still the old
+  simulated checkout.
+
 ## Money
 
 The Tracker's wallet is real money. Siasa never writes wallet balances itself.

@@ -270,7 +270,7 @@ function functionsUrl(slug: string): string {
   return `${base}/functions/v1/${slug}`;
 }
 
-async function callEdgeFunction(
+export async function callEdgeFunction(
   slug: string,
   accessToken: string,
   body: Record<string, unknown>
@@ -296,7 +296,7 @@ async function callEdgeFunction(
 }
 
 /** Paystack checkout pages live on paystack.com; refuse to redirect anywhere else. */
-function isPaystackCheckout(url: string): boolean {
+export function isPaystackCheckout(url: string): boolean {
   try {
     const parsed = new URL(url);
     return (
