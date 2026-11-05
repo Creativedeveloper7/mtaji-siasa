@@ -320,7 +320,9 @@ export type XPolicyRule =
   | "formatting"
   | "image"
   /** Opportunity ads: closed, funding, a fee to apply, tenders, discriminatory wording */
-  | "opportunity";
+  | "opportunity"
+  /** Prize / contest wording (win, finalists, 🏆💰) */
+  | "contest";
 
 /** One thing Adly found in an ad before it goes to X, and what it did about it. */
 export interface AdPolicyFinding {

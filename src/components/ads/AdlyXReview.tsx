@@ -70,7 +70,11 @@ export function AdlyXReview({
   const photoBlocked = photoLocked && !notForX && !review.image.ok;
   const blocks = review.findings.filter((f) => f.severity === "block");
   const pagePolitical = blocks.some((f) => f.rule === "political");
-  const officeTitle = blocks.some((f) => f.rule === "impersonation");
+  const officeTitle = blocks.some((f) => f.rule === "impersonation" && f.change);
+  // What the ad promotes, for wording and edit links.
+  const isOpportunity = review.landing?.kind === "opportunity" || blocks.some((f) => f.rule === "opportunity");
+  const noun = isOpportunity ? "opportunity" : "project";
+  const editHref = isOpportunity ? "/dashboard/opportunities" : "/dashboard/projects";
   const [pageName, setPageName] = useState(review.landing?.suggested.name ?? "");
   const [pageText, setPageText] = useState(review.landing?.suggested.description ?? "");
   const [applying, setApplying] = useState(false);
@@ -116,7 +120,7 @@ export function AdlyXReview({
           </h2>
           <p className="mt-1 text-small text-ink-muted">
             {notForX
-              ? `X's reviewers read the project page this ad links to, and what it shows means X will reject the ad however its text is written${
+              ? `X's reviewers read the ${noun} page this ad links to, and what it shows means X will reject the ad however its text is written${
                   pagePolitical ? " (X doesn't allow political ads aimed at Kenya)" : ""
                 }.${review.landing ? " Adly suggests a version of the page below." : ""}`
               : photoBlocked
@@ -140,7 +144,15 @@ export function AdlyXReview({
                       <span className="font-normal text-ink-muted">“{f.found}”</span>
                     </p>
                     <p className="mt-1 text-ink-muted">{f.why}</p>
-                    {f.rule === "impersonation" && (
+                    {f.rule === "opportunity" && (
+                      <p className="mt-1 text-ink-muted">
+                        <Link href={editHref} className="font-medium text-accent underline">
+                          Edit the opportunity
+                        </Link>
+                        , then try again.
+                      </p>
+                    )}
+                    {f.rule === "impersonation" && f.change && (
                       <p className="mt-1 text-ink-muted">
                         {f.change}:{" "}
                         <Link href="/dashboard/profile" className="font-medium text-accent underline">
@@ -180,17 +192,17 @@ export function AdlyXReview({
             <section>
               <h3 className="meta-label mb-2 flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5 text-accent" aria-hidden />
-                Adly&apos;s version of the project page
+                Adly&apos;s version of the {noun} page
               </h3>
               <p className="mb-3 text-caption text-ink-muted">
                 {review.landing.by === "ai"
-                  ? "Adly rewrote the description around the work itself, keeping what the page says the project does and leaving out the politics."
-                  : "Adly kept the parts that describe the work and left out the political ones."}{" "}
-                Check it is accurate and add anything missing: saving changes the public project page.
+                  ? `Adly rewrote it around the ${noun} itself, keeping its facts and leaving out what X would reject.`
+                  : "Adly kept the parts that describe the work and left out what X would reject (politics, prizes, government promises, hype)."}{" "}
+                Check it is accurate and add anything missing: saving changes the public {noun} page.
               </p>
               <div className="space-y-3">
                 <label className="block">
-                  <span className="meta-label">Project name</span>
+                  <span className="meta-label">{isOpportunity ? "Title" : "Project name"}</span>
                   <span className="mt-1 block">
                     <AdminInput value={pageName} maxLength={120} onChange={(e) => setPageName(e.target.value)} />
                   </span>
@@ -224,12 +236,12 @@ export function AdlyXReview({
                   onClick={() => void applyLanding()}
                 >
                   <RefreshCw className={cn("h-4 w-4", applying && "animate-spin")} />
-                  {applying ? "Saving and checking…" : "Save to the project page and check again"}
+                  {applying ? "Saving and checking…" : `Save to the ${noun} page and check again`}
                 </Button>
               ) : (
                 <p className="mt-3 text-small text-ink-muted">
-                  <Link href="/dashboard/projects" className="font-medium text-accent underline">
-                    Edit the project
+                  <Link href={editHref} className="font-medium text-accent underline">
+                    Edit the {noun}
                   </Link>{" "}
                   with this text, then try again.
                 </p>
@@ -239,8 +251,8 @@ export function AdlyXReview({
 
           {notForX && pagePolitical && !review.landing && !officeTitle && (
             <p className="text-small text-ink-muted">
-              <Link href="/dashboard/projects" className="font-medium text-accent underline">
-                Edit the project
+              <Link href={editHref} className="font-medium text-accent underline">
+                Edit the {noun}
               </Link>{" "}
               so its name and description describe the work itself (what is being built or done, where, and for whom), then try
               again.

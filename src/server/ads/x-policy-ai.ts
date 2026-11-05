@@ -21,6 +21,7 @@ const POLICY_BRIEF = `You review ads for X (Twitter) before they are submitted, 
 - Unverifiable claims: guarantees, "the best", "number one", "instant".
 - Personal attributes: implying the reader is poor, sick, in debt or unemployed.
 - Low quality: clickbait, pressure ("act now", "last chance"), ALL CAPS, repeated punctuation, more than two hashtags.
+- Deceptive & Fraudulent Content (X's policy: clickbait, misleading claims, offers that omit vital information, cash gifts, collecting personal information without a real offer, unjustified economic opportunities): prizes, contests, "win", finalists, 🏆💰; promises of government jobs, gigs or contracts; sensational titles in capitals, emoji or "!"; listings that don't say who offers them;
 - Deceptive claims: job or income offers when the project lists no openings; grand promises nobody can check ("from the ground to Singapore", "delivered", "transformed"); titles that suggest a national office (a bare "President") or a government link; a name in the ad that differs from the name on its image or landing page.
 For images X also rejects: people in uniform (police, military, officials), government insignia or coat of arms, flags or flag colours/stripes used for campaigning, party colours, campaign posters, banners or movement logos, political slogans, raised fists and rally imagery, lists of counties or constituencies (national mobilisation), a politician as the subject, graphic or shocking content, people shown in distress to provoke pity, piles of cash, before/after comparisons that imply guaranteed results, and images that are mostly text. Text printed on an image counts as part of the ad.`;
 
@@ -104,9 +105,9 @@ export async function aiRewriteLanding(
     { role: "system", content: POLICY_BRIEF },
     {
       role: "user",
-      content: `This is the project page an ad links to. X's reviewers read it, and it has political content, so X will reject the ad.
-${context.officialNames?.length ? `People behind the project (do not name them): ${context.officialNames.join(", ")}.\n` : ""}Project page: ${JSON.stringify(page)}${context.county ? ` (${context.county} County)` : ""}
-Rewrite the description so it describes the work itself: what is being done, where, and who takes part or benefits. Keep every concrete activity, place and fact from the original; leave out politics, government or party agendas, mobilisation, offices, people's names and political structures (secretariats, wards as party units). Do not invent anything that is not in the original. Plain, factual, at most ${Math.max(200, Math.min(600, page.description.length))} characters. Keep the name unless it is political; then give a plain descriptive name.
+      content: `This is the page an ad links to (a project or an opportunity). X's reviewers read it, and X shows its title on the ad card. It has political or deceptive content, so X will reject the ad.
+${context.officialNames?.length ? `People behind it (do not name them): ${context.officialNames.join(", ")}.\n` : ""}Page: ${JSON.stringify(page)}${context.county ? ` (${context.county} County)` : ""}
+Rewrite the description so it describes the work or opportunity itself: what it is, where, who can take part or benefits, and how. Keep every concrete activity, place and fact from the original; leave out politics, government or party agendas, mobilisation, offices, people's names and political structures (secretariats, wards as party units); prizes, winning, contests, finalists and cash; promises of government jobs or links; hype, emoji and exclamation marks. Do not invent anything that is not in the original (no new prizes, pay, dates or organisers). Plain, factual, at most ${Math.max(200, Math.min(600, page.description.length))} characters. Give a plain, descriptive name in sentence case with no emoji or "!"; keep the original wording where it is already plain.
 Answer JSON: {"name":"...","description":"..."}`,
     },
   ]);

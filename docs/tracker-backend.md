@@ -255,8 +255,13 @@ Adly campaigns and dashboard paid ads are both `adly_campaigns` rows
   the publish functions use first. Opportunity pages render their title,
   description and image on the server for X's reviewers. Adly's checks
   (`opportunityProblemsForX`): a closed listing or a fee to apply blocks every
-  network; funding blocks X; tenders and wording that limits who may apply
-  (sex, religion, tribe, age) are advice.
+  network; funding and a listing with no organiser block X; tenders and
+  wording that limits who may apply (sex, religion, tribe, age) are advice.
+- X's Deceptive & Fraudulent Content policy is checked on the landing page
+  too (`xLandingDeceptionProblems`), not only the ad text: a title in
+  capitals, with emoji or "!" (X shows it on the ad card), prize and contest
+  wording (win, finalists, 🏆💰), money offers, and promised government links
+  or jobs block X, and Adly's suggested page removes them.
 - Network credentials (`GADS_*`, `X_*`, `META_*`, `TIKTOK_*`,
   `OPENAI_API_KEY`) are Supabase function secrets in the Tracker project
   only. Siasa holds none.

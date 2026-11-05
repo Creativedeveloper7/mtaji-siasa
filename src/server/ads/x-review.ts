@@ -16,6 +16,7 @@ import {
   reviewCopyForX,
   suggestLandingForX,
   xCopyProblems,
+  xLandingDeceptionProblems,
   xLandingProblems,
   type AdCopy,
   type CopyContext,
@@ -354,16 +355,34 @@ export async function ownSubject(session: AuthSession, body: Record<string, unkn
 
 /** Political content anywhere on the landing page. */
 function landingProblemsFor(subject: AdSubject): AdPolicyFinding[] {
-  const found = [subject.page, ...subject.extraPages].flatMap((page) => xLandingProblems(page, subject.context));
+  const found = [subject.page, ...subject.extraPages].flatMap((page) => xLandingProblems(page, subject.context, subject.noun));
   return found.slice(0, 3);
 }
 
-/** Everything on the landing page that stops an X ad. */
-function landingBlocksFor(subject: AdSubject): { political: AdPolicyFinding[]; blocks: AdPolicyFinding[] } {
+/**
+ * Deceptive & Fraudulent Content on the landing page: a sensationalised title
+ * (shown on the ad card), money or prize offers, contest wording, promised
+ * government links or jobs. The extra text (organisation, eligibility,
+ * requirements) is checked for wording only; it has no title.
+ */
+function landingDeceptionFor(subject: AdSubject): AdPolicyFinding[] {
+  const main = xLandingDeceptionProblems(subject.page, subject.noun);
+  const extra = subject.extraPages.flatMap((page) =>
+    xLandingDeceptionProblems({ name: "", description: [page.name, page.description].filter(Boolean).join(". ") }, subject.noun)
+  );
+  return [...main, ...extra].slice(0, 4);
+}
+
+/** Everything on the landing page that stops an X ad; `editable` is what Adly's suggested page can fix. */
+function landingBlocksFor(subject: AdSubject): { editable: AdPolicyFinding[]; blocks: AdPolicyFinding[] } {
   const political = landingProblemsFor(subject);
+  const deceptive = landingDeceptionFor(subject);
   const office = officeTitleBlock(subject.officials.leader, subject.name);
   const listing = subject.listingFindings.filter((f) => f.severity === "block");
-  return { political, blocks: [...political, ...(office ? [office] : []), ...listing] };
+  return {
+    editable: [...political, ...xLandingDeceptionProblems(subject.page, subject.noun)],
+    blocks: [...political, ...deceptive, ...(office ? [office] : []), ...listing],
+  };
 }
 
 /**
@@ -377,7 +396,9 @@ async function suggestLanding(
   const page = subject.page;
   if (useAi) {
     const ai = await aiRewriteLanding(page, subject.context);
-    if (ai && xLandingProblems(ai, subject.context).length === 0) return { page: ai, by: "ai" };
+    if (ai && xLandingProblems(ai, subject.context).length === 0 && xLandingDeceptionProblems(ai, subject.noun).length === 0) {
+      return { page: ai, by: "ai" };
+    }
   }
   return { page: suggestLandingForX(page, subject.context), by: "rules" };
 }
@@ -402,7 +423,7 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
 
   const copy = copyFromBody(body);
   const { context, officials } = subject;
-  const { political, blocks } = landingBlocksFor(subject);
+  const { editable, blocks } = landingBlocksFor(subject);
   const imageContext = { projectName: subject.name, officialNames: officials.names };
   const images = subject.images;
   const requested = asString(body.imageUrl);
@@ -415,7 +436,7 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
     imageUrl
       ? checkImage(imageUrl, useAi, imageContext)
       : Promise.resolve<AdImageCheck>({ url: "", ok: false, notes: [`This ${subject.noun} has no photo yet.`] }),
-    political.length ? suggestLanding(subject, useAi) : Promise.resolve(null),
+    editable.length ? suggestLanding(subject, useAi) : Promise.resolve(null),
   ]);
 
   const findings = [...blocks, ...copyReview.findings];
@@ -498,6 +519,12 @@ export async function xPolicyErrorFor(subject: AdSubject | undefined, copy: AdCo
     const listing = subject.listingFindings.filter((f) => f.severity === "block");
     if (listing.length) {
       return `Adly stopped this ad before it went to X, which would reject it: ${listing.map((f) => f.why).join(" ")}`;
+    }
+    const deceptive = landingDeceptionFor(subject);
+    if (deceptive.length) {
+      return `Adly stopped this ad before it went to X, which would reject it as Deceptive & Fraudulent Content: ${deceptive
+        .map((f) => f.why)
+        .join(" ")} Edit the ${subject.noun} page, or run the ad on Google only.`;
     }
     const landing = landingProblemsFor(subject);
     if (landing.length) {

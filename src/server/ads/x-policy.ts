@@ -145,8 +145,21 @@ const RULES: Rule[] = [
       /\bgovernment[- ](?:approved|backed|endorsed|official|programme|program)\b/i,
       /\bendorsed by (?:the )?(?:government|county|state|president|ministry)\b/i,
       /\bin partnership with (?:the )?(?:government|ministry|national government)\b/i,
+      // Promising work from the government ("gigs within Government")
+      /\b(?:jobs?|gigs?|contracts?|employment|placements?|positions?|tenders?|opportunit(?:y|ies)|work) (?:with|within|in|from|at) (?:the )?(?:national |county )?(?:government|ministry|state)\b/i,
+      /\bgovernment (?:jobs?|gigs?|contracts?|employment|placements?|positions?)\b/i,
     ],
-    why: "X rejects ads that suggest a government connection or endorsement the advertiser can't show (Deceptive & Fraudulent Content).",
+    why: "X's Deceptive & Fraudulent Content policy rejects ads that suggest a government connection, endorsement or government jobs the advertiser can't show; promising government work is also an \"unjustified economic opportunity\".",
+  },
+  {
+    rule: "contest",
+    action: "drop_sentence",
+    patterns: [
+      /\b(?:win|wins|winning|winners?|prizes?|giveaways?|contests?|competitions?|finalists?|lucky draws?|raffles?|sweepstakes?|stand a chance)\b/i,
+      /\bchance to (?:win|be (?:selected|picked|chosen))\b/i,
+      /[\u{1F3C6}\u{1F4B0}\u{1F381}\u{1F4B5}\u{1F4B8}\u{1F911}]/u,
+    ],
+    why: "Prize and contest wording (win, finalists, prizes, 🏆💰) reads to X as an offer with no terms: its Deceptive & Fraudulent Content policy rejects offers that omit vital information and promises of unjustified rewards. Describe the opportunity itself: what it is, who runs it, who can take part and how people are chosen.",
   },
   {
     rule: "progress_claim",
@@ -440,7 +453,75 @@ function politicalMatch(rules: Rule[], text: string): string | null {
   return rules.map((r) => firstMatch(r, text)).find((m): m is string => Boolean(m)) ?? null;
 }
 
-export function xLandingProblems(page: LandingPage, context: Pick<CopyContext, "officialNames">): AdPolicyFinding[] {
+/** Emoji, flags and the variation selector. */
+const PICTOGRAPHS = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}]/gu;
+
+/** The landing-page wording X calls deceptive: money or prize offers, government links or jobs. */
+function deceptivePageRules(): Rule[] {
+  return RULES.filter(
+    (r) => (r.rule === "financial_promise" && !r.onlyWithoutOpportunities) || r.rule === "impersonation" || r.rule === "contest"
+  );
+}
+
+/** A title in capitals, with emoji or "!": what X calls sensationalised clickbait. */
+export function isShoutyTitle(name: string): boolean {
+  const letters = (name ?? "").replace(/[^A-Za-z]/g, "");
+  const caps = letters.replace(/[^A-Z]/g, "").length;
+  const emoji = ((name ?? "").match(PICTOGRAPHS) ?? []).filter((c) => c !== "\u{FE0F}" && c !== "\u{200D}").length;
+  return (letters.length >= 8 && caps / letters.length > 0.6) || emoji > 0 || /!/.test(name ?? "");
+}
+
+/** A calm version of a shouty title: no emoji or "!", sentence case when it was in capitals. */
+export function calmTitle(name: string): string {
+  let out = (name ?? "").replace(PICTOGRAPHS, " ").replace(/!+/g, "").replace(/\s{2,}/g, " ").trim();
+  const letters = out.replace(/[^A-Za-z]/g, "");
+  if (letters.length >= 8 && letters.replace(/[^A-Z]/g, "").length / letters.length > 0.6) {
+    out = out.replace(/\b[A-Z][A-Z']+\b/g, (w) => (ACRONYMS.has(w) ? w : w.toLowerCase()));
+    out = capitalize(out);
+  }
+  return out;
+}
+
+/**
+ * Deceptive & Fraudulent Content on the landing page (the project's or the
+ * opportunity's own page, which X's reviewers open, and whose title X shows
+ * on the ad card): a sensationalised title, money or prize offers, contest
+ * wording, promised government links or jobs. The same wording X rejects in
+ * the ad itself, so each one is a "block".
+ */
+export function xLandingDeceptionProblems(page: LandingPage, noun = "project"): AdPolicyFinding[] {
+  const findings: AdPolicyFinding[] = [];
+  if (page.name && isShoutyTitle(page.name)) {
+    findings.push({
+      rule: "clickbait",
+      field: "landing",
+      severity: "block",
+      found: page.name,
+      why: `X shows the ${noun} title on the ad card and reads it on the page. Capitals, emoji and "!" are the "exaggerated, sensationalized" language its Deceptive & Fraudulent Content policy calls clickbait.`,
+    });
+  }
+  const rules = deceptivePageRules();
+  for (const [part, text] of [
+    ["title", page.name],
+    ["description", page.description],
+  ] as const) {
+    for (const sentence of sentences(text ?? "")) {
+      const rule = rules.find((r) => firstMatch(r, sentence));
+      if (!rule) continue;
+      findings.push({
+        rule: rule.rule,
+        field: "landing",
+        severity: "block",
+        found: firstMatch(rule, sentence) ?? sentence,
+        why: `The ${noun} ${part} says ${quote(sentence, 220)}. ${rule.why}`,
+      });
+      if (findings.length >= 4) return findings;
+    }
+  }
+  return findings;
+}
+
+export function xLandingProblems(page: LandingPage, context: Pick<CopyContext, "officialNames">, noun = "project"): AdPolicyFinding[] {
   const rules = landingRules(context);
   const findings: AdPolicyFinding[] = [];
   for (const [part, text] of [
@@ -455,7 +536,7 @@ export function xLandingProblems(page: LandingPage, context: Pick<CopyContext, "
         field: "landing",
         severity: "block",
         found,
-        why: `The project ${part} says ${quote(sentence, 220)}`,
+        why: `The ${noun} ${part} says ${quote(sentence, 220)}`,
       });
       if (findings.length >= 3) return findings;
     }
@@ -474,8 +555,13 @@ export function xLandingProblems(page: LandingPage, context: Pick<CopyContext, "
  */
 export function suggestLandingForX(page: LandingPage, context: Pick<CopyContext, "officialNames" | "county">): LandingPage {
   const rules = landingRules(context);
+  const deceptive = deceptivePageRules();
   const kept: string[] = [];
-  for (const sentence of sentences(page.description ?? "")) {
+  for (const raw of sentences((page.description ?? "").replace(PICTOGRAPHS, " "))) {
+    const sentence = raw.replace(/\s{2,}/g, " ").trim();
+    if (!sentence) continue;
+    // Prize, money and government-job sentences go whole: there is no safe part to keep.
+    if (deceptive.some((r) => firstMatch(r, sentence))) continue;
     if (!politicalMatch(rules, sentence)) {
       kept.push(sentence);
       continue;
@@ -498,7 +584,7 @@ export function suggestLandingForX(page: LandingPage, context: Pick<CopyContext,
   }
   const where = context.county ? ` in ${context.county} County` : "";
   const nameIsPolitical = Boolean(politicalMatch(rules, page.name ?? ""));
-  const name = nameIsPolitical ? `Community project${where}` : page.name;
+  const name = nameIsPolitical ? `Community project${where}` : calmTitle(page.name);
   let description = tidy(kept.join(" "));
   if (description.replace(/[^A-Za-z]/g, "").length < 40) {
     description = `${name}${nameIsPolitical ? "" : where}: what is being done, where, and who takes part. Follow the plan, the progress so far and the milestones.`;
@@ -556,7 +642,11 @@ export interface OpportunityListing {
   requirements?: string[];
   benefits?: string[];
   applicationSteps?: string[];
+  /** Who offers it */
+  organization?: string;
 }
+
+const NO_ORGANISER = "No organiser named";
 
 const APPLICATION_FEE =
   /\b(?:(?:application|registration|processing|recruitment|interview|training|enrol(?:l)?ment|medical) fees?|fee to (?:apply|register)|pay (?:a |the |an )?(?:fee|ksh|kes|deposit)|(?:non-)?refundable (?:fee|deposit)|fee of (?:ksh|kes)\b)/i;
@@ -578,6 +668,8 @@ const DISCRIMINATION: RegExp[] = [
  * - funding (grants, loans, bursaries): X's Deceptive & Fraudulent Content and
  *   financial services rules reject "money available to you" (the Faida ads);
  * - a fee to apply: the classic job-scam pattern X rejects;
+ * - no organiser named: applications collect personal details, so X wants a
+ *   clear, real offer behind them (X only);
  * - tenders (advice): usually public procurement, which can read as a
  *   government endorsement;
  * - wording that limits who may apply by sex, religion, tribe or age
@@ -625,6 +717,15 @@ export function opportunityProblemsForX(listing: OpportunityListing, now = Date.
       why: "The listing asks applicants to pay. X rejects job and training ads that charge to apply (it's the most common scam pattern), and so does Kenyan law for recruitment. Remove the fee from the opportunity before advertising it.",
     });
   }
+  if (!listing.organization?.trim()) {
+    findings.push({
+      rule: "opportunity",
+      field: "landing",
+      severity: "block",
+      found: NO_ORGANISER,
+      why: "The listing doesn't say who offers it, yet it asks people to apply. X's Deceptive & Fraudulent Content policy rejects ads that collect personal information without a clear, real offer behind it. Fill in the organisation on the opportunity.",
+    });
+  }
   if (listing.category === "tenders") {
     findings.push({
       rule: "opportunity",
@@ -655,7 +756,9 @@ export function opportunityProblemsForX(listing: OpportunityListing, now = Date.
  * policies reject that too). Funding stays an X-only block.
  */
 export function opportunityBlocksAnyNetwork(listing: OpportunityListing, now = Date.now()): AdPolicyFinding[] {
-  return opportunityProblemsForX(listing, now).filter((f) => f.severity === "block" && f.found !== "Funding opportunity");
+  return opportunityProblemsForX(listing, now).filter(
+    (f) => f.severity === "block" && f.found !== "Funding opportunity" && f.found !== NO_ORGANISER
+  );
 }
 
 /** One line for an error message: what X would reject and why. */
@@ -681,4 +784,5 @@ export const RULE_LABELS: Record<XPolicyRule, string> = {
   formatting: "formatting",
   image: "image",
   opportunity: "opportunity listing",
+  contest: "prize or contest offer",
 };

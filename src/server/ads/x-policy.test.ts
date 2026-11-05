@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   imageNameMismatch,
+  isShoutyTitle,
   imageTextProblems,
   nameVariants,
   opportunityBlocksAnyNetwork,
@@ -8,6 +9,7 @@ import {
   reviewCopyForX,
   suggestLandingForX,
   xCopyProblems,
+  xLandingDeceptionProblems,
   xLandingProblems,
 } from "@/server/ads/x-policy";
 
@@ -238,6 +240,7 @@ describe("opportunityProblemsForX", () => {
     deadline: "2026-12-01",
     description: "Supervise grading and drainage works. Apply on this page with your CV.",
     eligibility: "Diploma in civil engineering and two years on road works.",
+    organization: "Thika Roads Contractors Ltd",
   };
 
   it("passes an open, complete job listing", () => {
@@ -265,5 +268,55 @@ describe("opportunityProblemsForX", () => {
   it("stops closed and fee-charging listings on every network, funding only on X", () => {
     expect(opportunityBlocksAnyNetwork({ ...job, category: "funding" }, now)).toEqual([]);
     expect(opportunityBlocksAnyNetwork({ ...job, deadline: "2026-10-01" }, now)).toHaveLength(1);
+  });
+});
+
+describe("Deceptive & Fraudulent Content on the landing page", () => {
+  // The live listing X rejected as Deceptive & Fraudulent Content.
+  const creators = {
+    name: "🎥 CALLING ALL CONTENT CREATORS! 🇰🇪",
+    description:
+      "Got a creative idea? Turn it into a skit, comedy, short video, song, or any engaging piece of content showcasing a public project in your ward, constituency, or county. 📲 Post it on your X or TikTok account and tag @MashinaniYouth for a chance to be selected as our top 10 finalists who will get connected to content creation gigs within Government.🏆💰 Show us what’s happening in Mashinani through your creativity. Create. Post. Tag. Win!",
+  };
+
+  it("finds the clickbait title, the contest, the prize and the government gigs", () => {
+    const found = xLandingDeceptionProblems(creators, "opportunity");
+    expect(found.every((f) => f.severity === "block" && f.field === "landing")).toBe(true);
+    expect(new Set(found.map((f) => f.rule))).toEqual(new Set(["clickbait", "contest", "impersonation"]));
+    expect(found[0].found).toBe(creators.name);
+  });
+
+  it("suggests a calm title and keeps only the description of the work", () => {
+    const page = suggestLandingForX(creators, { officialNames: [] });
+    expect(page.name).toBe("Calling all content creators");
+    expect(page.description).toMatch(/^Got a creative idea\? Turn it into a skit, comedy, short video, song/);
+    expect(page.description).not.toMatch(/finalists|Government|Win|🏆|💰|📲/);
+    expect(xLandingDeceptionProblems(page, "opportunity")).toEqual([]);
+  });
+
+  it("leaves a plain page alone", () => {
+    const page = { name: "Site supervisor, Thika roads", description: "Supervise grading and drainage works. Apply on this page with your CV." };
+    expect(xLandingDeceptionProblems(page)).toEqual([]);
+    expect(isShoutyTitle("KCSE revision classes in Thika")).toBe(false);
+  });
+
+  it("drops contest and government-job lines from ad copy", () => {
+    const review = reviewCopyForX(
+      {
+        headline: "Content creators wanted",
+        body: "Make a short video about a public project near you. Top 10 finalists get gigs within Government. Create. Post. Tag. Win!",
+        keywords: ["content creators"],
+      },
+      context
+    );
+    expect(review.suggested.body).not.toMatch(/finalists|Government|Win/);
+    expect(new Set(review.findings.map((f) => f.rule))).toEqual(new Set(["contest", "impersonation"]));
+  });
+
+  it("asks an opportunity to name who offers it (X only)", () => {
+    const listing = { title: "Content creators", category: "youth", deadline: "2099-01-01", description: "Make videos." };
+    expect(opportunityProblemsForX(listing).map((f) => f.found)).toContain("No organiser named");
+    expect(opportunityBlocksAnyNetwork(listing)).toEqual([]);
+    expect(opportunityProblemsForX({ ...listing, organization: "Mashinani Youth" }).map((f) => f.found)).not.toContain("No organiser named");
   });
 });
