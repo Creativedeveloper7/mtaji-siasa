@@ -3,11 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getRepositories, usesTracker } from "@/server";
 import { anonClient, hasServiceRole, serviceClient } from "@/server/tracker/clients";
 import { callEdgeFunction, isPaystackCheckout } from "@/server/tracker/wallet/service";
-import { parseDonationInput } from "@/lib/donations";
+import { parseDonationInput, type DonationTarget } from "@/lib/donations";
+import { ownerUserIdOf } from "@/server/tracker/content/media/shared";
 
 /**
- * Donations to a project, paid through the Tracker's Paystack integration and
- * credited to the project owner's wallet.
+ * Donations to a project or a leader, paid through the Tracker's Paystack
+ * integration and credited to the recipient's wallet.
  *
  * How the Tracker settles a donation (M-taji-Tracker, supabase/): a
  * `payments` row with payment_type 'donation' and a `campaign_id`; when
@@ -15,18 +16,22 @@ import { parseDonationInput } from "@/lib/donations";
  * settle_payment_to_wallets credits the wallet of
  * fundraising_campaigns.owner_id as 'crowdfunding'.
  *
- * So each project needs a fundraising campaign owned by the project's owner.
+ * So the recipient needs a fundraising campaign they own:
+ * - a project: the campaign for that project (project_id) owned by the
+ *   project's owner (initiatives -> changemakers);
+ * - a leader: a general campaign (no project_id) owned by the account behind
+ *   the leader profile (political_figures.user_id).
  * Any signed-in user may create a campaign for any project with themselves as
  * owner (RLS checks owner_id = auth.uid() only), so Siasa only ever uses a
- * campaign whose owner is the project's owner (initiatives -> changemakers),
- * never just "a campaign for this project": otherwise a donation could be
- * diverted. When the owner has none, Siasa creates one for them with the
- * service role (no RLS rule lets anyone but the owner do it), owner taken
- * from the project, never from the request.
+ * campaign whose owner is the recipient, never just "a campaign for this
+ * project": otherwise a donation could be diverted. When the recipient has
+ * none, Siasa creates one for them with the service role (no RLS rule lets
+ * anyone but the owner do it), owner taken from the project or leader record,
+ * never from the request.
  *
  * Donors pay as guests (the anon key), signed in or not: the donation is the
- * owner's money, and a guest payment can be verified by whoever returns from
- * Paystack with its reference.
+ * recipient's money, and a guest payment can be verified by whoever returns
+ * from Paystack with its reference.
  */
 
 export type DonationResult<T> = { ok: true; status: number; data: T } | { ok: false; status: number; error: string };
@@ -37,21 +42,55 @@ function fail<T>(status: number, error: string): DonationResult<T> {
 
 const PLACEHOLDER_EMAIL = "donor@m-taji.co.ke";
 
-/** The project owner's active fundraising campaign, created when there is none. */
-async function ownersCampaign(
-  projectId: string,
-  ownerId: string,
-  title: string
-): Promise<DonationResult<{ campaignId: string }>> {
+/** Who gets the money, resolved on the server. */
+interface Recipient {
+  ownerId: string;
+  /** The project, for a project donation; null for a leader's general campaign */
+  projectId: string | null;
+  /** Shown on the campaign and in the payment comment */
+  title: string;
+  /** The public page Paystack sends the donor back to */
+  path: string;
+}
+
+const NOT_SET_UP = "This page is not set up to receive donations yet.";
+
+async function resolveRecipient(target: DonationTarget): Promise<DonationResult<Recipient>> {
+  const content = getRepositories().content;
+  if (target.kind === "project") {
+    const project = await content.findProject(target.id).catch(() => undefined);
+    if (!project) return fail(404, "This project could not be found.");
+    const ownerId = await content.projectOwnerUserId?.(project.id).catch(() => undefined);
+    if (!ownerId) return fail(503, NOT_SET_UP);
+    return {
+      ok: true,
+      status: 200,
+      data: { ownerId, projectId: project.id, title: project.name, path: `/projects/${encodeURIComponent(project.slug)}` },
+    };
+  }
+  const leader = await content.findLeader(target.id).catch(() => undefined);
+  if (!leader) return fail(404, "This leader could not be found.");
+  // political_figures.user_id: the account behind the profile, whose wallet it is.
+  const ownerId = ownerUserIdOf(leader);
+  if (!ownerId) return fail(503, NOT_SET_UP);
+  return {
+    ok: true,
+    status: 200,
+    data: {
+      ownerId,
+      projectId: null,
+      title: `Support ${`${leader.honorific} ${leader.name}`.trim()}`,
+      path: `/leaders/${encodeURIComponent(leader.slug)}`,
+    },
+  };
+}
+
+/** The recipient's active fundraising campaign, created when there is none. */
+async function recipientsCampaign(recipient: Recipient): Promise<DonationResult<{ campaignId: string }>> {
   const db: SupabaseClient = anonClient();
-  const { data, error } = await db
-    .from("fundraising_campaigns")
-    .select("id")
-    .eq("project_id", projectId)
-    .eq("owner_id", ownerId)
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(1);
+  let query = db.from("fundraising_campaigns").select("id").eq("owner_id", recipient.ownerId).eq("status", "active");
+  query = recipient.projectId ? query.eq("project_id", recipient.projectId) : query.is("project_id", null);
+  const { data, error } = await query.order("created_at", { ascending: true }).limit(1);
   if (error) {
     console.error("[donations] campaign read failed:", error.message);
     return fail(502, "Donations are not available right now. Try again shortly.");
@@ -59,12 +98,12 @@ async function ownersCampaign(
   const existing = (data ?? [])[0] as { id?: string } | undefined;
   if (existing?.id) return { ok: true, status: 200, data: { campaignId: existing.id } };
 
-  if (!hasServiceRole()) return fail(503, "This project is not set up to receive donations yet.");
+  if (!hasServiceRole()) return fail(503, NOT_SET_UP);
   // Service role: only the owner may insert under RLS, and the donor is not the
-  // owner. owner_id comes from the project, never from the request.
+  // owner. owner_id comes from the project or leader record, never from the request.
   const { data: created, error: insertError } = await serviceClient()
     .from("fundraising_campaigns")
-    .insert({ project_id: projectId, owner_id: ownerId, title: title.slice(0, 200), status: "active" })
+    .insert({ project_id: recipient.projectId, owner_id: recipient.ownerId, title: recipient.title.slice(0, 200), status: "active" })
     .select("id")
     .single();
   if (insertError || !created?.id) {
@@ -74,16 +113,11 @@ async function ownersCampaign(
   return { ok: true, status: 201, data: { campaignId: String(created.id) } };
 }
 
-/** The public page to come back to after Paystack. */
-function returnUrl(siteOrigin: string, slug: string): string {
-  return `${siteOrigin}/projects/${encodeURIComponent(slug)}?donation=1`;
-}
-
 /**
- * POST /api/donations: start a Paystack checkout for a donation to a project.
- * Answers { checkoutUrl, reference }; the browser goes to checkoutUrl.
+ * POST /api/donations: start a Paystack checkout for a donation to a project
+ * or a leader. Answers { checkoutUrl, reference }; the browser goes to checkoutUrl.
  */
-export async function startProjectDonation(
+export async function startDonation(
   body: unknown,
   siteOrigin: string
 ): Promise<DonationResult<{ checkoutUrl: string; reference: string }>> {
@@ -92,13 +126,9 @@ export async function startProjectDonation(
   if (!parsed.ok) return fail(400, parsed.error);
   const { input } = parsed;
 
-  const content = getRepositories().content;
-  const project = await content.findProject(input.projectId).catch(() => undefined);
-  if (!project) return fail(404, "This project could not be found.");
-  const ownerId = await content.projectOwnerUserId?.(project.id).catch(() => undefined);
-  if (!ownerId) return fail(503, "This project is not set up to receive donations yet.");
-
-  const campaign = await ownersCampaign(project.id, ownerId, project.name);
+  const recipient = await resolveRecipient(input.target);
+  if (!recipient.ok) return recipient;
+  const campaign = await recipientsCampaign(recipient.data);
   if (!campaign.ok) return campaign;
 
   const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
@@ -106,13 +136,13 @@ export async function startProjectDonation(
     amount: input.amount,
     currency: "KES",
     payment_type: "donation",
-    project_id: project.id,
+    ...(recipient.data.projectId ? { project_id: recipient.data.projectId } : {}),
     campaign_id: campaign.data.campaignId,
     method: input.method,
     payer_email: input.email ?? PLACEHOLDER_EMAIL,
     ...(input.phone ? { payer_phone: input.phone } : {}),
-    comment: `Donation to ${project.name}${input.name ? ` from ${input.name}` : ""} (M-Taji Siasa)`.slice(0, 200),
-    redirect_url: returnUrl(siteOrigin, project.slug),
+    comment: `Donation: ${recipient.data.title}${input.name ? ` from ${input.name}` : ""} (M-Taji Siasa)`.slice(0, 200),
+    redirect_url: `${siteOrigin}${recipient.data.path}?donation=1`,
   });
   if (!res.ok) {
     const message = typeof res.payload.error === "string" ? res.payload.error : "";

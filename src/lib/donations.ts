@@ -11,8 +11,11 @@ export const MAX_DONATION_KES = 250_000;
 
 export type DonationMethod = "M-PESA" | "CARD-PAYMENT";
 
+/** Who receives the donation: a project (its owner's wallet) or a leader (their own wallet). */
+export type DonationTarget = { kind: "project"; id: string } | { kind: "leader"; id: string };
+
 export interface DonationInput {
-  projectId: string;
+  target: DonationTarget;
   amount: number;
   method: DonationMethod;
   /** For the Paystack receipt; optional (anonymous donations use a placeholder). */
@@ -29,7 +32,9 @@ export function parseDonationInput(body: unknown): { ok: true; input: DonationIn
   if (!body || typeof body !== "object") return { ok: false, error: "Send the donation as JSON." };
   const b = body as Record<string, unknown>;
   const projectId = typeof b.projectId === "string" ? b.projectId.trim() : "";
-  if (!projectId) return { ok: false, error: "Choose a project to donate to." };
+  const leaderId = typeof b.leaderId === "string" ? b.leaderId.trim() : "";
+  if (Boolean(projectId) === Boolean(leaderId)) return { ok: false, error: "Choose a project or a leader to donate to." };
+  const target: DonationTarget = projectId ? { kind: "project", id: projectId } : { kind: "leader", id: leaderId };
   const amount = typeof b.amount === "number" ? b.amount : Number(b.amount);
   if (!Number.isFinite(amount) || !Number.isInteger(amount)) return { ok: false, error: "Enter the amount in whole shillings." };
   if (amount < MIN_DONATION_KES) return { ok: false, error: `The smallest donation is KES ${MIN_DONATION_KES}.` };
@@ -42,6 +47,6 @@ export function parseDonationInput(body: unknown): { ok: true; input: DonationIn
   const name = typeof b.name === "string" ? b.name.trim().slice(0, 120) : "";
   return {
     ok: true,
-    input: { projectId, amount, method, ...(email ? { email } : {}), ...(phone ? { phone } : {}), ...(name ? { name } : {}) },
+    input: { target, amount, method, ...(email ? { email } : {}), ...(phone ? { phone } : {}), ...(name ? { name } : {}) },
   };
 }

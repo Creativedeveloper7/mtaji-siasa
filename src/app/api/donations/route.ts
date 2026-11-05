@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { siteUrl } from "@/server/seo";
-import { startProjectDonation } from "@/server/tracker/donations/service";
+import { startDonation } from "@/server/tracker/donations/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,8 +23,8 @@ function returnOrigin(request: Request): string {
 }
 
 /**
- * Start a donation to a project. No sign-in needed.
- * Body: { projectId, amount (KES), method?: "M-PESA" | "CARD-PAYMENT", email?, phone?, name? }.
+ * Start a donation to a project or a leader. No sign-in needed.
+ * Body: { projectId | leaderId, amount (KES), method?: "M-PESA" | "CARD-PAYMENT", email?, phone?, name? }.
  * Answers { ok, checkoutUrl, reference }; the browser goes to checkoutUrl.
  */
 export async function POST(request: Request) {
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
   }
-  const result = await startProjectDonation(body, returnOrigin(request));
+  const result = await startDonation(body, returnOrigin(request));
   if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
   return NextResponse.json({ ok: true, ...result.data }, { status: result.status });
 }

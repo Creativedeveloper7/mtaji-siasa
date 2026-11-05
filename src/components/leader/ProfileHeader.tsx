@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { SocialLinks } from "@/components/ui/SocialLinks";
 import { ShareButton } from "@/components/ui/ShareButton";
 import { SupportModal } from "@/components/engagement/SupportModal";
+import { DonationDialog, DonationReturn } from "@/components/engagement/Donation";
 import { Tabs } from "@/components/ui/Tabs";
 import { SafeImage } from "@/components/ui/SafeImage";
 import { LEADER_TYPE_LABELS } from "@/lib/constants";
@@ -17,6 +18,7 @@ interface ProfileHeaderProps {
 
 export function ProfileHeader({ leader, activeTab }: ProfileHeaderProps) {
   const [supportOpen, setSupportOpen] = useState(false);
+  const [donateOpen, setDonateOpen] = useState(false);
   const displayName = `${leader.honorific} ${leader.name}`;
   const base = `/leaders/${leader.slug}`;
 
@@ -100,7 +102,18 @@ export function ProfileHeader({ leader, activeTab }: ProfileHeaderProps) {
         open={supportOpen}
         onClose={() => setSupportOpen(false)}
         leaderName={displayName}
+        onDonate={() => {
+          setSupportOpen(false);
+          setDonateOpen(true);
+        }}
       />
+      <DonationDialog
+        open={donateOpen}
+        onClose={() => setDonateOpen(false)}
+        target={{ kind: "leader", id: leader.id }}
+        recipientName={displayName}
+      />
+      <DonationReturn recipientName={displayName} />
     </>
   );
 }

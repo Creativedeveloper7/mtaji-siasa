@@ -6,7 +6,10 @@ const h = vi.hoisted(() => ({
   usesTracker: true,
   project: { id: "11111111-1111-4111-8111-111111111111", name: "Kibera water", slug: "kibera-water" } as Record<string, unknown> | undefined,
   owner: "owner-1" as string | undefined,
-  campaigns: [] as { id: string; project_id: string; owner_id: string; status: string }[],
+  leader: { id: "fig-1", honorific: "Hon.", name: "Amara Njehia", slug: "amara-njehia", ownerUserId: "leader-user" } as
+    | Record<string, unknown>
+    | undefined,
+  campaigns: [] as { id: string; project_id: string | null; owner_id: string; status: string }[],
   inserted: [] as Record<string, unknown>[],
   serviceRole: true,
   edgeCalls: [] as { slug: string; token: string; body: Record<string, unknown> }[],
@@ -23,6 +26,7 @@ vi.mock("@/server", () => ({
     content: {
       findProject: async () => h.project,
       projectOwnerUserId: async () => h.owner,
+      findLeader: async () => h.leader,
     },
   }),
 }));
@@ -33,6 +37,10 @@ function campaignsTable() {
   const query = {
     select: () => query,
     eq: (column: string, value: unknown) => {
+      filters[column] = value;
+      return query;
+    },
+    is: (column: string, value: unknown) => {
       filters[column] = value;
       return query;
     },
@@ -66,13 +74,14 @@ vi.mock("@/server/tracker/wallet/service", () => ({
   isPaystackCheckout: (url: string) => url.startsWith("https://checkout.paystack.com/"),
 }));
 
-const { startProjectDonation, verifyProjectDonation } = await import("@/server/tracker/donations/service");
+const { startDonation, verifyProjectDonation } = await import("@/server/tracker/donations/service");
 
 beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
   h.usesTracker = true;
   h.project = { id: "11111111-1111-4111-8111-111111111111", name: "Kibera water", slug: "kibera-water" };
   h.owner = "owner-1";
+  h.leader = { id: "fig-1", honorific: "Hon.", name: "Amara Njehia", slug: "amara-njehia", ownerUserId: "leader-user" };
   h.campaigns = [];
   h.inserted = [];
   h.serviceRole = true;
@@ -86,10 +95,10 @@ beforeEach(() => {
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 
-describe("startProjectDonation", () => {
+describe("startDonation", () => {
   it("pays the project owner's campaign as a guest donation and returns to the project page", async () => {
     h.campaigns = [{ id: "owners-campaign", project_id: PROJECT, owner_id: "owner-1", status: "active" }];
-    const res = await startProjectDonation({ projectId: PROJECT, amount: 1000, email: "d@x.co" }, "https://www.m-taji.co.ke");
+    const res = await startDonation({ projectId: PROJECT, amount: 1000, email: "d@x.co" }, "https://www.m-taji.co.ke");
     expect(res).toEqual({ ok: true, status: 201, data: { checkoutUrl: "https://checkout.paystack.com/abc", reference: "ref-123456" } });
     expect(h.edgeCalls).toHaveLength(1);
     expect(h.edgeCalls[0]).toMatchObject({
@@ -109,7 +118,7 @@ describe("startProjectDonation", () => {
 
   it("never uses a campaign someone else created for the project", async () => {
     h.campaigns = [{ id: "someone-elses", project_id: PROJECT, owner_id: "attacker", status: "active" }];
-    const res = await startProjectDonation({ projectId: PROJECT, amount: 500 }, "https://www.m-taji.co.ke");
+    const res = await startDonation({ projectId: PROJECT, amount: 500 }, "https://www.m-taji.co.ke");
     expect(res.ok).toBe(true);
     expect(h.edgeCalls[0].body.campaign_id).toBe("new-campaign");
     expect(h.inserted).toEqual([{ project_id: PROJECT, owner_id: "owner-1", title: "Kibera water", status: "active" }]);
@@ -117,21 +126,53 @@ describe("startProjectDonation", () => {
 
   it("explains when the project can't take donations", async () => {
     h.serviceRole = false;
-    expect(await startProjectDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 503 });
+    expect(await startDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 503 });
     h.serviceRole = true;
     h.owner = undefined;
-    expect(await startProjectDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 503 });
+    expect(await startDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 503 });
     h.project = undefined;
-    expect(await startProjectDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 404 });
+    expect(await startDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 404 });
     h.usesTracker = false;
-    expect(await startProjectDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 503 });
+    expect(await startDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 503 });
     expect(h.edgeCalls).toEqual([]);
   });
 
   it("refuses a checkout page that isn't Paystack's", async () => {
     h.campaigns = [{ id: "c", project_id: PROJECT, owner_id: "owner-1", status: "active" }];
     h.edgeResponse = { ok: true, status: 200, payload: { authorization_url: "https://evil.example/pay", reference: "ref-123456" } };
-    expect(await startProjectDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 502 });
+    expect(await startDonation({ projectId: PROJECT, amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 502 });
+  });
+});
+
+describe("startDonation to a leader", () => {
+  it("pays the leader's general campaign (no project) and returns to their page", async () => {
+    h.campaigns = [
+      { id: "project-campaign", project_id: PROJECT, owner_id: "leader-user", status: "active" },
+      { id: "general", project_id: null, owner_id: "leader-user", status: "active" },
+    ];
+    const res = await startDonation({ leaderId: "fig-1", amount: 500 }, "https://www.m-taji.co.ke");
+    expect(res.ok).toBe(true);
+    expect(h.edgeCalls[0].body).toMatchObject({
+      payment_type: "donation",
+      campaign_id: "general",
+      redirect_url: "https://www.m-taji.co.ke/leaders/amara-njehia?donation=1",
+    });
+    expect(h.edgeCalls[0].body).not.toHaveProperty("project_id");
+  });
+
+  it("creates the leader's general campaign, owned by the account behind the profile", async () => {
+    h.campaigns = [{ id: "someone-elses", project_id: null, owner_id: "attacker", status: "active" }];
+    await startDonation({ leaderId: "fig-1", amount: 500 }, "https://x.co");
+    expect(h.inserted).toEqual([{ project_id: null, owner_id: "leader-user", title: "Support Hon. Amara Njehia", status: "active" }]);
+    expect(h.edgeCalls[0].body.campaign_id).toBe("new-campaign");
+  });
+
+  it("refuses a leader profile with no account behind it", async () => {
+    h.leader = { id: "fig-1", honorific: "Hon.", name: "Amara Njehia", slug: "amara-njehia" };
+    expect(await startDonation({ leaderId: "fig-1", amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 503 });
+    h.leader = undefined;
+    expect(await startDonation({ leaderId: "fig-1", amount: 500 }, "https://x.co")).toMatchObject({ ok: false, status: 404 });
+    expect(h.edgeCalls).toEqual([]);
   });
 });
 

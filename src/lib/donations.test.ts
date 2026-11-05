@@ -5,7 +5,7 @@ describe("parseDonationInput", () => {
   it("accepts a preset amount with no donor details", () => {
     expect(parseDonationInput({ projectId: "p1", amount: 1000 })).toEqual({
       ok: true,
-      input: { projectId: "p1", amount: 1000, method: "M-PESA" },
+      input: { target: { kind: "project", id: "p1" }, amount: 1000, method: "M-PESA" },
     });
   });
 
@@ -13,7 +13,7 @@ describe("parseDonationInput", () => {
     const r = parseDonationInput({ projectId: "p1", amount: "2500", method: "CARD-PAYMENT", email: "a@b.co", phone: "0712 345-678", name: " Wanjiku " });
     expect(r).toEqual({
       ok: true,
-      input: { projectId: "p1", amount: 2500, method: "CARD-PAYMENT", email: "a@b.co", phone: "0712345678", name: "Wanjiku" },
+      input: { target: { kind: "project", id: "p1" }, amount: 2500, method: "CARD-PAYMENT", email: "a@b.co", phone: "0712345678", name: "Wanjiku" },
     });
   });
 
@@ -24,5 +24,10 @@ describe("parseDonationInput", () => {
     expect(parseDonationInput({ projectId: "p1", amount: 100, email: "nope" })).toMatchObject({ ok: false });
     expect(parseDonationInput({ projectId: "p1", amount: 100, phone: "12345" })).toMatchObject({ ok: false });
     expect(parseDonationInput({ amount: 100 })).toMatchObject({ ok: false });
+    expect(parseDonationInput({ projectId: "p1", leaderId: "l1", amount: 100 })).toMatchObject({ ok: false });
+  });
+
+  it("takes a leader as the recipient", () => {
+    expect(parseDonationInput({ leaderId: "l1", amount: 500 })).toMatchObject({ ok: true, input: { target: { kind: "leader", id: "l1" } } });
   });
 });
