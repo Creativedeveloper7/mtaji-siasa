@@ -363,6 +363,17 @@ export interface AdPolicyReview {
   original: { headline: string; body: string; keywords: string[]; imageUrl: string };
   suggested: { headline: string; body: string; keywords: string[]; imageUrl: string };
   image: AdImageCheck;
+  /**
+   * When the project page is political (status not_for_x): the page as it is
+   * and Adly's version of it, which the owner can edit and save to the project.
+   */
+  landing?: {
+    projectId: string;
+    original: { name: string; description: string };
+    suggested: { name: string; description: string };
+    /** "ai" when the AI rewrite passed the rules, else the rules' version */
+    by: "rules" | "ai";
+  };
   /** Other photos of the project, checked the same way */
   alternatives: AdImageCheck[];
   /** "rules" only, or "rules+ai" when the AI review also ran (copy rewrite and photo content) */

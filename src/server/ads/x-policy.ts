@@ -57,8 +57,6 @@ const POLITICAL_PATTERNS: RegExp[] = [
 const POLITICAL_WHY =
   "X's Political Content policy: ads that mention a politician or official, an office, a party, an election, legislation, a court outcome, or support for a government or political agenda are political ads, and X doesn't allow political ads aimed at Kenya. Adly keeps the ad about the project itself.";
 
-const LANDING_WHY =
-  "X's reviewers open the page the ad links to. This project's page has political content (see X's Political Content policy), and X doesn't allow political ads aimed at Kenya, so X will reject the ad however the ad text is written. Edit the project's name or description so it describes the work itself, or run this ad on Google only.";
 
 const HONORIFIC = /^(?:hon\.?|honou?rable|h\.e\.?|dr\.?|mr\.?|mrs\.?|ms\.?|prof\.?|eng\.?)\s+/i;
 
@@ -415,28 +413,79 @@ export interface LandingPage {
  * that page, and X doesn't allow political ads aimed at Kenya, so each finding
  * is a "block": the owner edits the project or leaves X out.
  */
-export function xLandingProblems(page: LandingPage, context: Pick<CopyContext, "officialNames">): AdPolicyFinding[] {
+function landingRules(context: Pick<CopyContext, "officialNames">): Rule[] {
   const names = officialNameRule(context.officialNames);
-  const rules = [RULES.find((r) => r.rule === "political")!, ...(names ? [names] : [])];
+  return [RULES.find((r) => r.rule === "political")!, ...(names ? [names] : [])];
+}
+
+function politicalMatch(rules: Rule[], text: string): string | null {
+  return rules.map((r) => firstMatch(r, text)).find((m): m is string => Boolean(m)) ?? null;
+}
+
+export function xLandingProblems(page: LandingPage, context: Pick<CopyContext, "officialNames">): AdPolicyFinding[] {
+  const rules = landingRules(context);
   const findings: AdPolicyFinding[] = [];
   for (const [part, text] of [
     ["name", page.name],
     ["description", page.description],
   ] as const) {
     for (const sentence of sentences(text ?? "")) {
-      const found = rules.map((r) => firstMatch(r, sentence)).find(Boolean);
+      const found = politicalMatch(rules, sentence);
       if (!found) continue;
       findings.push({
         rule: "political",
         field: "landing",
         severity: "block",
         found,
-        why: `The project ${part} says ${quote(sentence, 160)}. ${LANDING_WHY}`,
+        why: `The project ${part} says ${quote(sentence, 220)}`,
       });
       if (findings.length >= 3) return findings;
     }
   }
   return findings;
+}
+
+/**
+ * Adly's rule-based suggestion for a project page X would reject: keeps every
+ * sentence that is not political, drops a political lead-in clause ("Structured
+ * from the Ward Level to the National Secretariat, MYM provides ...") and
+ * drops the rest of a political sentence. A name with political content is
+ * replaced with a plain one. When too little is left, it writes a plain line
+ * about the project. Nothing is invented: the owner reviews it and fills in
+ * what the work is.
+ */
+export function suggestLandingForX(page: LandingPage, context: Pick<CopyContext, "officialNames" | "county">): LandingPage {
+  const rules = landingRules(context);
+  const kept: string[] = [];
+  for (const sentence of sentences(page.description ?? "")) {
+    if (!politicalMatch(rules, sentence)) {
+      kept.push(sentence);
+      continue;
+    }
+    const comma = sentence.indexOf(", ");
+    if (comma > 0) {
+      const lead = sentence.slice(0, comma);
+      const rest = sentence.slice(comma + 2);
+      // Only a short lead-in ("Structured from ..., MYM provides ..."): when the
+      // comma comes late, what follows is the tail of a list, not a sentence.
+      if (
+        politicalMatch(rules, lead) &&
+        !politicalMatch(rules, rest) &&
+        lead.length < rest.length &&
+        rest.replace(/[^A-Za-z]/g, "").length >= 20
+      ) {
+        kept.push(capitalize(rest));
+      }
+    }
+  }
+  const where = context.county ? ` in ${context.county} County` : "";
+  const nameIsPolitical = Boolean(politicalMatch(rules, page.name ?? ""));
+  const name = nameIsPolitical ? `Community project${where}` : page.name;
+  let description = tidy(kept.join(" "));
+  if (description.replace(/[^A-Za-z]/g, "").length < 40) {
+    description = `${name}${nameIsPolitical ? "" : where}: what is being done, where, and who takes part. Follow the plan, the progress so far and the milestones.`;
+  }
+  return { name, description };
 }
 
 /** One line for an error message: what X would reject and why. */

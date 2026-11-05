@@ -8,8 +8,8 @@ import { asString, isRecord } from "@/server/content/parse";
 import { AD_LIMITS } from "@/server/tracker/adly/config";
 import { fetchPublicImage, IMAGE_MAX_BYTES } from "@/server/tracker/adly/safe-fetch";
 import { cropForXCard, fitsXCard } from "@/server/tracker/adly/x-card-image";
-import { describeProblems, reviewCopyForX, xCopyProblems, xLandingProblems, type AdCopy, type CopyContext } from "@/server/ads/x-policy";
-import { aiCheckImage, aiReviewConfigured, aiReviewCopy } from "@/server/ads/x-policy-ai";
+import { describeProblems, reviewCopyForX, suggestLandingForX, xCopyProblems, xLandingProblems, type AdCopy, type CopyContext, type LandingPage } from "@/server/ads/x-policy";
+import { aiCheckImage, aiReviewConfigured, aiReviewCopy, aiRewriteLanding } from "@/server/ads/x-policy-ai";
 import type { AdImageCheck, AdPolicyFinding, AdPolicyReview, Leader, Project } from "@/types";
 import type { AuthSession } from "@/types/auth";
 
@@ -181,6 +181,23 @@ async function reviewCopy(copy: AdCopy, context: CopyContext, useAi: boolean): P
 }
 
 /**
+ * Adly's version of a political project page: the AI rewrite when it is on
+ * and the rules pass it, else the rules' version.
+ */
+async function suggestLanding(
+  project: Project,
+  context: CopyContext,
+  useAi: boolean
+): Promise<{ page: LandingPage; by: "rules" | "ai" }> {
+  const page = { name: project.name, description: project.description ?? "" };
+  if (useAi) {
+    const ai = await aiRewriteLanding(page, context);
+    if (ai && xLandingProblems(ai, context).length === 0) return { page: ai, by: "ai" };
+  }
+  return { page: suggestLandingForX(page, context), by: "rules" };
+}
+
+/**
  * POST /api/ads/review: Adly's X policy review of a draft ad.
  * Body: { projectId, headline, body, keywords, imageUrl? }.
  */
@@ -202,9 +219,10 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
   const imageUrl = requested && images.includes(requested) ? requested : images[0] ?? "";
   const useAi = aiReviewConfigured();
 
-  const [copyReview, image] = await Promise.all([
+  const [copyReview, image, landingSuggestion] = await Promise.all([
     reviewCopy(copy, context, useAi),
     imageUrl ? checkImage(imageUrl, useAi) : Promise.resolve<AdImageCheck>({ url: "", ok: false, notes: ["This project has no photo yet."] }),
+    landing.length ? suggestLanding(project, context, useAi) : Promise.resolve(null),
   ]);
 
   const findings = [...landing, ...copyReview.findings];
@@ -253,6 +271,16 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
     image,
     alternatives,
     checkedBy: copyReview.ai || useAi ? "rules+ai" : "rules",
+    ...(landingSuggestion
+      ? {
+          landing: {
+            projectId: project.id,
+            original: { name: project.name, description: project.description ?? "" },
+            suggested: landingSuggestion.page,
+            by: landingSuggestion.by,
+          },
+        }
+      : {}),
   };
   return { ok: true, status: 200, body: { ok: true, review } };
 }

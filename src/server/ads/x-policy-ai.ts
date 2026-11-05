@@ -90,6 +90,31 @@ Answer JSON: {"issues":[{"field":"headline"|"body"|"keywords","found":"...","why
   return { issues, rewrite: { headline, body, keywords: keywords.length ? keywords : copy.keywords } };
 }
 
+/**
+ * A version of the project page (name and description) X would accept: the
+ * same work, described factually, without the political content. The caller
+ * re-checks it with the rules.
+ */
+export async function aiRewriteLanding(
+  page: { name: string; description: string },
+  context: CopyContext
+): Promise<{ name: string; description: string } | null> {
+  const answer = await chat([
+    { role: "system", content: POLICY_BRIEF },
+    {
+      role: "user",
+      content: `This is the project page an ad links to. X's reviewers read it, and it has political content, so X will reject the ad.
+${context.officialNames?.length ? `People behind the project (do not name them): ${context.officialNames.join(", ")}.\n` : ""}Project page: ${JSON.stringify(page)}${context.county ? ` (${context.county} County)` : ""}
+Rewrite the description so it describes the work itself: what is being done, where, and who takes part or benefits. Keep every concrete activity, place and fact from the original; leave out politics, government or party agendas, mobilisation, offices, people's names and political structures (secretariats, wards as party units). Do not invent anything that is not in the original. Plain, factual, at most ${Math.max(200, Math.min(600, page.description.length))} characters. Keep the name unless it is political; then give a plain descriptive name.
+Answer JSON: {"name":"...","description":"..."}`,
+    },
+  ]);
+  if (!answer) return null;
+  const name = typeof answer.name === "string" ? answer.name.trim().slice(0, 120) : "";
+  const description = typeof answer.description === "string" ? answer.description.trim().slice(0, 1200) : "";
+  return name && description ? { name, description } : null;
+}
+
 /** What the AI sees in a photo that X would likely reject. `null` when it could not look. */
 export async function aiCheckImage(jpegDataUrl: string): Promise<{ ok: boolean; issues: string[] } | null> {
   const answer = await chat([

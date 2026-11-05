@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nameVariants, reviewCopyForX, xCopyProblems, xLandingProblems } from "@/server/ads/x-policy";
+import { nameVariants, reviewCopyForX, suggestLandingForX, xCopyProblems, xLandingProblems } from "@/server/ads/x-policy";
 
 const context = {
   projectName: "Nairobi River Cleaning & Regeneration Project",
@@ -147,5 +147,32 @@ describe("xLandingProblems", () => {
   it("blocks a project page that names the leader", () => {
     const page = { name: "Mbehi David Youth Fund", description: "Training for young people." };
     expect(xLandingProblems(page, { officialNames: ["Hon. Mbehi David"] })[0]?.found).toBe("Mbehi David");
+  });
+});
+
+describe("suggestLandingForX", () => {
+  const context = { officialNames: ["Mbehi David"], county: "Nairobi" };
+
+  it("keeps the work and drops the politics from the Mashinani page", () => {
+    const page = {
+      name: "Mashinani Youth Usawa Movement",
+      description:
+        "The Mashinani Youth Movement-Kazi Delivery Movement (MY-KDM) is a national grassroots youth initiative committed to mobilizing young people to advance Kenya’s development agenda through civic engagement, strategic communication and media production. Structured from the Ward Level to the National Secretariat, MYM provides a coordinated platform for youth empowerment through jobs, project ambassadorship, creative arts, volunteerism, and community service towards nation building.",
+    };
+    const suggested = suggestLandingForX(page, context);
+    expect(suggested.name).toBe(page.name);
+    expect(suggested.description).toBe(
+      "MYM provides a coordinated platform for youth empowerment through jobs, project ambassadorship, creative arts, volunteerism, and community service towards nation building."
+    );
+    expect(xLandingProblems(suggested, context)).toEqual([]);
+  });
+
+  it("writes a plain line when nothing usable is left, and replaces a political name", () => {
+    const suggested = suggestLandingForX(
+      { name: "Mbehi David Youth Fund", description: "Supporting the Government's development agenda." },
+      context
+    );
+    expect(suggested.name).toBe("Community project in Nairobi County");
+    expect(xLandingProblems(suggested, context)).toEqual([]);
   });
 });

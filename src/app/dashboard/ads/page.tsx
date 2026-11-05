@@ -67,7 +67,7 @@ function suggestionsFor(project: Project | undefined): string[] {
 
 export default function PoliticianAdsPage() {
   const { leader } = usePoliticianProfile();
-  const { getProjectsByIds } = useContent();
+  const { getProjectsByIds, upsertProject } = useContent();
   const projects = useMemo(() => (leader ? getProjectsByIds(leader.projectIds) : []), [leader, getProjectsByIds]);
 
   const [items, setItems] = useState<AdCampaign[]>([]);
@@ -254,6 +254,16 @@ export default function PoliticianAdsPage() {
       return;
     }
     setReview(checked);
+  };
+
+  // Adly's version of a political project page: save it to the project, then check the ad again.
+  const applyLanding = async (page: { name: string; description: string }): Promise<string | null> => {
+    if (!project) return "Choose the project first.";
+    const saved = await upsertProject({ ...project, name: page.name, description: page.description });
+    if (!saved.ok) return saved.error || "Could not save the project.";
+    setReview(null);
+    await continueToConfirm();
+    return null;
   };
 
   const approveAdlyVersion = (version: ApprovedAdlyVersion) => {
@@ -629,6 +639,17 @@ export default function PoliticianAdsPage() {
             setAdlyNotes([]);
             setConfirming(true);
           }}
+          onApplyLanding={applyLanding}
+          onSwitchToGoogle={
+            platforms.includes("google")
+              ? undefined
+              : () => {
+                  setPlatforms(["google"]);
+                  setReview(null);
+                  setAdlyNotes([]);
+                  setConfirming(true);
+                }
+          }
         />
       )}
 

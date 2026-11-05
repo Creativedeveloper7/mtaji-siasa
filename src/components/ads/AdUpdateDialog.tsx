@@ -9,6 +9,7 @@ import { formatCurrency } from "@/lib/utils";
 import { AD_TEXT_LIMITS, minAdBudgetKes } from "@/lib/constants";
 import { AdTextField } from "@/components/ads/AdTextField";
 import { AdlyXReview } from "@/components/ads/AdlyXReview";
+import { useContent } from "@/components/content/ContentProvider";
 import { ShieldCheck, Sparkles } from "lucide-react";
 import type { AdCampaign, AdPolicyFinding, AdPolicyReview } from "@/types";
 
@@ -49,6 +50,8 @@ export function AdUpdateDialog({
   const [adlyNotes, setAdlyNotes] = useState<AdPolicyFinding[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [pageNotice, setPageNotice] = useState("");
+  const { content, upsertProject } = useContent();
   const increase = budget - ad.budgetKes;
   // An ad published below the minimum (e.g. KES 40) has to be raised before it can run.
   const minBudget = Math.max(ad.budgetKes, minAdBudgetKes(ad.platforms.length));
@@ -111,6 +114,17 @@ export function AdUpdateDialog({
         canDropX={false}
         onEdit={() => setReview(null)}
         onDropX={() => setReview(null)}
+        onApplyLanding={async (page) => {
+          const project = content.projects.find((p) => p.id === ad.projectId);
+          if (!project) return "Adly could not find this ad's project. Edit it from Projects.";
+          const saved = await upsertProject({ ...project, name: page.name, description: page.description });
+          if (!saved.ok) return saved.error || "Could not save the project.";
+          // Back to the form: "Save and update" checks the ad again before anything is charged.
+          setCheckedKey("");
+          setPageNotice("Project page updated. Press “Save and update”: Adly checks the ad again before it goes out.");
+          setReview(null);
+          return null;
+        }}
         onApprove={(version) => {
           setHeadline(version.headline);
           setText(version.body);
@@ -190,6 +204,11 @@ export function AdUpdateDialog({
               onChange={(e) => setBudget(Math.max(0, Math.round(Number(e.target.value) || 0)))}
             />
           </AdminField>
+          {pageNotice && (
+            <p className="rounded-md border border-success/30 bg-success-muted px-3 py-2 text-caption text-success" role="status">
+              {pageNotice}
+            </p>
+          )}
           {error && (
             <p className="rounded-md border border-error/30 bg-error-muted px-3 py-2 text-caption text-error" role="alert">
               {error}

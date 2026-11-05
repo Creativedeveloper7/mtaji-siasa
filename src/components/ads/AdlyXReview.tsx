@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, Ban, Check, ImageOff, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, Ban, Check, ImageOff, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { AdminInput } from "@/components/admin/AdminUI";
 import { cn } from "@/lib/utils";
 import type { AdImageCheck, AdPolicyFinding, AdPolicyReview } from "@/types";
 
@@ -37,6 +38,8 @@ export function AdlyXReview({
   onEdit,
   onDropX,
   photoLocked = false,
+  onApplyLanding,
+  onSwitchToGoogle,
 }: {
   review: AdPolicyReview;
   /** Google is also selected, so the ad can still run without X */
@@ -46,6 +49,13 @@ export function AdlyXReview({
   onDropX: () => void;
   /** Updating a running ad: the photo stays as it is, so only the text is reviewed here. */
   photoLocked?: boolean;
+  /**
+   * Save Adly's (or the owner's edited) project page to the project, then
+   * check again. Resolves to an error message, or null when it was saved.
+   */
+  onApplyLanding?: (page: { name: string; description: string }) => Promise<string | null>;
+  /** Only X is selected: run the ad on Google instead */
+  onSwitchToGoogle?: () => void;
 }) {
   const usable = [review.image, ...review.alternatives].filter((i) => i.ok);
   const [imageUrl, setImageUrl] = useState(photoLocked ? review.original.imageUrl : review.suggested.imageUrl);
@@ -56,6 +66,19 @@ export function AdlyXReview({
   const needsImage = review.status === "needs_image" && !photoLocked;
   const notForX = review.status === "not_for_x";
   const blocks = review.findings.filter((f) => f.severity === "block");
+  const [pageName, setPageName] = useState(review.landing?.suggested.name ?? "");
+  const [pageText, setPageText] = useState(review.landing?.suggested.description ?? "");
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState("");
+
+  const applyLanding = async () => {
+    if (!onApplyLanding || !pageName.trim() || !pageText.trim()) return;
+    setApplying(true);
+    setApplyError("");
+    const error = await onApplyLanding({ name: pageName.trim(), description: pageText.trim() });
+    setApplying(false);
+    if (error) setApplyError(error);
+  };
 
   const changed = {
     headline: original.headline !== suggested.headline,
@@ -86,7 +109,7 @@ export function AdlyXReview({
           </h2>
           <p className="mt-1 text-small text-ink-muted">
             {notForX
-              ? "X doesn't allow political ads aimed at Kenya, and its reviewers read the project page this ad links to. That page has political content, which Adly can't change for you."
+              ? "X doesn't allow political ads aimed at Kenya, and its reviewers read the project page this ad links to. That page has political content, so X will reject the ad however its text is written. Adly suggests a version of the page below."
               : needsImage
                 ? "X would reject the photo, and none of this project's other photos can be used either."
                 : "X would likely reject the ad as it is. Here is what Adly changed and why. Nothing is published until you approve and confirm."}
@@ -109,14 +132,78 @@ export function AdlyXReview({
                   </li>
                 ))}
               </ul>
-              <p className="mt-3 text-small text-ink-muted">
-                <Link href="/dashboard/projects" className="font-medium text-accent underline">
-                  Edit the project
-                </Link>{" "}
-                so its name and description describe the work itself (what is being built or done, where, and for whom), then try
-                again{canDropX ? ", or run this ad on Google only" : ""}.
-              </p>
             </section>
+          )}
+
+          {notForX && review.landing && (
+            <section>
+              <h3 className="meta-label mb-2 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-accent" aria-hidden />
+                Adly&apos;s version of the project page
+              </h3>
+              <p className="mb-3 text-caption text-ink-muted">
+                {review.landing.by === "ai"
+                  ? "Adly rewrote the description around the work itself, keeping what the page says the project does and leaving out the politics."
+                  : "Adly kept the parts that describe the work and left out the political ones."}{" "}
+                Check it is accurate and add anything missing: saving changes the public project page.
+              </p>
+              <div className="space-y-3">
+                <label className="block">
+                  <span className="meta-label">Project name</span>
+                  <span className="mt-1 block">
+                    <AdminInput value={pageName} maxLength={120} onChange={(e) => setPageName(e.target.value)} />
+                  </span>
+                </label>
+                <label className="block">
+                  <span className="meta-label">Description</span>
+                  <textarea
+                    value={pageText}
+                    onChange={(e) => setPageText(e.target.value)}
+                    rows={5}
+                    className="mt-1 w-full rounded-md border border-border-strong bg-surface px-3 py-2 text-small text-ink focus:border-accent focus:outline-none"
+                  />
+                </label>
+                <details className="text-caption text-ink-subtle">
+                  <summary className="cursor-pointer">What the page says now</summary>
+                  <p className="mt-1 font-medium text-ink-muted">{review.landing.original.name}</p>
+                  <p className="mt-1 whitespace-pre-line">{review.landing.original.description}</p>
+                </details>
+              </div>
+              {applyError && (
+                <p className="mt-3 rounded-md border border-error/30 bg-error-muted px-3 py-2 text-caption text-error" role="alert">
+                  {applyError}
+                </p>
+              )}
+              {onApplyLanding ? (
+                <Button
+                  type="button"
+                  className="mt-3"
+                  fullWidth
+                  disabled={applying || !pageName.trim() || !pageText.trim()}
+                  onClick={() => void applyLanding()}
+                >
+                  <RefreshCw className={cn("h-4 w-4", applying && "animate-spin")} />
+                  {applying ? "Saving and checking…" : "Save to the project page and check again"}
+                </Button>
+              ) : (
+                <p className="mt-3 text-small text-ink-muted">
+                  <Link href="/dashboard/projects" className="font-medium text-accent underline">
+                    Edit the project
+                  </Link>{" "}
+                  with this text, then try again.
+                </p>
+              )}
+            </section>
+          )}
+
+          {notForX && !review.landing && (
+            <p className="text-small text-ink-muted">
+              <Link href="/dashboard/projects" className="font-medium text-accent underline">
+                Edit the project
+              </Link>{" "}
+              so its name and description describe the work itself (what is being built or done, where, and for whom), then try
+              again.
+            </p>
           )}
 
           {!notForX && fixes.length > 0 && (
@@ -213,10 +300,16 @@ export function AdlyXReview({
             Edit it myself
           </Button>
           {needsImage || notForX ? (
-            canDropX && (
+            canDropX ? (
               <Button type="button" fullWidth onClick={onDropX}>
                 Run on Google only
               </Button>
+            ) : (
+              onSwitchToGoogle && (
+                <Button type="button" fullWidth variant="secondary" onClick={onSwitchToGoogle}>
+                  Run on Google instead
+                </Button>
+              )
             )
           ) : (
             <Button
