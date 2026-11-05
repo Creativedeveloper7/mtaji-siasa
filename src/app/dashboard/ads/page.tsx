@@ -111,6 +111,8 @@ export default function PoliticianAdsPage() {
   const [platforms, setPlatforms] = useState<AdPlatform[]>(["x", "google"]);
   const [headline, setHeadline] = useState("");
   const [body, setBody] = useState("");
+  // Optional: the owner's own page for the ad to link to, instead of the M-Taji page.
+  const [customLink, setCustomLink] = useState("");
   const [keywords, setKeywords] = useState<string[]>([]);
   const [budget, setBudget] = useState(1000);
   const [days, setDays] = useState(7);
@@ -227,7 +229,8 @@ export default function PoliticianAdsPage() {
   const usd = mediaKes / (quote?.kesPerUsd ?? 129);
   const perNetwork = platforms.length ? Math.floor(mediaKes / platforms.length) : 0;
   const insufficient = balance !== null && budget > balance;
-  const landingUrl = subject ? `${typeof window === "undefined" ? "" : window.location.origin}${subject.path}` : "";
+  const link = customLink.trim();
+  const landingUrl = link || (subject ? `${typeof window === "undefined" ? "" : window.location.origin}${subject.path}` : "");
 
   const preview = (
     <AdPreview
@@ -254,6 +257,7 @@ export default function PoliticianAdsPage() {
     if (platforms.length === 0) return "Choose X, Google or both.";
     if (!headline.trim()) return "Add a headline.";
     if (!body.trim()) return "Add the ad text.";
+    if (link && !/^https:\/\/[^\s/]+\.[^\s]+$/i.test(link)) return "The link must be a full https address, e.g. https://example.org/page.";
     if (keywords.length === 0) return "Add at least one keyword.";
     if (budget < min) {
       return `The minimum budget is ${formatCurrency(min)}${
@@ -277,6 +281,7 @@ export default function PoliticianAdsPage() {
         body: body.trim(),
         keywords,
         imageUrl: imageUrl || subject?.image,
+        ...(link ? { landingUrl: link } : {}),
         ...audienceBody(audience),
         budgetKes: budget,
         durationDays: days,
@@ -313,7 +318,14 @@ export default function PoliticianAdsPage() {
     setReviewing(true);
     const result = await apiJson<{ review?: AdPolicyReview; error?: string }>("/api/ads/review", {
       method: "POST",
-      body: JSON.stringify({ ...subjectBody, headline: headline.trim(), body: body.trim(), keywords, imageUrl: imageUrl || subject?.image }),
+      body: JSON.stringify({
+        ...subjectBody,
+        headline: headline.trim(),
+        body: body.trim(),
+        keywords,
+        imageUrl: imageUrl || subject?.image,
+        ...(link ? { landingUrl: link } : {}),
+      }),
     });
     setReviewing(false);
     if (!result.ok || !result.data.review) {
@@ -539,10 +551,28 @@ export default function PoliticianAdsPage() {
                 onChange={setBody}
                 hint="Google shows the first 90 characters; X shows it all."
               />
+              <AdminField
+                label="Link (optional)"
+                hint={
+                  link
+                    ? "The ad sends people to this page. X and Google review this page before approving the ad, and Adly checks it first."
+                    : kind === "opportunity"
+                      ? "Leave empty to link to the opportunity's page on M-Taji, where people apply. Or paste your own https page."
+                      : "Leave empty to link to the project's page on M-Taji. Or paste your own https page."
+                }
+              >
+                <AdminInput
+                  type="url"
+                  inputMode="url"
+                  placeholder="https://"
+                  value={customLink}
+                  onChange={(e) => setCustomLink(e.target.value)}
+                  maxLength={2000}
+                  autoComplete="url"
+                />
+              </AdminField>
               <p className="text-caption text-ink-subtle">
-                {kind === "opportunity"
-                  ? "The ad uses the opportunity's photo and links to its public page, where people apply."
-                  : "The ad uses the project's photo and links to its public project page."}
+                {kind === "opportunity" ? "The ad uses the opportunity's photo." : "The ad uses the project's photo."}
               </p>
               {/* Phones: show the preview here, before the budget and the pay button. */}
               <div className="border-t border-border pt-4 lg:hidden">
@@ -800,6 +830,7 @@ export default function PoliticianAdsPage() {
             <h2 className="text-h3 text-ink">{chargeOnPublish && quote?.requireApproval ? "Confirm ad" : "Confirm ad payment"}</h2>
             <dl className="mt-4 space-y-2 text-small">
               <Row label={kind === "opportunity" ? "Opportunity" : "Project"} value={subject.name} />
+              {link && <Row label="Links to" value={link} />}
               <Row label="Networks" value={platforms.map((p) => (p === "x" ? "X" : "Google")).join(" + ")} />
               <Row label="Duration" value={`${days} day${days === 1 ? "" : "s"}`} />
               <Row label="Where" value={audience.counties.length ? audience.counties.join(", ") : "All of Kenya"} />
@@ -889,7 +920,7 @@ function Row({ label, value, strong }: { label: string; value: string; strong?: 
   return (
     <div className="flex justify-between gap-4">
       <dt className="text-ink-muted">{label}</dt>
-      <dd className={cn("text-right", strong ? "font-mono font-bold text-ink" : "text-ink")}>{value}</dd>
+      <dd className={cn("min-w-0 break-all text-right", strong ? "font-mono font-bold text-ink" : "text-ink")}>{value}</dd>
     </div>
   );
 }

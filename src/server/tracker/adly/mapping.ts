@@ -77,6 +77,8 @@ export interface SiasaMeta {
   leader_id?: string;
   /** opportunities.id, when the ad promotes an opportunity (it links to its page) */
   opportunity_id?: string;
+  /** The owner pasted their own link (creative.landing_page_url) */
+  custom_link?: boolean;
   /** Exact Siasa objective when the Tracker column holds a coarser one */
   objective?: CampaignObjective;
   start_date?: string;
@@ -121,6 +123,7 @@ export function readSiasaMeta(metadata: unknown): SiasaMeta {
   return clean<SiasaMeta>({
     leader_id: str(s.leader_id),
     opportunity_id: str(s.opportunity_id),
+    custom_link: s.custom_link === true ? true : undefined,
     objective: OBJECTIVES.includes(s.objective as CampaignObjective) ? (s.objective as CampaignObjective) : undefined,
     start_date: str(s.start_date),
     end_date: str(s.end_date),
@@ -806,6 +809,7 @@ export function rowToAdCampaign(row: AdlyCampaignRow, ctx: AdCampaignContext = {
     createdBy: row.user_id,
     projectId: scope.project_id ?? "",
     ...(siasa.opportunity_id ? { opportunityId: siasa.opportunity_id } : {}),
+    ...(siasa.custom_link ? { customLink: true } : {}),
     name: row.name,
     headline: creative.headline ?? row.name,
     body: creative.body ?? "",
@@ -885,6 +889,8 @@ export interface AdComposerInput {
   projectTitle?: string;
   /** The opportunity the ad promotes (its page is landingUrl) */
   opportunityId?: string;
+  /** landingUrl is the owner's own link, not the project or opportunity page */
+  customLink?: boolean;
   leaderId: string;
   estimatedReach: number;
   requireApproval: boolean;
@@ -905,6 +911,7 @@ export function adComposerToRow(input: AdComposerInput, userId: string, now = ne
   metadata = withSiasaMeta(metadata, {
     leader_id: input.leaderId,
     ...(input.opportunityId ? { opportunity_id: input.opportunityId } : {}),
+    ...(input.customLink ? { custom_link: true } : {}),
     image_url: input.imageUrl || undefined,
     estimated_reach: input.estimatedReach,
     source: "ads",

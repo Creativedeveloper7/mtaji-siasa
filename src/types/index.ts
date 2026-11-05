@@ -287,6 +287,8 @@ export interface AdCampaign {
   body: string;
   imageUrl: string;
   landingUrl: string;
+  /** The owner pasted their own link (landingUrl), instead of the project or opportunity page */
+  customLink?: boolean;
   keywords: string[];
   /** Counties the ad runs in, or ["Kenya"] (Tracker ads) */
   locations?: string[];
@@ -322,13 +324,18 @@ export type XPolicyRule =
   /** Opportunity ads: closed, funding, a fee to apply, tenders, discriminatory wording */
   | "opportunity"
   /** Prize / contest wording (win, finalists, 🏆💰) */
-  | "contest";
+  | "contest"
+  /** The ad's own link: doesn't load, redirects too much, or changes site */
+  | "landing_link";
 
 /** One thing Adly found in an ad before it goes to X, and what it did about it. */
 export interface AdPolicyFinding {
   rule: XPolicyRule;
-  /** "landing": the project page the ad links to, which X's reviewers also read */
-  field: "headline" | "body" | "keywords" | "image" | "landing";
+  /**
+   * "landing": the project or opportunity page the ad links to, which X's
+   * reviewers also read. "link": the owner's own link, when the ad has one.
+   */
+  field: "headline" | "body" | "keywords" | "image" | "landing" | "link";
   /**
    * "fix": X would likely reject it, so Adly changed it. "advice": worth
    * checking, not changed. "block": X would reject it and Adly can't change

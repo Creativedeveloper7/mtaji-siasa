@@ -262,6 +262,15 @@ Adly campaigns and dashboard paid ads are both `adly_campaigns` rows
   capitals, with emoji or "!" (X shows it on the ad card), prize and contest
   wording (win, finalists, 🏆💰), money offers, and promised government links
   or jobs block X, and Adly's suggested page removes them.
+- An ad may link to the owner's own page instead (`landingUrl` on
+  `/api/ads/campaigns` and `/api/ads/review`; stored as
+  `creative.landing_page_url` with `metadata.siasa.custom_link`). It must be a
+  public https page that loads (refused on every network otherwise). For X,
+  Adly opens it like X's reviewer (`checkCustomLink`, through
+  `fetchPublicPage`: pinned to a vetted public address, at most one redirect,
+  10 s, first 512 KB): a redirect to another site blocks X, and the page's
+  title and description get the political and deceptive checks. The project or
+  opportunity is still what the ad promotes (photo, copy, listing checks).
 - Network credentials (`GADS_*`, `X_*`, `META_*`, `TIKTOK_*`,
   `OPENAI_API_KEY`) are Supabase function secrets in the Tracker project
   only. Siasa holds none.

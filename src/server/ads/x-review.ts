@@ -6,7 +6,8 @@ import { getRepositories, usesTracker } from "@/server";
 import type { ContentResult } from "@/server/content/service";
 import { asString, isRecord } from "@/server/content/parse";
 import { AD_LIMITS } from "@/server/tracker/adly/config";
-import { fetchPublicImage, IMAGE_MAX_BYTES } from "@/server/tracker/adly/safe-fetch";
+import { fetchPublicImage, fetchPublicPage, IMAGE_MAX_BYTES, UnsafeUrlError } from "@/server/tracker/adly/safe-fetch";
+import { isAdNetworkLandingUrl } from "@/server/tracker/adly/plan";
 import { cropForXCard, fitsXCard } from "@/server/tracker/adly/x-card-image";
 import {
   describeProblems,
@@ -16,8 +17,11 @@ import {
   reviewCopyForX,
   suggestLandingForX,
   xCopyProblems,
+  siteHost,
+  summarizeLandingHtml,
   xLandingDeceptionProblems,
   xLandingProblems,
+  type LandingSummary,
   type AdCopy,
   type CopyContext,
   type LandingPage,
@@ -405,7 +409,9 @@ async function suggestLanding(
 
 /**
  * POST /api/ads/review: Adly's X policy review of a draft ad.
- * Body: { projectId | opportunityId, headline, body, keywords, imageUrl? }.
+ * Body: { projectId | opportunityId, headline, body, keywords, imageUrl?, landingUrl? }.
+ * With landingUrl (the owner's own link) Adly checks that page, which is what
+ * X reviews, instead of the project or opportunity page.
  */
 export async function reviewAdForX(session: AuthSession, body: unknown): Promise<ContentResult> {
   if (!["leader", "aspirant", "admin"].includes(session.role)) {
@@ -421,9 +427,16 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
     };
   }
 
+  const customLink = parseCustomLink(body.landingUrl);
+  if (customLink === null) {
+    return { ok: false, status: 400, error: "Paste a public https link (https://…), or leave the link empty." };
+  }
+
   const copy = copyFromBody(body);
   const { context, officials } = subject;
-  const { editable, blocks } = landingBlocksFor(subject);
+  const own = landingBlocksFor(subject);
+  // With the owner's own link, X reviews that page instead of M-Taji's.
+  const editable = customLink ? [] : own.editable;
   const imageContext = { projectName: subject.name, officialNames: officials.names };
   const images = subject.images;
   const requested = asString(body.imageUrl);
@@ -431,17 +444,22 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
   const imageUrl = requested && images.includes(requested) ? requested : images[0] ?? "";
   const useAi = aiReviewConfigured();
 
-  const [copyReview, image, landingSuggestion] = await Promise.all([
+  const [copyReview, image, landingSuggestion, link] = await Promise.all([
     reviewCopy(copy, context, useAi),
     imageUrl
       ? checkImage(imageUrl, useAi, imageContext)
       : Promise.resolve<AdImageCheck>({ url: "", ok: false, notes: [`This ${subject.noun} has no photo yet.`] }),
     editable.length ? suggestLanding(subject, useAi) : Promise.resolve(null),
+    customLink ? checkCustomLink(customLink, subject) : Promise.resolve(null),
   ]);
 
+  const blocks = link
+    ? [...subject.listingFindings.filter((f) => f.severity === "block"), ...link.findings.filter((f) => f.severity === "block")]
+    : own.blocks;
   const findings = [...blocks, ...copyReview.findings];
-  const byline = blocks.length ? null : leaderBylineAdvice(officials.leader);
+  const byline = blocks.length || link ? null : leaderBylineAdvice(officials.leader);
   if (byline) findings.push(byline);
+  if (link) findings.push(...link.findings.filter((f) => f.severity === "advice"));
   findings.push(...subject.listingFindings.filter((f) => f.severity === "advice"));
   for (const note of image.advice ?? []) {
     findings.push({ rule: "image", field: "image", severity: "advice", found: "Name on the photo", why: note });
@@ -507,13 +525,110 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
 }
 
 /**
+ * The owner's own link from a request body: "" when none was given, null when
+ * it isn't a public https address (networks and Siasa refuse those).
+ */
+export function parseCustomLink(value: unknown): string | null {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+  if (raw.length > 2000 || !/^https:\/\//i.test(raw) || !isAdNetworkLandingUrl(raw)) return null;
+  try {
+    return new URL(raw).toString();
+  } catch {
+    return null;
+  }
+}
+
+/** The owner's own link, checked the way X's reviewers and link card see it. */
+export interface CustomLinkCheck {
+  url: string;
+  /** The page loads (no network should run an ad whose link doesn't) */
+  loads: boolean;
+  /** Blocks (X) and advice */
+  findings: AdPolicyFinding[];
+  summary?: LandingSummary;
+}
+
+/**
+ * Open the owner's link like X's reviewer: it must load over https without
+ * more than one redirect and without changing site ("excessive redirects" and
+ * "circumventing systems" in X's Deceptive & Fraudulent Content policy). Its
+ * title and description (what X's link card shows) get the same political
+ * and deceptive checks as M-Taji's own pages. A title in capitals is advice
+ * here: the owner may not control another site's title.
+ */
+export async function checkCustomLink(url: string, subject: AdSubject | undefined): Promise<CustomLinkCheck> {
+  const linkFinding = (found: string, why: string): AdPolicyFinding => ({ rule: "landing_link", field: "link", severity: "block", found, why });
+  let page;
+  try {
+    page = await fetchPublicPage(url);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "The page didn't load.";
+    const why =
+      error instanceof UnsafeUrlError
+        ? `${reason} Ads can only link to public https pages.`
+        : `${reason} X and Google open the link before approving an ad, and reject one whose page doesn't load.`;
+    return { url, loads: false, findings: [linkFinding(url, why)] };
+  }
+  const findings: AdPolicyFinding[] = [];
+  if (siteHost(page.finalUrl) !== siteHost(url)) {
+    findings.push(
+      linkFinding(
+        url,
+        `The link sends people on to another site (${siteHost(page.finalUrl)}). X's Deceptive & Fraudulent Content policy treats a link that changes site after review as circumventing its review. Paste the address people end up on.`
+      )
+    );
+  }
+  if (page.contentType && !/html/.test(page.contentType)) {
+    findings.push({
+      rule: "landing_link",
+      field: "link",
+      severity: "advice",
+      found: page.contentType,
+      why: "The link opens a file, not a web page. X expects a page that explains what the ad offers.",
+    });
+  }
+  const summary = summarizeLandingHtml(page.html);
+  const shown = { name: summary.title || summary.heading, description: summary.description };
+  const context = subject?.context ?? { projectName: "", limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body } };
+  const political = xLandingProblems(shown, context, "linked page");
+  const deceptive = xLandingDeceptionProblems(shown, "linked page").map((f) =>
+    // Another site's title may not be the owner's to change.
+    f.rule === "clickbait" ? { ...f, severity: "advice" as const } : f
+  );
+  findings.push(...[...political, ...deceptive].map((f) => ({ ...f, field: "link" as const })));
+  if (!shown.name && !shown.description) {
+    findings.push({
+      rule: "landing_link",
+      field: "link",
+      severity: "advice",
+      found: url,
+      why: "The page has no title or description X can show on the ad card. Pages with a clear title and description are reviewed more easily.",
+    });
+  }
+  return { url, loads: true, findings, summary };
+}
+
+/**
  * Server-side guard for create and publish: the message to refuse an X ad
  * with, or null when it passes. The composer runs the full review first, so
  * this only trips when someone skips Adly's version.
  */
-export async function xPolicyErrorFor(subject: AdSubject | undefined, copy: AdCopy, fallbackName: string): Promise<string | null> {
+export async function xPolicyErrorFor(
+  subject: AdSubject | undefined,
+  copy: AdCopy,
+  fallbackName: string,
+  customLink?: string
+): Promise<string | null> {
   const context = subject?.context ?? { projectName: fallbackName, limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body } };
-  if (subject) {
+  if (customLink) {
+    // X reviews the owner's page, not M-Taji's: check that one instead.
+    const listing = subject?.listingFindings.filter((f) => f.severity === "block") ?? [];
+    if (listing.length) return `Adly stopped this ad before it went to X, which would reject it: ${listing.map((f) => f.why).join(" ")}`;
+    const link = await checkCustomLink(customLink, subject);
+    const blocks = link.findings.filter((f) => f.severity === "block");
+    if (blocks.length) return `Adly stopped this ad before it went to X: ${blocks.map((f) => f.why).join(" ")}`;
+  } else if (subject) {
     const office = officeTitleBlock(subject.officials.leader, subject.name);
     if (office) return `Adly stopped this ad before it went to X: ${office.why} ${office.change}.`;
     const listing = subject.listingFindings.filter((f) => f.severity === "block");

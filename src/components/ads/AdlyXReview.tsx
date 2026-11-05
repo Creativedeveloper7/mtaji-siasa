@@ -24,6 +24,7 @@ const FIELD_LABEL: Record<AdPolicyFinding["field"], string> = {
   keywords: "Keywords",
   image: "Photo",
   landing: "Project page",
+  link: "Your link",
 };
 
 /**

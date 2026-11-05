@@ -761,6 +761,59 @@ export function opportunityBlocksAnyNetwork(listing: OpportunityListing, now = D
   );
 }
 
+/** What an ad's own landing link shows: what X's reviewers and its link card read. */
+export interface LandingSummary {
+  /** og:title, else <title>, else the first heading */
+  title: string;
+  /** og:description, else the meta description */
+  description: string;
+  /** The first <h1> */
+  heading: string;
+}
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+}
+
+function metaContent(html: string, key: string): string {
+  // <meta property="og:title" content="..."> in either attribute order.
+  const a = new RegExp(`<meta[^>]+(?:property|name)=["']${key}["'][^>]*content=["']([^"']*)["']`, "i").exec(html);
+  const b = new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name)=["']${key}["']`, "i").exec(html);
+  return decodeEntities((a?.[1] ?? b?.[1] ?? "").trim());
+}
+
+function stripTags(text: string): string {
+  return decodeEntities(text.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+/** The title, description and heading of a page, read from its HTML. */
+export function summarizeLandingHtml(html: string): LandingSummary {
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? "";
+  const heading = stripTags(/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] ?? "").slice(0, 300);
+  return {
+    title: (metaContent(html, "og:title") || stripTags(title) || heading).slice(0, 300),
+    description: (metaContent(html, "og:description") || metaContent(html, "description")).slice(0, 1000),
+    heading,
+  };
+}
+
+/** A host without a leading "www.", to compare where a link starts and ends. */
+export function siteHost(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 /** One line for an error message: what X would reject and why. */
 export function describeProblems(findings: AdPolicyFinding[]): string {
   const seen = new Set<XPolicyRule>();
@@ -785,4 +838,5 @@ export const RULE_LABELS: Record<XPolicyRule, string> = {
   image: "image",
   opportunity: "opportunity listing",
   contest: "prize or contest offer",
+  landing_link: "the ad's link",
 };

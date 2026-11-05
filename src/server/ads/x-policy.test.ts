@@ -7,6 +7,8 @@ import {
   opportunityBlocksAnyNetwork,
   opportunityProblemsForX,
   reviewCopyForX,
+  siteHost,
+  summarizeLandingHtml,
   suggestLandingForX,
   xCopyProblems,
   xLandingDeceptionProblems,
@@ -318,5 +320,25 @@ describe("Deceptive & Fraudulent Content on the landing page", () => {
     expect(opportunityProblemsForX(listing).map((f) => f.found)).toContain("No organiser named");
     expect(opportunityBlocksAnyNetwork(listing)).toEqual([]);
     expect(opportunityProblemsForX({ ...listing, organization: "Mashinani Youth" }).map((f) => f.found)).not.toContain("No organiser named");
+  });
+});
+
+describe("summarizeLandingHtml", () => {
+  it("reads the title and description X's link card shows", () => {
+    const html = `<html><head><title>Fallback</title>
+      <meta content="Apply by 1 December" property="og:description">
+      <meta property="og:title" content="Site supervisor &amp; foreman, Thika">
+      </head><body><h1>Site <b>supervisor</b></h1></body></html>`;
+    expect(summarizeLandingHtml(html)).toEqual({
+      title: "Site supervisor & foreman, Thika",
+      description: "Apply by 1 December",
+      heading: "Site supervisor",
+    });
+    expect(summarizeLandingHtml("<title> Plain page </title>")).toMatchObject({ title: "Plain page", description: "" });
+  });
+
+  it("compares sites without www", () => {
+    expect(siteHost("https://www.example.org/a")).toBe(siteHost("https://example.org/b"));
+    expect(siteHost("https://bit.ly/x")).not.toBe(siteHost("https://example.org"));
   });
 });

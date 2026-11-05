@@ -247,3 +247,124 @@ export async function fetchPublicImage(
     req.end();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Web pages (an ad's own landing link)
+
+export const PAGE_MAX_BYTES = 512 * 1024;
+export const PAGE_TIMEOUT_MS = 10_000;
+/** X calls more than this "excessive redirects". */
+export const PAGE_MAX_REDIRECTS = 1;
+
+export interface FetchedPage {
+  /** The address that finally answered */
+  finalUrl: string;
+  /** Redirects followed on the way */
+  redirects: number;
+  contentType: string;
+  /** The start of the page (up to PAGE_MAX_BYTES), decoded as UTF-8 */
+  html: string;
+}
+
+/** One pinned GET: status, Location and up to maxBytes of body. Never follows redirects itself. */
+function pinnedGet(
+  url: URL,
+  pinned: LookupAddress,
+  maxBytes: number,
+  signal: AbortSignal
+): Promise<{ status: number; location?: string; contentType: string; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest(
+      url,
+      {
+        method: "GET",
+        signal,
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          // A generic browser-like agent: some sites refuse unknown clients.
+          "User-Agent": "Mozilla/5.0 (compatible; M-Taji-Adly/1.0; +https://www.m-taji.co.ke)",
+        },
+        lookup: ((
+          _host: string,
+          opts: { all?: boolean } | number | undefined,
+          cb: (err: Error | null, address: string | LookupAddress[], family?: number) => void
+        ) => {
+          if (typeof opts === "object" && opts?.all) cb(null, [pinned]);
+          else cb(null, pinned.address, pinned.family);
+        }) as never,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const contentType = String(res.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
+        if (status >= 300 && status < 400) {
+          res.resume();
+          resolve({ status, location: String(res.headers.location ?? ""), contentType, body: Buffer.alloc(0) });
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let total = 0;
+        res.on("data", (chunk: Buffer) => {
+          if (total >= maxBytes) return;
+          chunks.push(chunk);
+          total += chunk.length;
+          // Enough to read the head of the page: stop downloading.
+          if (total >= maxBytes) {
+            res.destroy();
+            resolve({ status, contentType, body: Buffer.concat(chunks).subarray(0, maxBytes) });
+          }
+        });
+        res.on("end", () => resolve({ status, contentType, body: Buffer.concat(chunks) }));
+        res.on("error", reject);
+      }
+    );
+    req.on("error", (error) => {
+      reject(error.name === "AbortError" || error.name === "TimeoutError" ? new Error("The page took too long to load.") : error);
+    });
+    req.end();
+  });
+}
+
+/**
+ * GET a public https web page the way an ad reviewer would: each host vetted
+ * and pinned like fetchPublicImage, at most PAGE_MAX_REDIRECTS redirects (each
+ * re-vetted; more is X's "excessive redirects"), a timeout, and only the
+ * first PAGE_MAX_BYTES read. Throws UnsafeUrlError for a non-public or
+ * non-https address, Error for a page that doesn't load.
+ */
+export async function fetchPublicPage(
+  rawUrl: string,
+  options: { resolve?: Resolver; timeoutMs?: number; maxRedirects?: number } = {}
+): Promise<FetchedPage> {
+  const maxRedirects = options.maxRedirects ?? PAGE_MAX_REDIRECTS;
+  const signal = AbortSignal.timeout(options.timeoutMs ?? PAGE_TIMEOUT_MS);
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new UnsafeUrlError("The link must be a public https address.");
+  }
+  for (let redirects = 0; ; redirects++) {
+    if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
+      throw new UnsafeUrlError(redirects ? "The link redirects to an address that isn't public https." : "The link must be a public https address.");
+    }
+    let pinned: LookupAddress;
+    try {
+      pinned = await vetHost(url.hostname, options.resolve);
+    } catch (error) {
+      if (error instanceof UnsafeUrlError) throw new UnsafeUrlError("The link's host isn't a public address.");
+      throw new Error("The link's address could not be found.");
+    }
+    const res = await pinnedGet(url, pinned, PAGE_MAX_BYTES, signal);
+    if (res.status >= 300 && res.status < 400) {
+      if (redirects >= maxRedirects) throw new Error("The link redirects more than once (X rejects excessive redirects).");
+      try {
+        url = new URL(res.location ?? "", url);
+      } catch {
+        throw new Error("The link redirects to an invalid address.");
+      }
+      continue;
+    }
+    if (res.status < 200 || res.status >= 300) throw new Error(`The page answered with an error (${res.status}).`);
+    return { finalUrl: url.toString(), redirects, contentType: res.contentType, html: res.body.toString("utf8") };
+  }
+}

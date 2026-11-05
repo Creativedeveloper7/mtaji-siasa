@@ -9,7 +9,16 @@ import { visibleAdly } from "@/server/adly/service";
 import { parseCampaign, parseCreative as parseSiasaCreative, parsePolicyReview } from "@/server/adly/parse";
 import { asString, isRecord } from "@/server/content/parse";
 import { parseAdAudience } from "@/server/ads/audience";
-import { chosenSubjectImage, opportunitySubject, ownSubject, projectSubject, xPolicyErrorFor, type AdSubject } from "@/server/ads/x-review";
+import {
+  checkCustomLink,
+  chosenSubjectImage,
+  opportunitySubject,
+  ownSubject,
+  parseCustomLink,
+  projectSubject,
+  xPolicyErrorFor,
+  type AdSubject,
+} from "@/server/ads/x-review";
 import { opportunityBlocksAnyNetwork } from "@/server/ads/x-policy";
 import type { ContentActor, ContentResult } from "@/server/content/service";
 import { serviceClient } from "@/server/tracker/clients";
@@ -490,7 +499,12 @@ async function xPolicyBlock(row: AdlyCampaignRow, channels: TrackerChannel[]): P
   if (!channels.includes("x")) return null;
   const ad = rowToAdCampaign(row);
   if (!ad.headline && !ad.body) return null;
-  return await xPolicyErrorFor(await adSubject(ad), { headline: ad.headline, body: ad.body, keywords: ad.keywords }, ad.name);
+  return await xPolicyErrorFor(
+    await adSubject(ad),
+    { headline: ad.headline, body: ad.body, keywords: ad.keywords },
+    ad.name,
+    ad.customLink ? ad.landingUrl : undefined
+  );
 }
 
 async function notOwned(session: { role: string }, id: string, verb: string): Promise<ContentResult> {
@@ -632,6 +646,13 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   // Closed listings and fees to apply are refused on every network, not only X.
   const listingBlocks = subject.kind === "opportunity" ? opportunityBlocksAnyNetwork(await opportunityListing(subject.id)) : [];
   if (listingBlocks.length) return fail(422, listingBlocks.map((f) => f.why).join(" "));
+  // The owner's own link (optional): a public https page that loads, whichever network.
+  const customLink = parseCustomLink(body.landingUrl);
+  if (customLink === null) return fail(400, "Paste a public https link (https://…), or leave the link empty.");
+  if (customLink) {
+    const link = await checkCustomLink(customLink, subject);
+    if (!link.loads) return fail(400, link.findings.map((f) => f.why).join(" "));
+  }
 
   const headline = asString(body.headline) ?? "";
   const text = asString(body.body) ?? "";
@@ -659,7 +680,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   );
   if (!platforms.length) return fail(400, "Choose at least one network: X or Google.");
   if (platforms.includes("x")) {
-    const blocked = await xPolicyErrorFor(subject, { headline, body: text, keywords }, subject.name);
+    const blocked = await xPolicyErrorFor(subject, { headline, body: text, keywords }, subject.name, customLink || undefined);
     if (blocked) return fail(422, blocked);
   }
   const audience = parseAdAudience(body);
@@ -679,7 +700,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   }
 
   const origin = siteOrigin(requestOrigin) ?? requestOrigin;
-  const landingUrl = `${origin.replace(/\/$/, "")}${subject.path}`;
+  const landingUrl = customLink || `${origin.replace(/\/$/, "")}${subject.path}`;
 
   return guard(async () => {
     const user = await signedIn(session.userId);
@@ -705,6 +726,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
           ...(subject.kind === "project"
             ? { projectId: subject.id, projectTitle: subject.name }
             : { opportunityId: subject.id }),
+          ...(customLink ? { customLink: true } : {}),
           leaderId,
           estimatedReach: Math.round(budgetKes * settings.reachPerKes),
           requireApproval: settings.requireApproval,
@@ -817,7 +839,12 @@ export async function editTrackerAd(session: AuthSession, id: string, body: unkn
     // Every X update is checked, not only changed text: the project page may
     // have changed, and the republish would be refused anyway.
     if (resolvePublishChannels(row.channels).includes("x")) {
-      const blocked = await xPolicyErrorFor(await adSubject(ad), { headline, body: text, keywords }, ad.name);
+      const blocked = await xPolicyErrorFor(
+        await adSubject(ad),
+        { headline, body: text, keywords },
+        ad.name,
+        ad.customLink ? ad.landingUrl : undefined
+      );
       if (blocked) return fail(422, blocked);
     }
 
