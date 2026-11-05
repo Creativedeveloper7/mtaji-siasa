@@ -7,9 +7,10 @@ import { CardCarousel } from "@/components/ui/CardCarousel";
 import { useFaida } from "@/components/faida/FaidaProvider";
 
 /**
- * Each product shows its logo (a PNG on a white panel, so dark marks stay
- * visible in dark mode). Until a product's logo is added, its illustrative
- * image is shown instead.
+ * Each product shows its logo (a transparent PNG) on a panel of a fixed
+ * colour that suits it in both themes: white for the M-Taji mark, which has
+ * black parts; near-black for Adly's pale gradient. Until a product's logo is
+ * added, its illustrative image is shown instead.
  */
 const products: {
   id: string;
@@ -17,6 +18,8 @@ const products: {
   name: string;
   body: string;
   logo: string | null;
+  /** Panel colour behind the logo */
+  logoPanel?: string;
   image: string;
   cta: string;
   href: string | null;
@@ -36,7 +39,8 @@ const products: {
     label: "02 / AI creative + Advertising",
     name: "M-Taji Adly",
     body: "Create targeted ads, AI progress videos and project simulations that make your record and vision easier to understand.",
-    logo: null,
+    logo: "/logos/adly.png",
+    logoPanel: "bg-[#0b0b0b]",
     image: "/home/product-adly.jpg",
     cta: "Explore M-Taji Adly",
     href: "/adly",
@@ -68,7 +72,9 @@ export function HomeProducts() {
           className="flex h-full flex-col overflow-hidden border border-border bg-surface md:flex-row"
         >
           {p.logo ? (
-            <div className="relative flex aspect-[4/3] items-center justify-center bg-white md:aspect-auto md:w-[54%] md:min-h-[300px]">
+            <div
+              className={`relative flex aspect-[4/3] items-center justify-center md:aspect-auto md:w-[54%] md:min-h-[300px] ${p.logoPanel ?? "bg-white"}`}
+            >
               <Image
                 src={p.logo}
                 alt={`${p.name} logo`}
