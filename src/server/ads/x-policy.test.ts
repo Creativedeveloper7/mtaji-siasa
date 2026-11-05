@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reviewCopyForX, xCopyProblems } from "@/server/ads/x-policy";
+import { nameVariants, reviewCopyForX, xCopyProblems, xLandingProblems } from "@/server/ads/x-policy";
 
 const context = {
   projectName: "Nairobi River Cleaning & Regeneration Project",
@@ -79,5 +79,73 @@ describe("reviewCopyForX", () => {
   it("does not trip on ordinary words that contain a rule word", () => {
     const copy = { headline: "Devoted to clean water", body: "Members of the community campaigned for clean water; MPESA payments are not needed. Helping hands welcome.", keywords: ["campaign"] };
     expect(xCopyProblems(copy, context)).toEqual([]);
+  });
+
+  it("drops the leader's name even without a title", () => {
+    const review = reviewCopyForX(
+      {
+        headline: "River plan",
+        body: "David Mbehi brings young people together to clean the river. Join the next community day by the river.",
+        keywords: ["Mbehi David", "Nairobi River"],
+      },
+      { ...context, officialNames: ["Mbehi David"] }
+    );
+    expect(review.suggested.body).toBe("Join the next community day by the river.");
+    expect(review.suggested.keywords).toEqual(["Nairobi River"]);
+    expect(new Set(review.findings.map((f) => f.rule))).toEqual(new Set(["political"]));
+  });
+
+  it("catches government-agenda advocacy, offices and legislation", () => {
+    for (const body of [
+      "We mobilise young Kenyans behind the Government's development agenda.",
+      "Part of the Kazi Delivery Movement.",
+      "Endorsed by the Cabinet Secretary for Youth.",
+      "Supporting the Finance Bill before Parliament.",
+      "Stand with our MP for clean water.",
+    ]) {
+      expect(xCopyProblems({ headline: "River plan", body, keywords: [] }, context).map((f) => f.rule)).toContain("political");
+    }
+  });
+});
+
+describe("nameVariants", () => {
+  it("drops titles and also tries the names the other way round", () => {
+    expect(nameVariants(["Hon. Mbehi David", "Al"])).toEqual(["Mbehi David", "David Mbehi"]);
+  });
+});
+
+describe("xLandingProblems", () => {
+  it("blocks the Mashinani Youth project pages X rejected", () => {
+    const pages = [
+      {
+        name: "Mashinani Youth Usawa Movement",
+        description:
+          "The Mashinani Youth Movement-Kazi Delivery Movement (MY-KDM) is a national grassroots youth initiative committed to mobilizing young people to advance Kenya’s development agenda through civic engagement, strategic communication and media production. Structured from the Ward Level to the National Secretariat, MYM provides a coordinated platform for youth empowerment.",
+      },
+      {
+        name: "Mashinani Youth - Kazi Delivery Movement",
+        description:
+          "Mashinani Youth Kazi Delivery Movement (MY-KDM) is a national youth movement focused on mobilizing young Kenyans to become active champions of the Government’s development agenda, regardless of political affiliation.",
+      },
+    ];
+    for (const page of pages) {
+      const problems = xLandingProblems(page, { officialNames: ["Mbehi David"] });
+      expect(problems.length).toBeGreaterThan(0);
+      expect(problems.every((f) => f.field === "landing" && f.severity === "block" && f.rule === "political")).toBe(true);
+    }
+  });
+
+  it("lets an ordinary project page through", () => {
+    const page = {
+      name: "Nairobi River Cleaning & Regeneration Project",
+      description:
+        "Clearing waste from the Nairobi River, replanting the riverbanks and building green public spaces with local youth groups. Members of the community campaigned for clean water for years.",
+    };
+    expect(xLandingProblems(page, { officialNames: ["Mbehi David"] })).toEqual([]);
+  });
+
+  it("blocks a project page that names the leader", () => {
+    const page = { name: "Mbehi David Youth Fund", description: "Training for young people." };
+    expect(xLandingProblems(page, { officialNames: ["Hon. Mbehi David"] })[0]?.found).toBe("Mbehi David");
   });
 });

@@ -473,7 +473,7 @@ async function xPolicyBlock(row: AdlyCampaignRow, channels: TrackerChannel[]): P
   const ad = rowToAdCampaign(row);
   if (!ad.headline && !ad.body) return null;
   const project = ad.projectId ? await getRepositories().content.findProject(ad.projectId) : undefined;
-  return xPolicyError(project, { headline: ad.headline, body: ad.body, keywords: ad.keywords }, ad.name);
+  return await xPolicyError(project, { headline: ad.headline, body: ad.body, keywords: ad.keywords }, ad.name);
 }
 
 async function notOwned(session: { role: string }, id: string, verb: string): Promise<ContentResult> {
@@ -639,7 +639,7 @@ export async function createTrackerAd(session: AuthSession, body: unknown, reque
   );
   if (!platforms.length) return fail(400, "Choose at least one network: X or Google.");
   if (platforms.includes("x")) {
-    const blocked = xPolicyError(project, { headline, body: text, keywords }, project.name);
+    const blocked = await xPolicyError(project, { headline, body: text, keywords }, project.name);
     if (blocked) return fail(422, blocked);
   }
   const audience = parseAdAudience(body);
@@ -774,7 +774,7 @@ export async function editTrackerAd(session: AuthSession, id: string, body: unkn
       if (text.length > AD_LIMITS.body) return fail(400, `Keep the ad text to ${AD_LIMITS.body} characters.`);
       if (resolvePublishChannels(row.channels).includes("x")) {
         const project = ad.projectId ? await getRepositories().content.findProject(ad.projectId) : undefined;
-        const blocked = xPolicyError(project, { headline, body: text, keywords: ad.keywords }, ad.name);
+        const blocked = await xPolicyError(project, { headline, body: text, keywords: ad.keywords }, ad.name);
         if (blocked) return fail(422, blocked);
       }
     }

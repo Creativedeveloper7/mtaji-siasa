@@ -156,7 +156,7 @@ export async function createAdCampaign(
   const missing = platforms.filter((p) => !platformConfigured(p));
   if (missing.length) return fail(400, `${missing.join(" and ")} ads are not set up on this server yet.`);
   if (platforms.includes("x")) {
-    const blocked = xPolicyError(project, { headline, body: text, keywords }, project.name);
+    const blocked = await xPolicyError(project, { headline, body: text, keywords }, project.name);
     if (blocked) return fail(422, blocked);
   }
   const imageUrl = await chosenAdImage(project, body.imageUrl);

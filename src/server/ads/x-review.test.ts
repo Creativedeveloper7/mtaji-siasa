@@ -52,7 +52,17 @@ describe("reviewAdForX", () => {
 describe("xPolicyError", () => {
   it("blocks copy X would reject and lets Adly's version through", async () => {
     const { xPolicyError } = await import("@/server/ads/x-review");
-    expect(xPolicyError(undefined, { headline: "Vote MD", body: "Elect MD.", keywords: [] }, "River project")).toMatch(/political content/);
-    expect(xPolicyError(undefined, { headline: "River plan", body: "See the plan.", keywords: [] }, "River project")).toBeNull();
+    expect(await xPolicyError(undefined, { headline: "Vote MD", body: "Elect MD.", keywords: [] }, "River project")).toMatch(/political content/);
+    expect(await xPolicyError(undefined, { headline: "River plan", body: "See the plan.", keywords: [] }, "River project")).toBeNull();
+  });
+
+  it("stops an X ad whose project page is political, whatever the ad says", async () => {
+    const { xPolicyError } = await import("@/server/ads/x-review");
+    const { getRepositories } = await import("@/server");
+    const project = await getRepositories().content.findProject("prj-001");
+    const political = { ...project!, description: "Mobilizing young Kenyans behind the Government's development agenda." };
+    const copy = { headline: "River plan", body: "See the plan.", keywords: [] };
+    expect(await xPolicyError(political, copy, political.name)).toMatch(/doesn't allow political ads aimed at Kenya/);
+    expect(await xPolicyError(project, copy, project!.name)).toBeNull();
   });
 });

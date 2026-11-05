@@ -320,9 +320,14 @@ export type XPolicyRule =
 /** One thing Adly found in an ad before it goes to X, and what it did about it. */
 export interface AdPolicyFinding {
   rule: XPolicyRule;
-  field: "headline" | "body" | "keywords" | "image";
-  /** "fix": X would likely reject it, so Adly changed it. "advice": worth checking, not changed. */
-  severity: "fix" | "advice";
+  /** "landing": the project page the ad links to, which X's reviewers also read */
+  field: "headline" | "body" | "keywords" | "image" | "landing";
+  /**
+   * "fix": X would likely reject it, so Adly changed it. "advice": worth
+   * checking, not changed. "block": X would reject it and Adly can't change
+   * it (the project page), so the ad can't run on X until the owner does.
+   */
+  severity: "fix" | "advice" | "block";
   /** The words (or image) that triggered it */
   found: string;
   /** Plain-language reason, naming the X policy */
@@ -348,8 +353,12 @@ export interface AdImageCheck {
 /** Adly's X policy review of a draft ad, with a version that should pass. */
 export interface AdPolicyReview {
   network: "x";
-  /** clear: nothing to change. changed: Adly rewrote it. needs_image: no usable image; the owner must add one. */
-  status: "clear" | "changed" | "needs_image";
+  /**
+   * clear: nothing to change. changed: Adly rewrote it. needs_image: no usable
+   * image; the owner must add one. not_for_x: the project page has political
+   * content, which X doesn't allow in ads aimed at Kenya.
+   */
+  status: "clear" | "changed" | "needs_image" | "not_for_x";
   findings: AdPolicyFinding[];
   original: { headline: string; body: string; keywords: string[]; imageUrl: string };
   suggested: { headline: string; body: string; keywords: string[]; imageUrl: string };

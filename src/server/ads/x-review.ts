@@ -8,9 +8,9 @@ import { asString, isRecord } from "@/server/content/parse";
 import { AD_LIMITS } from "@/server/tracker/adly/config";
 import { fetchPublicImage, IMAGE_MAX_BYTES } from "@/server/tracker/adly/safe-fetch";
 import { cropForXCard, fitsXCard } from "@/server/tracker/adly/x-card-image";
-import { describeProblems, reviewCopyForX, xCopyProblems, type AdCopy, type CopyContext } from "@/server/ads/x-policy";
+import { describeProblems, reviewCopyForX, xCopyProblems, xLandingProblems, type AdCopy, type CopyContext } from "@/server/ads/x-policy";
 import { aiCheckImage, aiReviewConfigured, aiReviewCopy } from "@/server/ads/x-policy-ai";
-import type { AdImageCheck, AdPolicyFinding, AdPolicyReview, Project } from "@/types";
+import type { AdImageCheck, AdPolicyFinding, AdPolicyReview, Leader, Project } from "@/types";
 import type { AuthSession } from "@/types/auth";
 
 /** X image cards need at least 600 px across. */
@@ -18,12 +18,47 @@ const MIN_WIDTH = 600;
 /** How many other project photos Adly checks when the chosen one can't be used. */
 const MAX_ALTERNATIVES = 4;
 
-export function copyContext(project: Project): CopyContext {
+export function copyContext(project: Project, officialNames: string[] = []): CopyContext {
   return {
     projectName: project.name,
     county: project.county || undefined,
     status: project.status,
     limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body },
+    officialNames,
+  };
+}
+
+/**
+ * The people behind the project as X's reviewers would see them: the leader
+ * the project page shows under "Led by", and the Tracker changemaker name.
+ * Only leaders and aspirants run ads, so these are politicians.
+ */
+export async function projectOfficials(project: Project): Promise<{ names: string[]; leader?: Leader }> {
+  let leader: Leader | undefined;
+  const id = project.leaderIds?.[0];
+  if (id) {
+    try {
+      leader = await getRepositories().content.findLeader(id);
+    } catch {
+      // No leader to look at: the check still runs on the changemaker name.
+      leader = undefined;
+    }
+  }
+  const names = [leader?.name, project.creatorName].filter((n): n is string => typeof n === "string" && Boolean(n.trim()));
+  return { names, leader };
+}
+
+/** The "Led by" line on the project page, as X's reviewers see it. */
+function leaderBylineAdvice(leader: Leader | undefined): AdPolicyFinding | null {
+  if (!leader) return null;
+  const byline = `${leader.honorific} ${leader.name}`.trim();
+  const office = leader.position?.trim();
+  return {
+    rule: "political",
+    field: "landing",
+    severity: "advice",
+    found: byline,
+    why: `Your project page shows "Led by ${byline}"${office ? ` (${office})` : ""}. X counts an ad whose page names an elected official or a candidate as political content, which it doesn't allow in ads aimed at Kenya, so X may still reject this ad. Keep the project's name and description about the work itself.`,
   };
 }
 
@@ -158,7 +193,9 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
   if (!project) return { ok: false, status: 400, error: "Choose one of your own projects to promote." };
 
   const copy = copyFromBody(body);
-  const context = copyContext(project);
+  const officials = await projectOfficials(project);
+  const context = copyContext(project, officials.names);
+  const landing = xLandingProblems(project, context);
   const images = await projectAdImages(project);
   const requested = asString(body.imageUrl);
   // Only the project's own photos: the URL is fetched server-side.
@@ -170,7 +207,9 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
     imageUrl ? checkImage(imageUrl, useAi) : Promise.resolve<AdImageCheck>({ url: "", ok: false, notes: ["This project has no photo yet."] }),
   ]);
 
-  const findings = [...copyReview.findings];
+  const findings = [...landing, ...copyReview.findings];
+  const byline = landing.length ? null : leaderBylineAdvice(officials.leader);
+  if (byline) findings.push(byline);
   let alternatives: AdImageCheck[] = [];
   let suggestedImage = imageUrl;
   if (!image.ok) {
@@ -203,7 +242,11 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
   const usableImage = image.ok || alternatives.some((a) => a.ok);
   const review: AdPolicyReview = {
     network: "x",
-    status: !usableImage ? "needs_image" : sameCopy(copy, copyReview.suggested) && suggestedImage === imageUrl ? "clear" : "changed",
+    status: landing.length
+      ? "not_for_x"
+      : !usableImage
+        ? "needs_image"
+        : sameCopy(copy, copyReview.suggested) && suggestedImage === imageUrl ? "clear" : "changed",
     findings,
     original,
     suggested,
@@ -219,10 +262,17 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
  * with, or null when its copy passes. The composer runs the full review
  * first, so this only trips when someone skips Adly's version.
  */
-export function xPolicyError(project: Project | undefined, copy: AdCopy, fallbackName: string): string | null {
+export async function xPolicyError(project: Project | undefined, copy: AdCopy, fallbackName: string): Promise<string | null> {
+  const names = project ? (await projectOfficials(project)).names : [];
   const context = project
-    ? copyContext(project)
+    ? copyContext(project, names)
     : { projectName: fallbackName, limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body } };
+  if (project) {
+    const landing = xLandingProblems(project, context);
+    if (landing.length) {
+      return `Adly stopped this ad before it went to X. X doesn't allow political ads aimed at Kenya, and its reviewers read the project page the ad links to, which has political content: ${describeProblems(landing)}. Edit the project so its name and description describe the work itself, or run the ad on Google only.`;
+    }
+  }
   const problems = xCopyProblems(copy, context);
   if (!problems.length) return null;
   return `Adly stopped this ad before it went to X, which would likely reject it for: ${describeProblems(problems)}. Open the ad composer and let Adly review it, or run it on Google only.`;

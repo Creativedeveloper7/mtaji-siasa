@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, Check, ImageOff, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, Ban, Check, ImageOff, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import type { AdImageCheck, AdPolicyFinding, AdPolicyReview } from "@/types";
@@ -22,6 +22,7 @@ const FIELD_LABEL: Record<AdPolicyFinding["field"], string> = {
   body: "Ad text",
   keywords: "Keywords",
   image: "Photo",
+  landing: "Project page",
 };
 
 /**
@@ -49,6 +50,8 @@ export function AdlyXReview({
   const advice = review.findings.filter((f) => f.severity === "advice");
   const { original, suggested } = review;
   const needsImage = review.status === "needs_image";
+  const notForX = review.status === "not_for_x";
+  const blocks = review.findings.filter((f) => f.severity === "block");
 
   const changed = {
     headline: original.headline !== suggested.headline,
@@ -71,17 +74,48 @@ export function AdlyXReview({
             Adly · X policy check
           </p>
           <h2 id="adly-x-review-title" className="mt-1 text-h3 text-ink">
-            {needsImage ? "This ad needs a different photo for X" : "Adly changed your ad so X can approve it"}
+            {notForX
+              ? "X won't run this ad as the project page stands"
+              : needsImage
+                ? "This ad needs a different photo for X"
+                : "Adly changed your ad so X can approve it"}
           </h2>
           <p className="mt-1 text-small text-ink-muted">
-            {needsImage
-              ? "X would reject the photo, and none of this project's other photos can be used either."
-              : "X would likely reject the ad as it is. Here is what Adly changed and why. Nothing is published until you approve and confirm."}
+            {notForX
+              ? "X doesn't allow political ads aimed at Kenya, and its reviewers read the project page this ad links to. That page has political content, which Adly can't change for you."
+              : needsImage
+                ? "X would reject the photo, and none of this project's other photos can be used either."
+                : "X would likely reject the ad as it is. Here is what Adly changed and why. Nothing is published until you approve and confirm."}
           </p>
         </div>
 
         <div className="flex-1 space-y-6 overflow-y-auto p-5">
-          {fixes.length > 0 && (
+          {notForX && (
+            <section>
+              <h3 className="meta-label mb-2">What X would reject</h3>
+              <ul className="space-y-2">
+                {blocks.map((f, i) => (
+                  <li key={i} className="rounded-md border border-error/30 bg-error-muted p-3 text-small">
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-medium text-ink">
+                      <Ban className="h-4 w-4 shrink-0 text-error" aria-hidden />
+                      {FIELD_LABEL[f.field]}
+                      <span className="font-normal text-ink-muted">“{f.found}”</span>
+                    </p>
+                    <p className="mt-1 text-ink-muted">{f.why}</p>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-small text-ink-muted">
+                <Link href="/dashboard/projects" className="font-medium text-accent underline">
+                  Edit the project
+                </Link>{" "}
+                so its name and description describe the work itself (what is being built or done, where, and for whom), then try
+                again{canDropX ? ", or run this ad on Google only" : ""}.
+              </p>
+            </section>
+          )}
+
+          {!notForX && fixes.length > 0 && (
             <section>
               <h3 className="meta-label mb-2">Why it was changed</h3>
               <ul className="space-y-2">
@@ -100,7 +134,7 @@ export function AdlyXReview({
             </section>
           )}
 
-          {(changed.headline || changed.body || changed.keywords) && (
+          {!notForX && (changed.headline || changed.body || changed.keywords) && (
             <section>
               <h3 className="meta-label mb-2">Adly&apos;s version</h3>
               <div className="space-y-3">
@@ -113,40 +147,42 @@ export function AdlyXReview({
             </section>
           )}
 
-          <section>
-            <h3 className="meta-label mb-2">Photo</h3>
-            {usable.length > 0 ? (
-              <>
-                <p className="mb-3 text-caption text-ink-muted">
-                  {imageUrl === original.imageUrl ? "Your photo can be used." : "Adly picked another photo of this project."} This is how X will
-                  show it{usable.length > 1 ? "; tap another to use it instead" : ""}.
-                </p>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {usable.map((image) => (
-                    <ImageChoice key={image.url} image={image} selected={image.url === imageUrl} onSelect={() => setImageUrl(image.url)} />
-                  ))}
+          {!notForX && (
+            <section>
+              <h3 className="meta-label mb-2">Photo</h3>
+              {usable.length > 0 ? (
+                <>
+                  <p className="mb-3 text-caption text-ink-muted">
+                    {imageUrl === original.imageUrl ? "Your photo can be used." : "Adly picked another photo of this project."} This is how X will
+                    show it{usable.length > 1 ? "; tap another to use it instead" : ""}.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {usable.map((image) => (
+                      <ImageChoice key={image.url} image={image} selected={image.url === imageUrl} onSelect={() => setImageUrl(image.url)} />
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-md border border-error/30 bg-error-muted p-3 text-small text-error">
+                  <p className="flex items-center gap-2 font-medium">
+                    <ImageOff className="h-4 w-4" aria-hidden />
+                    No photo of this project can be used on X.
+                  </p>
+                  <ul className="mt-1 list-disc pl-5">
+                    {review.image.notes.map((n, i) => (
+                      <li key={i}>{n}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-2">
+                    <Link href="/dashboard/projects" className="underline">
+                      Add a different photo to the project
+                    </Link>{" "}
+                    (a real photo of the place or the work, at least 600 px wide), then try again.
+                  </p>
                 </div>
-              </>
-            ) : (
-              <div className="rounded-md border border-error/30 bg-error-muted p-3 text-small text-error">
-                <p className="flex items-center gap-2 font-medium">
-                  <ImageOff className="h-4 w-4" aria-hidden />
-                  No photo of this project can be used on X.
-                </p>
-                <ul className="mt-1 list-disc pl-5">
-                  {review.image.notes.map((n, i) => (
-                    <li key={i}>{n}</li>
-                  ))}
-                </ul>
-                <p className="mt-2">
-                  <Link href="/dashboard/projects" className="underline">
-                    Add a different photo to the project
-                  </Link>{" "}
-                  (a real photo of the place or the work, at least 600 px wide), then try again.
-                </p>
-              </div>
-            )}
-          </section>
+              )}
+            </section>
+          )}
 
           {advice.length > 0 && (
             <section>
@@ -172,7 +208,7 @@ export function AdlyXReview({
           <Button type="button" variant="secondary" fullWidth onClick={onEdit}>
             Edit it myself
           </Button>
-          {needsImage ? (
+          {needsImage || notForX ? (
             canDropX && (
               <Button type="button" fullWidth onClick={onDropX}>
                 Run on Google only

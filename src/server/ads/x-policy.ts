@@ -21,6 +21,73 @@ export interface CopyContext {
   county?: string;
   status?: ProjectStatus;
   limits: { headline: number; body: number };
+  /**
+   * Names of the politicians or officials behind the project (the leader on
+   * the project page, the Tracker changemaker). X counts an ad that names one
+   * as political content, even without a title like "Hon.".
+   */
+  officialNames?: string[];
+}
+
+/**
+ * X's Political Content policy: an ad is political when it references a
+ * candidate, party, elected or appointed official, election, referendum,
+ * legislation, regulation, directive or judicial outcome, or advocates for or
+ * against one. Political content ads are only allowed in a list of countries
+ * that does not include Kenya, so for M-Taji there is no certification route:
+ * the ad, and the page it links to, have to stay off politics.
+ */
+const POLITICAL_PATTERNS: RegExp[] = [
+  // Elections and voting
+  /\b(vote|votes|voting|voters?|elect|elected|re-?elect|elections?|by-?elections?|ballot|manifesto|nominations?|running mate|campaign(?:ing)? for|referendum|polling stations?|IEBC)\b/i,
+  // Parties (names are case-sensitive: "Wiper" and "Safina" are also ordinary words in lower case)
+  /\b(ODM|UDA|Jubilee|Azimio|Kenya Kwanza|Wiper|DCP|ANC|KANU|DAP-K|Ford[- ]Kenya|Roots Party|Safina)\b/,
+  // Titles and offices of elected or appointed officials
+  /\b(Hon\.?|Honou?rable|H\.E\.?|His Excellency|Her Excellency|Governor|Deputy Governor|Senator|MCA|MP|Member of Parliament|Women Rep(?:resentative)?|aspirant|candidate|President|Deputy President|Prime Cabinet Secretary|Cabinet Secretary|Principal Secretary|Minister|Speaker of|Majority Leader|Minority Leader|Chief Whip)(?=\s|$|[.,;:!?'’])/i,
+  /\b(?:CS|PS|CEC|DP)(?= [A-Z])/,
+  /\b2027\b/,
+  // Legislation, regulation, directives and judicial outcomes
+  /\b(legislation|parliament(?:ary)?|the senate|county assembly|national assembly|(?:finance|housing) bill|bills? (?:before|in) (?:parliament|the senate|the assembly)|constitutional amendment|court (?:ruling|order|judge?ment)|(?:high|supreme) court|presidential directive|government directive|executive order)\b/i,
+  // Parties, movements and advocacy for a government or political agenda
+  /\b(political (?:part(?:y|ies)|affiliations?|movements?|mobili[sz]ation)|party (?:members?|leaders?|tickets?|nominations?)|regardless of political|government['’]?s? (?:development )?agenda|(?:Kenya|the nation|the country|national)['’]?s? development agenda|Kazi (?:ni )?Delivery|bottom[- ]up (?:economic|economy|agenda)|hustler (?:nation|movement)|national secretariat)\b/i,
+  /\bmobili[sz](?:e|es|ed|ing|ation of) (?:young|youth|voters?|supporters?|(?:young )?Kenyans|the youth|the people|the masses)\b/i,
+  /\b(?:support|back|stand with|rally behind|donate to) (?:our|my|the) (?:leader|candidate|party|campaign|MP|MCA|governor|senator)\b/i,
+];
+
+const POLITICAL_WHY =
+  "X's Political Content policy: ads that mention a politician or official, an office, a party, an election, legislation, a court outcome, or support for a government or political agenda are political ads, and X doesn't allow political ads aimed at Kenya. Adly keeps the ad about the project itself.";
+
+const LANDING_WHY =
+  "X's reviewers open the page the ad links to. This project's page has political content (see X's Political Content policy), and X doesn't allow political ads aimed at Kenya, so X will reject the ad however the ad text is written. Edit the project's name or description so it describes the work itself, or run this ad on Google only.";
+
+const HONORIFIC = /^(?:hon\.?|honou?rable|h\.e\.?|dr\.?|mr\.?|mrs\.?|ms\.?|prof\.?|eng\.?)\s+/i;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** The ways a person's name shows up in text: as given, without the title, and with the two names swapped. */
+export function nameVariants(names: string[] = []): string[] {
+  const out = new Set<string>();
+  for (const raw of names) {
+    const name = raw.replace(/\s+/g, " ").trim().replace(HONORIFIC, "").trim();
+    if (name.replace(/[^A-Za-z]/g, "").length < 4) continue;
+    out.add(name);
+    const words = name.split(" ");
+    if (words.length === 2) out.add(`${words[1]} ${words[0]}`);
+  }
+  return Array.from(out);
+}
+
+function officialNameRule(names?: string[]): Rule | null {
+  const variants = nameVariants(names);
+  if (!variants.length) return null;
+  return {
+    rule: "political",
+    action: "drop_sentence",
+    patterns: variants.map((n) => new RegExp(`(?<![\\w])${escapeRegExp(n).replace(/ /g, "\\s+")}(?![\\w])`, "i")),
+    why: "This names the politician or official behind the project. X counts an ad that names one as a political ad, and X doesn't allow political ads aimed at Kenya. Adly keeps the ad about the project itself.",
+  };
 }
 
 export interface CopyReview {
@@ -43,14 +110,8 @@ const RULES: Rule[] = [
   {
     rule: "political",
     action: "drop_sentence",
-    patterns: [
-      /\b(vote|votes|voting|voters?|elect|elected|re-?elect|elections?|ballot|manifesto|nominations?|running mate|campaign(?:ing)? for)\b/i,
-      /\b(ODM|UDA|Jubilee|Azimio|Kenya Kwanza|Wiper|DCP)\b/,
-      /\b(Hon\.?|Honou?rable|H\.E\.?|His Excellency|Her Excellency|Governor|Senator|MCA|MP|Member of Parliament|Women Rep(?:resentative)?|aspirant|candidate)(?=\s|$|[.,;:!?'’])/i,
-      /\b2027\b/,
-    ],
-    why:
-      "X restricts political ads: ads that name politicians, offices, parties or elections need special certification. Adly keeps the ad about the project itself.",
+    patterns: POLITICAL_PATTERNS,
+    why: POLITICAL_WHY,
   },
   {
     rule: "financial_promise",
@@ -148,8 +209,10 @@ export function clipWords(text: string, limit: number): string {
   return (space > limit * 0.5 ? cut.slice(0, space) : clean.slice(0, limit)).replace(/[\s,.;:&—–-]+$/, "");
 }
 
-function activeRules(status?: ProjectStatus): Rule[] {
-  return RULES.filter((r) => !(r.unlessCompleted && status === "completed"));
+function activeRules(context: CopyContext): Rule[] {
+  const rules = RULES.filter((r) => !(r.unlessCompleted && context.status === "completed"));
+  const names = officialNameRule(context.officialNames);
+  return names ? [names, ...rules] : rules;
 }
 
 function firstMatch(rule: Rule, text: string): string | null {
@@ -282,7 +345,7 @@ export function neutralBody(context: CopyContext): string {
  * nothing needs to change.
  */
 export function reviewCopyForX(copy: AdCopy, context: CopyContext): CopyReview {
-  const rules = activeRules(context.status);
+  const rules = activeRules(context);
   const findings: AdPolicyFinding[] = [];
 
   // Headline: if a sentence-level rule hits, use the project name instead.
@@ -339,6 +402,41 @@ export function reviewCopyForX(copy: AdCopy, context: CopyContext): CopyReview {
 /** The copy problems X would likely reject the ad for (empty when it should pass). */
 export function xCopyProblems(copy: AdCopy, context: CopyContext): AdPolicyFinding[] {
   return reviewCopyForX(copy, context).findings.filter((f) => f.severity === "fix");
+}
+
+/** What X's reviewers read on the ad's landing page: the project page. */
+export interface LandingPage {
+  name: string;
+  description: string;
+}
+
+/**
+ * Political content on the project page the ad links to. Adly can't rewrite
+ * that page, and X doesn't allow political ads aimed at Kenya, so each finding
+ * is a "block": the owner edits the project or leaves X out.
+ */
+export function xLandingProblems(page: LandingPage, context: Pick<CopyContext, "officialNames">): AdPolicyFinding[] {
+  const names = officialNameRule(context.officialNames);
+  const rules = [RULES.find((r) => r.rule === "political")!, ...(names ? [names] : [])];
+  const findings: AdPolicyFinding[] = [];
+  for (const [part, text] of [
+    ["name", page.name],
+    ["description", page.description],
+  ] as const) {
+    for (const sentence of sentences(text ?? "")) {
+      const found = rules.map((r) => firstMatch(r, sentence)).find(Boolean);
+      if (!found) continue;
+      findings.push({
+        rule: "political",
+        field: "landing",
+        severity: "block",
+        found,
+        why: `The project ${part} says ${quote(sentence, 160)}. ${LANDING_WHY}`,
+      });
+      if (findings.length >= 3) return findings;
+    }
+  }
+  return findings;
 }
 
 /** One line for an error message: what X would reject and why. */

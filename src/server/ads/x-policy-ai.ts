@@ -16,7 +16,7 @@ export function aiReviewConfigured(): boolean {
 }
 
 const POLICY_BRIEF = `You review ads for X (Twitter) before they are submitted, for M-Taji, a Kenyan civic platform where leaders and changemakers promote community projects. X's reviewers reject ads for:
-- Political content: naming politicians, honorifics or offices (Hon., Governor, MP, MCA, Senator), parties, elections, voting or "support" appeals.
+- Political content (X doesn't allow political ads aimed at Kenya at all): naming a politician, candidate or elected or appointed official (even by name alone), honorifics or offices (Hon., President, Cabinet Secretary, Governor, MP, MCA, Senator), parties, elections, referendums, legislation, regulations, directives or court outcomes; voting, "support" or fundraising appeals; advocacy for or against a government or political agenda (e.g. "the Government's development agenda", "Kazi Delivery", mobilising youth or voters, political movements).
 - Deceptive & Fraudulent Content: promising money, loans, grants, benefits or "you qualify"; implying government endorsement; claims the landing page can't back up; saying a planned project is finished.
 - Unverifiable claims: guarantees, "the best", "number one", "instant".
 - Personal attributes: implying the reader is poor, sick, in debt or unemployed.
@@ -67,7 +67,7 @@ export async function aiReviewCopy(
     {
       role: "user",
       content: `Project: ${context.projectName}${context.county ? ` (${context.county} County)` : ""}, status: ${context.status ?? "unknown"}.
-Ad: ${JSON.stringify(copy)}
+${context.officialNames?.length ? `People behind the project (do not name them): ${context.officialNames.join(", ")}.\n` : ""}Ad: ${JSON.stringify(copy)}
 List anything in the headline, body or keywords that X would likely reject, quoting the words and saying why in one plain sentence each. Then give a rewrite that keeps the useful meaning, stays factual about the project, and avoids every problem above. Headline at most ${context.limits.headline} characters, body at most ${context.limits.body}. If nothing is wrong, return no issues and the ad unchanged.
 Answer JSON: {"issues":[{"field":"headline"|"body"|"keywords","found":"...","why":"..."}],"headline":"...","body":"...","keywords":["..."]}`,
     },
