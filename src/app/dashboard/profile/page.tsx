@@ -14,6 +14,7 @@ import { usePoliticianProfile } from "@/components/dashboard/usePoliticianProfil
 import { useContent } from "@/components/content/ContentProvider";
 import type { Leader, LeaderType, SocialLinks } from "@/types";
 import { COUNTIES } from "@/lib/constants";
+import { SOCIAL_KEYS, SOCIAL_LABELS, SOCIAL_PLACEHOLDERS } from "@/lib/social";
 import { slugify } from "@/lib/store";
 import { apiJson } from "@/lib/api-client";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -201,19 +202,14 @@ export default function PoliticianProfilePage() {
         </AdminField>
 
         <p className="meta-label pt-2">Social links</p>
-        {(
-          [
-            ["x", "X"],
-            ["instagram", "Instagram"],
-            ["facebook", "Facebook"],
-            ["tiktok", "TikTok"],
-            ["whatsapp", "WhatsApp"],
-            ["website", "Website"],
-          ] as const
-        ).map(([key, label]) => (
-          <AdminField key={key} label={label}>
+        <p className="-mt-2 text-caption text-ink-subtle">
+          Paste a link or type a handle (e.g. @yourname). They show on your public profile and on your project pages.
+        </p>
+        {SOCIAL_KEYS.map((key) => (
+          <AdminField key={key} label={SOCIAL_LABELS[key]}>
             <AdminInput
               value={form.social[key] || ""}
+              placeholder={SOCIAL_PLACEHOLDERS[key]}
               onChange={(e) => setSocial(key, e.target.value)}
             />
           </AdminField>

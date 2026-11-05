@@ -7,7 +7,7 @@ import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from "@/lib/constants"
 import { formatDate } from "@/lib/utils";
 import { projectTypeLabel } from "@/lib/projects";
 import type { Project } from "@/types";
-import { ProjectCreator } from "@/components/project/ProjectCreator";
+import { ProjectLedBy } from "@/components/project/ProjectCreator";
 import { DonateButton } from "@/components/project/DonateButton";
 
 interface ProjectHeroProps {
@@ -42,7 +42,6 @@ export function ProjectHero({ project }: ProjectHeroProps) {
         <div className="mt-4 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div className="max-w-3xl">
             <h1 className="text-h1 text-ink md:text-display">{project.name}</h1>
-            <ProjectCreator project={project} size="md" link className="mt-4" />
             <p className="mt-3 text-body text-ink-muted">{project.location}</p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -53,6 +52,8 @@ export function ProjectHero({ project }: ProjectHeroProps) {
         <div className="mt-8 max-w-md">
           <ProgressBar value={project.progress} />
         </div>
+        {/* Who leads it, right under the progress, with their profile and social links. */}
+        <ProjectLedBy project={project} className="mt-6 max-w-3xl" />
       </div>
     </section>
   );

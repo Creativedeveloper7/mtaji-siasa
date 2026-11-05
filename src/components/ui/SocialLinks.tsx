@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import type { SocialLinks as SocialLinksType } from "@/types";
 import { cn } from "@/lib/utils";
-import { safeHttpUrl } from "@/lib/safe-url";
+import { socialEntries, type SocialKey } from "@/lib/social";
 
 function XIcon({ className }: { className?: string }) {
   return (
@@ -25,47 +25,63 @@ function TikTokIcon({ className }: { className?: string }) {
   );
 }
 
-const config: {
-  key: keyof SocialLinksType;
-  label: string;
-  icon: LucideIcon | typeof XIcon | typeof TikTokIcon;
-}[] = [
-  { key: "x", label: "X", icon: XIcon },
-  { key: "instagram", label: "Instagram", icon: Instagram },
-  { key: "facebook", label: "Facebook", icon: Facebook },
-  { key: "tiktok", label: "TikTok", icon: TikTokIcon },
-  { key: "whatsapp", label: "WhatsApp", icon: MessageCircle },
-  { key: "website", label: "Website", icon: Globe },
-];
+const ICONS: Record<SocialKey, LucideIcon | typeof XIcon | typeof TikTokIcon> = {
+  x: XIcon,
+  instagram: Instagram,
+  facebook: Facebook,
+  tiktok: TikTokIcon,
+  whatsapp: MessageCircle,
+  website: Globe,
+};
 
 interface SocialLinksProps {
   links: SocialLinksType;
   className?: string;
+  /**
+   * "labelled" (default): buttons with the network and handle ("X @jane"),
+   * easy to see. "icons": small square icons, for tight spaces.
+   */
+  variant?: "labelled" | "icons";
 }
 
-export function SocialLinks({ links, className }: SocialLinksProps) {
-  // Only http(s) links are rendered: a stored "javascript:" value never becomes an href.
-  const available = config.flatMap((c) => {
-    const href = safeHttpUrl(links[c.key]);
-    return href ? [{ ...c, href }] : [];
-  });
+/**
+ * A leader's social links. Whatever was saved (a full link, a handle such as
+ * "@jane", a WhatsApp number) is shown as the network's web address
+ * (socialHref); anything that can't be read as an http(s) link is left out,
+ * so a stored "javascript:" value never becomes an href.
+ */
+export function SocialLinks({ links, className, variant = "labelled" }: SocialLinksProps) {
+  const available = socialEntries(links);
   if (!available.length) return null;
 
   return (
-    <ul className={cn("flex flex-wrap gap-2", className)}>
-      {available.map(({ key, label, href, icon: Icon }) => (
-        <li key={key}>
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={label}
-            className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-surface text-ink-muted transition-colors hover:border-border-strong hover:text-ink"
-          >
-            <Icon className="h-4 w-4" />
-          </a>
-        </li>
-      ))}
+    <ul className={cn("flex flex-wrap gap-2", className)} aria-label="Social links">
+      {available.map(({ key, label, href, handle }) => {
+        const Icon = ICONS[key];
+        return (
+          <li key={key}>
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={handle ? `${label} ${handle}` : label}
+              title={handle ? `${label} ${handle}` : label}
+              className={cn(
+                "flex items-center rounded-md border border-border bg-surface text-ink-muted transition-colors hover:border-border-strong hover:text-ink",
+                variant === "icons" ? "h-10 w-10 justify-center" : "h-9 gap-2 px-3 text-caption font-medium"
+              )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              {variant === "labelled" && (
+                <span className="max-w-[14rem] truncate">
+                  {label}
+                  {handle && <span className="font-normal text-ink-subtle"> {handle}</span>}
+                </span>
+              )}
+            </a>
+          </li>
+        );
+      })}
     </ul>
   );
 }

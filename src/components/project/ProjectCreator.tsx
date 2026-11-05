@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useContent } from "@/components/content/ContentProvider";
 import { cn } from "@/lib/utils";
+import { SocialLinks } from "@/components/ui/SocialLinks";
 import type { Project } from "@/types";
 
 function initials(name: string): string {
@@ -71,4 +72,57 @@ export function ProjectCreator({
     );
   }
   return <div className={classes}>{body}</div>;
+}
+
+/**
+ * "Led by" section on a project page, right under the progress bar: the
+ * leader's photo, "Hon. Maina J — Jason Maina | MP Aspirant, Kabete
+ * Constituency 2027" linking to their profile, and their social links.
+ * Owners without a leader profile show the Tracker changemaker name.
+ */
+export function ProjectLedBy({ project, className }: { project: Project; className?: string }) {
+  const { content } = useContent();
+  const leader = content.leaders.find((item) => item.id === project.leaderIds[0]);
+  const name = leader ? `${leader.honorific} ${leader.name}`.trim() : project.creatorName?.trim();
+  if (!name) return null;
+  const position = leader?.position?.trim();
+  const line = position ? `${name} — ${position}` : name;
+
+  return (
+    <section
+      aria-label="Led by"
+      className={cn(
+        "flex flex-col gap-4 rounded-lg border border-border bg-surface/90 p-4 backdrop-blur sm:flex-row sm:items-center sm:justify-between",
+        className
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-accent-muted text-small font-bold uppercase text-accent ring-2 ring-bg"
+          aria-hidden
+        >
+          {leader?.photo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={leader.photo} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+          ) : (
+            initials(name)
+          )}
+        </span>
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-subtle">Led by</p>
+          {leader ? (
+            <Link
+              href={`/leaders/${leader.slug}`}
+              className="mt-0.5 block text-small font-semibold leading-snug text-ink underline-offset-2 transition-colors hover:text-accent hover:underline md:text-body"
+            >
+              {line}
+            </Link>
+          ) : (
+            <p className="mt-0.5 text-small font-semibold leading-snug text-ink md:text-body">{line}</p>
+          )}
+        </div>
+      </div>
+      {leader && <SocialLinks links={leader.social} variant="icons" className="shrink-0" />}
+    </section>
+  );
 }

@@ -76,8 +76,11 @@ describe("parseLeader social links", () => {
     expect(parsed.social).toEqual({ x: "@jane", website: "https://new.example" });
   });
 
-  it("refuses a changed non-http link and clears an emptied one", () => {
-    expect(parseLeader({ social: { x: "@someone" } }, leader)).toMatch(/X link/);
+  it("saves a handle as the network's link, refuses what isn't a link, and clears an emptied one", () => {
+    const handle = parseLeader({ social: { x: "@someone", whatsapp: "0712 345 678" } }, leader);
+    if (typeof handle === "string") throw new Error(handle);
+    expect(handle.social).toMatchObject({ x: "https://x.com/someone", whatsapp: "https://wa.me/254712345678" });
+    expect(parseLeader({ social: { x: "javascript:alert(1)" } }, leader)).toMatch(/X link or handle/);
     const parsed = parseLeader({ social: { x: "" } }, leader);
     if (typeof parsed === "string") throw new Error(parsed);
     expect(parsed.social).toEqual({ website: "https://jane.example" });

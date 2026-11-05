@@ -17,6 +17,7 @@ import type {
 } from "@/types";
 import { createId, slugify } from "@/lib/store";
 import { safeHttpUrl } from "@/lib/safe-url";
+import { SOCIAL_KEYS, SOCIAL_LABELS, SOCIAL_PLACEHOLDERS, socialHref } from "@/lib/social";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -47,26 +48,19 @@ const MEDIA_CATEGORIES = ["news", "project-updates", "leader-updates", "videos",
 const MEDIA_TYPES = ["image", "video", "article"] as const;
 export const MAX_GALLERY_IMAGES = 12;
 
-const SOCIAL_LABELS = {
-  x: "X",
-  instagram: "Instagram",
-  facebook: "Facebook",
-  tiktok: "TikTok",
-  whatsapp: "WhatsApp",
-  website: "Website",
-} as const;
-
 /**
- * Social links, or an error message when a new or changed link is not an
- * http(s) URL. Keys the request leaves out, and values it sends back
- * unchanged, are kept as stored even when they are not http(s) (for example
- * a handle such as "@jane" saved on the Tracker); pages sanitise on render.
+ * Social links, or an error message when a new or changed one can't be read
+ * as a link. What people type is accepted (a full link, "x.com/jane",
+ * "@jane", a WhatsApp number) and stored as the network's full web address
+ * (socialHref). Keys the request leaves out, and values it sends back
+ * unchanged, are kept as stored (for example a handle saved on the Tracker);
+ * pages turn those into links on render.
  */
 function social(value: unknown, existing?: SocialLinks): SocialLinks | string {
   const source = isRecord(value) ? value : {};
   const base = existing ?? {};
   const next: SocialLinks = { ...base };
-  for (const key of ["x", "instagram", "facebook", "tiktok", "whatsapp", "website"] as const) {
+  for (const key of SOCIAL_KEYS) {
     if (!(key in source)) continue;
     const text = asString(source[key]);
     if (!text) {
@@ -74,8 +68,12 @@ function social(value: unknown, existing?: SocialLinks): SocialLinks | string {
       continue;
     }
     if (text === asString(base[key])) continue;
-    const link = safeHttpUrl(text);
-    if (!link) return `The ${SOCIAL_LABELS[key]} link must be a full web address starting with http:// or https://.`;
+    const link = socialHref(key, text);
+    if (!link) {
+      return key === "whatsapp"
+        ? "Enter the WhatsApp number (e.g. 0712 345 678) or a wa.me link."
+        : `Enter the ${SOCIAL_LABELS[key]} link or handle, e.g. ${SOCIAL_PLACEHOLDERS[key]}.`;
+    }
     next[key] = link;
   }
   return next;
