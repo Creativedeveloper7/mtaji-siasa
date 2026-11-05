@@ -35,6 +35,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Request body must be JSON." }, { status: 400 });
   }
   const result = await startDonation(body, returnOrigin(request));
-  if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+  if (!result.ok) {
+    return NextResponse.json(
+      { ok: false, error: result.error, ...(result.reason ? { reason: result.reason } : {}) },
+      { status: result.status }
+    );
+  }
   return NextResponse.json({ ok: true, ...result.data }, { status: result.status });
 }

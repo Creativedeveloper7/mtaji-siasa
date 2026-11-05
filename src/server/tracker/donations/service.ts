@@ -31,10 +31,22 @@ import { parseDonationInput, type DonationTarget } from "@/lib/donations";
  * from Paystack with its reference.
  */
 
-export type DonationResult<T> = { ok: true; status: number; data: T } | { ok: false; status: number; error: string };
+export type DonationResult<T> =
+  | { ok: true; status: number; data: T }
+  | { ok: false; status: number; error: string; reason?: NotSetUpReason };
 
-function fail<T>(status: number, error: string): DonationResult<T> {
-  return { ok: false, status, error };
+/**
+ * Why a page can't take donations, sent next to the message (no secrets) so
+ * whoever runs the site can tell the setup steps apart:
+ * - tracker_migration_missing: donation_recipient_owner isn't in the database
+ * - payment_function_outdated: initialize-paystack-payment isn't the version
+ *   that handles direct donations
+ * - no_owner: the project or leader has no account to pay
+ */
+export type NotSetUpReason = "tracker_migration_missing" | "payment_function_outdated" | "no_owner";
+
+function fail<T>(status: number, error: string, reason?: NotSetUpReason): DonationResult<T> {
+  return reason ? { ok: false, status, error, reason } : { ok: false, status, error };
 }
 
 const PLACEHOLDER_EMAIL = "donor@m-taji.co.ke";
@@ -86,7 +98,7 @@ async function recipientOwner(recipient: Recipient): Promise<DonationResult<stri
     console.error(
       `[donations] donation_recipient_owner failed (${error.code ?? "?"}): ${error.message}. Apply the M-taji-Tracker migration 20261105120000_direct_project_and_leader_donations.`
     );
-    return fail(503, NOT_SET_UP);
+    return fail(503, NOT_SET_UP, "tracker_migration_missing");
   }
   return { ok: true, status: 200, data: typeof data === "string" && data ? data : null };
 }
@@ -110,7 +122,7 @@ export async function startDonation(
   if (!owner.ok) return owner;
   if (!owner.data) {
     console.error(`[donations] "${recipient.data.title}" has no owner account, so there is no wallet to pay.`);
-    return fail(503, NOT_SET_UP);
+    return fail(503, NOT_SET_UP, "no_owner");
   }
 
   const anonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
@@ -128,14 +140,14 @@ export async function startDonation(
   if (!res.ok) {
     const message = typeof res.payload.error === "string" ? res.payload.error : "";
     console.error("[donations] initialize failed:", res.status, message.slice(0, 200));
-    if (res.status === 400 && /not set up/i.test(message)) return fail(503, NOT_SET_UP);
+    if (res.status === 400 && /not set up/i.test(message)) return fail(503, NOT_SET_UP, "no_owner");
     return fail(502, "Paystack could not start the payment. Try again shortly.");
   }
   if (res.payload.recipient_checked !== true) {
     console.error(
       "[donations] initialize-paystack-payment did not confirm the recipient: deploy the M-taji-Tracker version that supports direct donations."
     );
-    return fail(503, NOT_SET_UP);
+    return fail(503, NOT_SET_UP, "payment_function_outdated");
   }
   const checkoutUrl = String(res.payload.authorization_url ?? res.payload.checkout_url ?? "");
   const reference = String(res.payload.reference ?? res.payload.api_ref ?? "");
