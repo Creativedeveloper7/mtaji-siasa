@@ -734,9 +734,10 @@ export function asTrackerAdAction(value: unknown): TrackerAdAction | null {
 }
 
 /**
- * POST /api/ads/campaigns/[id] { action: "edit", locations, ageGroup, budgetKes }:
- * the owner changes where an ad runs, its age group and its budget, before
- * "Update on networks" republishes it. A running ad's budget can only go up:
+ * POST /api/ads/campaigns/[id] { action: "edit", locations, ageGroup, budgetKes, headline?, body?, keywords? }:
+ * the owner changes where an ad runs, its age group, its budget and (after
+ * Adly's X review) its text and keywords, before "Update on networks"
+ * republishes it. A running ad's budget can only go up:
  * the wallet has already paid the networks for the current amount.
  */
 export async function editTrackerAd(session: AuthSession, id: string, body: unknown): Promise<ContentResult> {
@@ -772,11 +773,32 @@ export async function editTrackerAd(session: AuthSession, id: string, body: unkn
       if (headline.length > AD_LIMITS.headline) return fail(400, `Keep the headline to ${AD_LIMITS.headline} characters.`);
       if (!text) return fail(400, "Add the ad text.");
       if (text.length > AD_LIMITS.body) return fail(400, `Keep the ad text to ${AD_LIMITS.body} characters.`);
-      if (resolvePublishChannels(row.channels).includes("x")) {
-        const project = ad.projectId ? await getRepositories().content.findProject(ad.projectId) : undefined;
-        const blocked = await xPolicyError(project, { headline, body: text, keywords: ad.keywords }, ad.name);
-        if (blocked) return fail(422, blocked);
+    }
+    // Keywords change when the owner approves Adly's X review (it drops the ones X would reject).
+    let keywords = ad.keywords;
+    if (body.keywords !== undefined) {
+      if (!Array.isArray(body.keywords)) return fail(400, "Send the keywords as a list.");
+      keywords = Array.from(
+        new Set(
+          body.keywords
+            .filter((k): k is string => typeof k === "string")
+            .map((k) => k.trim().replace(/\s+/g, " "))
+            .filter(Boolean)
+        )
+      );
+      if (!keywords.length) return fail(400, "Add at least one keyword.");
+      if (keywords.length > AD_LIMITS.keywords) return fail(400, `Use at most ${AD_LIMITS.keywords} keywords.`);
+      if (keywords.some((k) => k.length > AD_LIMITS.keywordLength)) {
+        return fail(400, `Keywords must be ${AD_LIMITS.keywordLength} characters or fewer.`);
       }
+    }
+    const keywordsChanged = keywords.join("\n") !== ad.keywords.join("\n");
+    // Every X update is checked, not only changed text: the project page may
+    // have changed, and the republish would be refused anyway.
+    if (resolvePublishChannels(row.channels).includes("x")) {
+      const project = ad.projectId ? await getRepositories().content.findProject(ad.projectId) : undefined;
+      const blocked = await xPolicyError(project, { headline, body: text, keywords }, ad.name);
+      if (blocked) return fail(422, blocked);
     }
 
     const targeting = obj(row.targeting);
@@ -784,7 +806,12 @@ export async function editTrackerAd(session: AuthSession, id: string, body: unkn
     const write = applyEditReview(
       row,
       {
-        targeting: { ...targeting, locations: audience.locations, age_group: audience.ageGroup },
+        targeting: {
+          ...targeting,
+          locations: audience.locations,
+          age_group: audience.ageGroup,
+          ...(keywordsChanged ? { interests: keywords } : {}),
+        },
         budget: budgetKes,
         budget_daily: Math.round(budgetKes / days),
         ...(copyChanged ? { creative: withAdCopy(row.creative, headline, text) } : {}),

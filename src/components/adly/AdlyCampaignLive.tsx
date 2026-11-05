@@ -63,7 +63,7 @@ export function AdlyCampaignLive({
   onChanged,
 }: {
   campaignId: string;
-  /** A dashboard ad: "Update on networks" first lets the owner change its audience and budget */
+  /** A dashboard ad: "Publish" / "Update on networks" first opens the update dialog (text, audience, budget, Adly's X review) */
   ad?: AdCampaign;
   fallback?: ReactNode;
   /** Called after publish / sync so the page can reload the campaign */
@@ -190,6 +190,7 @@ export function AdlyCampaignLive({
       {editing && ad && (
         <AdUpdateDialog
           ad={ad}
+          mode={live ? "update" : "publish"}
           onClose={() => setEditing(false)}
           onSaved={() => {
             setEditing(false);
@@ -226,7 +227,8 @@ export function AdlyCampaignLive({
               type="button"
               size="sm"
               disabled={!!busy || !data || !data.publishable.length || Boolean(data.awaitingApproval) || Boolean(data.publishing)}
-              onClick={() => (live && ad ? setEditing(true) : void publish())}
+              // A dashboard ad goes through the update dialog, where Adly reviews it for X first.
+              onClick={() => (ad ? setEditing(true) : void publish())}
             >
               {busy === "publish" ? "Publishing…" : live ? "Update on networks" : "Publish"}
             </Button>

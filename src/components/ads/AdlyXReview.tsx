@@ -36,6 +36,7 @@ export function AdlyXReview({
   onApprove,
   onEdit,
   onDropX,
+  photoLocked = false,
 }: {
   review: AdPolicyReview;
   /** Google is also selected, so the ad can still run without X */
@@ -43,13 +44,16 @@ export function AdlyXReview({
   onApprove: (version: ApprovedAdlyVersion) => void;
   onEdit: () => void;
   onDropX: () => void;
+  /** Updating a running ad: the photo stays as it is, so only the text is reviewed here. */
+  photoLocked?: boolean;
 }) {
   const usable = [review.image, ...review.alternatives].filter((i) => i.ok);
-  const [imageUrl, setImageUrl] = useState(review.suggested.imageUrl);
-  const fixes = review.findings.filter((f) => f.severity === "fix");
-  const advice = review.findings.filter((f) => f.severity === "advice");
+  const [imageUrl, setImageUrl] = useState(photoLocked ? review.original.imageUrl : review.suggested.imageUrl);
+  const shown = photoLocked ? review.findings.filter((f) => f.field !== "image") : review.findings;
+  const fixes = shown.filter((f) => f.severity === "fix");
+  const advice = shown.filter((f) => f.severity === "advice");
   const { original, suggested } = review;
-  const needsImage = review.status === "needs_image";
+  const needsImage = review.status === "needs_image" && !photoLocked;
   const notForX = review.status === "not_for_x";
   const blocks = review.findings.filter((f) => f.severity === "block");
 
@@ -147,7 +151,7 @@ export function AdlyXReview({
             </section>
           )}
 
-          {!notForX && (
+          {!notForX && !photoLocked && (
             <section>
               <h3 className="meta-label mb-2">Photo</h3>
               {usable.length > 0 ? (
@@ -224,7 +228,7 @@ export function AdlyXReview({
                   body: suggested.body,
                   keywords: suggested.keywords,
                   imageUrl,
-                  changes: review.findings.filter(
+                  changes: shown.filter(
                     (f) => f.severity === "fix" && (f.field !== "image" || imageUrl !== original.imageUrl)
                   ),
                 })

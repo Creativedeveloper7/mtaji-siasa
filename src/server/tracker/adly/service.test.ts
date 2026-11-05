@@ -564,6 +564,35 @@ describe("editTrackerAd: fix the ad text", () => {
     expect(res).toMatchObject({ ok: false, status: 422 });
     expect(stored().creative).toMatchObject({ body: "See the progress on the Githurai roads." });
   });
+
+  it("stores the keywords from Adly's approved version", async () => {
+    process.env.ADS_REQUIRE_APPROVAL = "false";
+    seed(live());
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: [], keywords: ["Githurai roads", " road works "] });
+    expect(res.ok).toBe(true);
+    expect(stored().targeting).toMatchObject({ interests: ["Githurai roads", "road works"] });
+  });
+
+  it("refuses a keyword X would reject", async () => {
+    seed(live());
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: [], keywords: ["UDA"] });
+    expect(res).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("stops an update when the project page is political, even with the text unchanged", async () => {
+    const row = live();
+    seed({ ...row, metadata: { ...(row.metadata as Record<string, unknown>), campaign_type: "project", project_id: PROJECT } });
+    h.findProject.mockResolvedValue({
+      id: PROJECT,
+      name: "Githurai roads",
+      leaderIds: ["pf-1"],
+      slug: "roads",
+      description: "Mobilizing young Kenyans behind the Government's development agenda.",
+    });
+    const res = await service.editTrackerAd(leaderSession, DRAFT_ID, { locations: ["Nairobi"] });
+    expect(res).toMatchObject({ ok: false, status: 422 });
+    expect(JSON.stringify(res)).toContain("political ads aimed at Kenya");
+  });
 });
 
 describe("summarizePublish", () => {
