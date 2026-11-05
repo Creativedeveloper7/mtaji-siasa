@@ -97,10 +97,10 @@ export function AdlyAdsAssistant({
 }
 
 const TOOLS = [
-  { href: "/adly/poster", label: "Campaign poster", icon: ImageIcon },
-  { href: "/adly/timelapse", label: "Project timelapse", icon: Clapperboard },
-  { href: "/adly/simulate", label: "Before / after simulation", icon: Wand2 },
-  { href: "/adly/workspace", label: "Adly workspace", icon: LayoutDashboard },
+  { href: "/adly/poster", label: "Campaign poster", icon: ImageIcon, tone: "text-brand-green" },
+  { href: "/adly/timelapse", label: "Project timelapse", icon: Clapperboard, tone: "text-accent" },
+  { href: "/adly/simulate", label: "Before / after simulation", icon: Wand2, tone: "text-brand-red" },
+  { href: "/adly/workspace", label: "Adly workspace", icon: LayoutDashboard, tone: "text-brand-green" },
 ];
 
 /** Small box beside the composer pointing to Adly. */
@@ -122,13 +122,13 @@ export function AdlyHelpCard({ onAsk, hasAds }: { onAsk: () => void; hasAds: boo
       </Button>
       <p className="meta-label mt-4">More Adly tools</p>
       <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
-        {TOOLS.map(({ href, label, icon: Icon }) => (
+        {TOOLS.map(({ href, label, icon: Icon, tone }) => (
           <li key={href}>
             <Link
               href={href}
               className="flex min-h-[40px] items-center gap-2 rounded-md border border-border bg-bg-elevated/60 px-3 text-caption text-ink transition-colors hover:border-accent/50"
             >
-              <Icon className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden />
+              <Icon className={`h-3.5 w-3.5 shrink-0 ${tone}`} aria-hidden />
               {label}
             </Link>
           </li>

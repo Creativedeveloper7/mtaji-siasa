@@ -347,7 +347,7 @@ export default function OpportunityDetailPage({
           </div>
 
           <aside className="h-fit rounded-lg border border-border bg-surface p-5 lg:sticky lg:top-24">
-            <p className="meta-label text-accent">Key information</p>
+            <p className="meta-label text-brand-green">Key information</p>
             <dl className="mt-4 space-y-4 text-small">
               <div>
                 <dt className="text-ink-subtle">Category</dt>

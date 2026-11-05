@@ -151,8 +151,8 @@ export function HomeOpportunities({
           className={cn(
             "inline-flex h-10 items-center justify-center gap-2 rounded-md border px-4 text-small font-bold transition-colors",
             savedOnly
-              ? "border-accent/60 bg-accent-soft text-accent"
-              : "border-border-strong bg-surface text-ink hover:border-accent/40"
+              ? "border-brand-green bg-brand-green text-white hover:bg-brand-green-hover"
+              : "border-brand-green/60 bg-surface text-brand-green hover:border-brand-green hover:bg-brand-green/10"
           )}
         >
           <Bookmark className={cn("h-4 w-4", savedOnly && "fill-current")} aria-hidden />

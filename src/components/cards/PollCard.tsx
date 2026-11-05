@@ -69,7 +69,7 @@ export function PollCard({ poll, vote }: PollCardProps) {
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-surface-hover">
                 <div
-                  className={cn("h-full rounded-full", mine ? "bg-accent" : "bg-accent/80")}
+                  className={cn("h-full rounded-full", mine ? "bg-brand-green" : "bg-brand-green/80")}
                   style={{ width: `${pct}%` }}
                 />
               </div>

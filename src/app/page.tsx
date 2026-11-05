@@ -80,7 +80,7 @@ export default function HomePage() {
             <p className="eyebrow">The visual discovery layer</p>
             <h2 className="home-h2 mt-5">
               Development you can{" "}
-              <em className="script-accent text-accent">see and bet on.</em>
+              <em className="script-accent text-brand-green">see and bet on.</em>
             </h2>
             <p className="mt-5 max-w-md text-small leading-relaxed text-ink-muted md:text-body">
               See who leads, what is being built, where it sits on the map, how
@@ -184,7 +184,7 @@ export default function HomePage() {
               <>
                 Three products.
                 <br />
-                <em className="script-accent text-accent">One public story.</em>
+                <em className="script-accent text-brand-green">One public story.</em>
               </>
             }
             body="Track the work, communicate progress and keep the community engaged."
@@ -201,7 +201,7 @@ export default function HomePage() {
             title={
               <>
                 Don’t just say it.{" "}
-                <em className="script-accent text-accent">Show it.</em>
+                <em className="script-accent text-brand-green">Show it.</em>
               </>
             }
             body="Leaders can showcase development work while communities follow its location, progress and milestones."

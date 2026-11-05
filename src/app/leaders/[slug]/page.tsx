@@ -64,7 +64,7 @@ export default function LeaderProfilePage({
                 key={item}
                 className="flex gap-3 border-b border-border pb-3 text-small text-ink-muted last:border-0"
               >
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-green" />
                 {item}
               </li>
             ))}

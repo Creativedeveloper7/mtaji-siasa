@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 const buttonClass =
-  "inline-flex h-11 shrink-0 items-center gap-2 self-start rounded-md bg-accent px-5 text-small font-bold text-[#211b12] transition-colors hover:bg-accent-hover md:self-auto";
+  "inline-flex h-11 shrink-0 items-center gap-2 self-start rounded-md bg-brand-green px-5 text-small font-bold text-white transition-colors hover:bg-brand-green-hover md:self-auto";
 
 export function ClosingBand({
   id,

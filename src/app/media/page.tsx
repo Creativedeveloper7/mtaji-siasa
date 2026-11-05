@@ -66,7 +66,7 @@ export default function MediaPage() {
           <>
             See the progress.
             <br />
-            <em className="script-accent text-accent">Hear the stories.</em>
+            <em className="script-accent text-brand-green">Hear the stories.</em>
           </>
         }
         description="Photos, videos and short updates from the places where the work is happening. Watch a road take shape, hear from the families using a new water point and follow what your leaders are saying. Real people, real places, told simply."

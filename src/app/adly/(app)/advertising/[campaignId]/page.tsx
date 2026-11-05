@@ -99,7 +99,7 @@ export default function AdlyCampaignMonitorPage({
         <h2 className="text-h3 text-ink">Spend vs budget</h2>
         <div className="mt-4 h-3 overflow-hidden rounded-full bg-bg-elevated">
           <div
-            className="h-full rounded-full bg-accent transition-all"
+            className="h-full rounded-full bg-brand-green transition-all"
             style={{ width: `${spendPct}%` }}
           />
         </div>

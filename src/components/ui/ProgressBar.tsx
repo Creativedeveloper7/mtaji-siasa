@@ -20,7 +20,7 @@ export function ProgressBar({
       {showLabel && (
         <div className="mb-1.5 flex items-baseline justify-between gap-2">
           <span className="meta-label">Progress</span>
-          <span className="font-mono text-small text-accent">{clamped}%</span>
+          <span className="font-mono text-small text-brand-green">{clamped}%</span>
         </div>
       )}
       <div
@@ -34,7 +34,7 @@ export function ProgressBar({
         aria-valuemax={100}
       >
         <div
-          className="h-full rounded-full bg-accent transition-[width] duration-slow ease-premium"
+          className="h-full rounded-full bg-brand-green transition-[width] duration-slow ease-premium"
           style={{ width: `${clamped}%` }}
         />
       </div>

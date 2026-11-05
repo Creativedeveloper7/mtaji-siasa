@@ -56,7 +56,7 @@ export default function LeadersPage() {
           <>
             See who leads.
             <br />
-            <em className="script-accent text-accent">See what they deliver.</em>
+            <em className="script-accent text-brand-green">See what they deliver.</em>
           </>
         }
         description="Every leader here has a public profile that shows the projects they are running, how far each one has come, and the jobs and training those projects bring to the community. Find the leaders in your county, follow their work and hold them to their word."

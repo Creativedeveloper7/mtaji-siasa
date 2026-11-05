@@ -420,11 +420,11 @@ export default function PoliticianAdsPage() {
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
                     <p className="meta-label">Total budget</p>
-                    <p className="mt-1 font-mono text-h2 text-ink">{formatCurrency(budget)}</p>
+                    <p className="mt-1 font-mono text-h2 text-brand-green">{formatCurrency(budget)}</p>
                   </div>
                   <div className="text-right">
                     <p className="meta-label">Estimated reach</p>
-                    <p className="mt-1 flex items-center justify-end gap-1.5 font-mono text-h3 text-accent">
+                    <p className="mt-1 flex items-center justify-end gap-1.5 font-mono text-h3 text-brand-green">
                       <Users className="h-4 w-4" aria-hidden />~{reach.toLocaleString()} people
                     </p>
                   </div>
@@ -436,7 +436,7 @@ export default function PoliticianAdsPage() {
                   step={100}
                   value={budget}
                   onChange={(e) => setBudget(Number(e.target.value))}
-                  className="mt-4 w-full accent-[rgb(var(--color-accent))]"
+                  className="mt-4 w-full accent-[rgb(var(--color-brand-green))]"
                   aria-label="Budget in KES"
                 />
                 <div className="mt-3 flex flex-wrap gap-1.5">
@@ -447,7 +447,7 @@ export default function PoliticianAdsPage() {
                       onClick={() => setBudget(value)}
                       className={cn(
                         "min-h-[36px] rounded-full border px-3 text-caption transition-colors",
-                        budget === value ? "border-accent bg-accent text-ink-inverse" : "border-border text-ink-muted hover:text-ink"
+                        budget === value ? "border-brand-green bg-brand-green text-white" : "border-border text-ink-muted hover:text-ink"
                       )}
                     >
                       {formatCurrency(value)}
@@ -716,7 +716,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   return (
     <section className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-5">
       <h2 className="flex items-center gap-2 text-small font-medium text-ink">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent text-[12px] font-bold text-ink-inverse">{n}</span>
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-red text-[12px] font-bold text-white">{n}</span>
         {title}
       </h2>
       {children}

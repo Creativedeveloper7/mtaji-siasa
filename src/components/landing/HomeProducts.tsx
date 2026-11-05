@@ -6,12 +6,27 @@ import { ArrowUpRight } from "lucide-react";
 import { CardCarousel } from "@/components/ui/CardCarousel";
 import { useFaida } from "@/components/faida/FaidaProvider";
 
-const products = [
+/**
+ * Each product shows its logo (a PNG on a white panel, so dark marks stay
+ * visible in dark mode). Until a product's logo is added, its illustrative
+ * image is shown instead.
+ */
+const products: {
+  id: string;
+  label: string;
+  name: string;
+  body: string;
+  logo: string | null;
+  image: string;
+  cta: string;
+  href: string | null;
+}[] = [
   {
     id: "siasa",
     label: "01 / GIS + Project tracking",
     name: "M-Taji Siasa",
     body: "Put every project on the map. Show live locations, milestones, progress and the opportunities each development creates.",
+    logo: "/mtaji-logo.png",
     image: "/home/product-siasa.jpg",
     cta: "Explore M-Taji Siasa",
     href: "/projects",
@@ -21,6 +36,7 @@ const products = [
     label: "02 / AI creative + Advertising",
     name: "M-Taji Adly",
     body: "Create targeted ads, AI progress videos and project simulations that make your record and vision easier to understand.",
+    logo: null,
     image: "/home/product-adly.jpg",
     cta: "Explore M-Taji Adly",
     href: "/adly",
@@ -30,11 +46,12 @@ const products = [
     label: "03 / Community engagement",
     name: "M-Taji Faida",
     body: "Keep citizens close to the work with a WhatsApp-powered engagement agent for updates, questions and community feedback.",
+    logo: null,
     image: "/home/product-faida.jpg",
     cta: "Explore M-Taji Faida",
     href: null,
   },
-] as const;
+];
 
 export function HomeProducts() {
   const { openFaida } = useFaida();
@@ -50,18 +67,30 @@ export function HomeProducts() {
           key={p.id}
           className="flex h-full flex-col overflow-hidden border border-border bg-surface md:flex-row"
         >
-          <div className="relative aspect-[4/3] md:aspect-auto md:w-[54%] md:min-h-[300px]">
-            <Image
-              src={p.image}
-              alt={`Illustrative image for ${p.label}`}
-              fill
-              className="object-cover"
-              sizes="(max-width: 768px) 88vw, 40vw"
-            />
-            <span className="image-label absolute bottom-3 left-3">
-              Illustrative image
-            </span>
-          </div>
+          {p.logo ? (
+            <div className="relative flex aspect-[4/3] items-center justify-center bg-white md:aspect-auto md:w-[54%] md:min-h-[300px]">
+              <Image
+                src={p.logo}
+                alt={`${p.name} logo`}
+                width={220}
+                height={220}
+                className="h-auto w-[52%] max-w-[220px] object-contain"
+              />
+            </div>
+          ) : (
+            <div className="relative aspect-[4/3] md:aspect-auto md:w-[54%] md:min-h-[300px]">
+              <Image
+                src={p.image}
+                alt={`Illustrative image for ${p.label}`}
+                fill
+                className="object-cover"
+                sizes="(max-width: 768px) 88vw, 40vw"
+              />
+              <span className="image-label absolute bottom-3 left-3">
+                Illustrative image
+              </span>
+            </div>
+          )}
           <div className="flex flex-1 flex-col justify-center p-6 md:p-10">
             <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-brand-red">
               {p.label}

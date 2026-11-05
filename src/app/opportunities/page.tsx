@@ -75,7 +75,7 @@ export default function OpportunitiesPage() {
             title={
               <>
                 Work that opens{" "}
-                <em className="script-accent text-brand-red">doors.</em>
+                <em className="script-accent text-brand-green">doors.</em>
               </>
             }
             body="Jobs, tenders, training, funding and youth programmes linked to real projects in the community."

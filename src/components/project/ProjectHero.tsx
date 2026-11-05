@@ -82,8 +82,8 @@ export function ProjectStats({ project }: { project: Project }) {
 export function AiSimulationBadge() {
   return (
     <div className="inline-flex flex-wrap items-center gap-2">
-      <StatusBadge status="AI Simulation" tone="warning" />
-      <StatusBadge status="Proposed Vision" tone="accent" />
+      <StatusBadge status="AI Simulation" tone="success" />
+      <StatusBadge status="Proposed Vision" tone="success" />
       <StatusBadge status="Conceptual Visualization" tone="neutral" />
     </div>
   );

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight, MapPin } from "lucide-react";
 import type { Leader } from "@/types";
 import { SafeImage } from "@/components/ui/SafeImage";
-import { cn, pluralize } from "@/lib/utils";
+import { pluralize } from "@/lib/utils";
 
 interface LeaderCardProps {
   leader: Leader;
@@ -29,12 +29,7 @@ export function LeaderCard({ leader }: LeaderCardProps) {
           </span>
         </div>
         <div className="flex flex-1 flex-col px-6 pb-6 pt-6">
-          <p
-            className={cn(
-              "text-[10px] font-bold uppercase tracking-[0.11em]",
-              isAspirant ? "text-accent" : "text-brand-green"
-            )}
-          >
+          <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-brand-green">
             {leader.position}
           </p>
           <h3 className="mt-3 text-[1.3rem] font-extrabold leading-snug text-ink">

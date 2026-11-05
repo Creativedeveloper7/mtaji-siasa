@@ -114,7 +114,7 @@ export default function PoliticianOverviewPage() {
             className="rounded-lg border border-border bg-surface p-5 transition-colors hover:border-border-strong"
           >
             <p className="meta-label">{card.label}</p>
-            <p className="mt-3 font-mono text-h2 text-accent">{card.value}</p>
+            <p className="mt-3 font-mono text-h2 text-brand-green">{card.value}</p>
           </Link>
         ))}
       </div>

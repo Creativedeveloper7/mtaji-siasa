@@ -96,8 +96,8 @@ export function OpportunityCard({
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-md border transition-colors",
                 saved
-                  ? "border-accent/50 bg-accent-soft text-accent"
-                  : "border-border-strong text-ink-muted hover:border-accent/50 hover:text-accent"
+                  ? "border-brand-green bg-brand-green text-white hover:bg-brand-green-hover"
+                  : "border-brand-green/60 text-brand-green hover:border-brand-green hover:bg-brand-green/10"
               )}
             >
               <Bookmark className={cn("h-4 w-4", saved && "fill-current")} aria-hidden />

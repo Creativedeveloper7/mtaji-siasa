@@ -83,7 +83,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
               aria-valuemax={100}
             >
               <div
-                className="h-full bg-accent transition-[width] duration-slow ease-premium"
+                className="h-full bg-brand-green transition-[width] duration-slow ease-premium"
                 style={{ width: `${progress}%` }}
               />
             </div>
