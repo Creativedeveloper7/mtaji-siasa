@@ -8,9 +8,9 @@ import { useFaida } from "@/components/faida/FaidaProvider";
 
 /**
  * Each product shows its logo (a transparent PNG) on a panel of a fixed
- * colour that suits it in both themes: white for the M-Taji mark, which has
- * black parts; near-black for Adly's pale gradient. Until a product's logo is
- * added, its illustrative image is shown instead.
+ * colour that suits it in both themes: white for the M-Taji mark (which has
+ * black parts) and Faida's green; near-black for Adly's pale gradient.
+ * Without a logo, a product shows its illustrative image instead.
  */
 const products: {
   id: string;
@@ -50,7 +50,7 @@ const products: {
     label: "03 / Community engagement",
     name: "M-Taji Faida",
     body: "Keep citizens close to the work with a WhatsApp-powered engagement agent for updates, questions and community feedback.",
-    logo: null,
+    logo: "/logos/faida.png",
     image: "/home/product-faida.jpg",
     cta: "Explore M-Taji Faida",
     href: null,
