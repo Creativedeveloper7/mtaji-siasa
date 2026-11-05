@@ -290,21 +290,24 @@ flow (`src/server/tracker/donations`):
 | `POST /api/donations` | `{ projectId \| leaderId, amount, method?, email?, phone?, name? }`: starts a Paystack checkout, answers `{ checkoutUrl, reference }`. No sign-in. |
 | `POST /api/donations/verify` | `{ reference }`: confirms it when the donor returns (`/projects/<slug>` or `/leaders/<slug>` `?donation=1&reference=...`) |
 
-- A donation is a `payments` row with `payment_type 'donation'` and a
-  `campaign_id`. When Paystack confirms it (webhook or verify),
-  `settle_payment_to_wallets` credits the wallet of
-  `fundraising_campaigns.owner_id` (source `crowdfunding`).
-- Siasa uses only the active campaign whose `owner_id` is the recipient: for a
-  project its owner (initiatives -> changemakers), for a leader the account
-  behind the profile (`political_figures.user_id`), whose campaign has no
-  `project_id` (a general campaign). RLS lets any signed-in user create a campaign
-  for any project with themselves as owner, so "a campaign for this project"
-  could pay someone else. When the recipient has none, Siasa creates one with
-  the service role, owner taken from the project or leader record. Without
-  `SUPABASE_SERVICE_ROLE_KEY` such a project answers "not set up to receive
-  donations yet".
-- Donors always pay as guests (anon key), so whoever returns from Paystack
-  can verify the payment. KES 50 to 250,000, M-Pesa or card.
+- Donations go straight to the project or leader, with no fundraising
+  campaign: a `payments` row with `payment_type 'donation'` and a
+  `project_id` (project page) or `figure_id` (leader page). When Paystack
+  confirms it (webhook or verify), `settle_payment_to_wallets` credits the
+  owner read from the record: `initiatives -> changemakers.user_id` for a
+  project, `political_figures.user_id` for a leader (source `crowdfunding`).
+  Fundraising campaigns (`campaign_id`, the Tracker's crowdfunding) still pay
+  the campaign's owner, unchanged.
+- This needs the M-taji-Tracker migration
+  `20261105120000_direct_project_and_leader_donations` and the matching
+  `initialize-paystack-payment` (accepts `figure_id`, checks the recipient,
+  answers `recipient_checked`). Until both are live, Siasa refuses to start a
+  donation ("not set up to receive donations yet") rather than take money it
+  can't credit: it checks `donation_recipient_owner` finds an owner, and only
+  redirects to a checkout the function marked `recipient_checked`.
+- No service role key is used. Donors always pay as guests (anon key), so
+  whoever returns from Paystack can verify the payment. KES 50 to 250,000,
+  M-Pesa or card.
 
 ## Money
 
