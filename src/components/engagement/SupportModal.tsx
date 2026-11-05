@@ -124,7 +124,7 @@ export function SupportModal({ open, onClose, leaderName, onDonate }: SupportMod
                   <span
                     className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${
                       opt.id === "donate"
-                        ? "border-brand-orange/30 bg-brand-orange/10 text-brand-orange"
+                        ? "border-accent/30 bg-accent/10 text-accent"
                         : opt.id === "volunteer"
                           ? "border-brand-green/30 bg-brand-green/10 text-brand-green"
                           : "border-border bg-bg text-accent"

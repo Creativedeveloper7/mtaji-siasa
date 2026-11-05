@@ -6,7 +6,7 @@ import { DonationDialog, DonationReturn } from "@/components/engagement/Donation
 import { cn } from "@/lib/utils";
 
 /**
- * "Donate now" on a project page (orange, green on hover): opens the donate
+ * "Donate now" on a project page (the primary gold, green on hover): opens the donate
  * form; the donation goes to the project owner's wallet. Also thanks the
  * donor when Paystack sends them back to this page.
  */
@@ -18,7 +18,7 @@ export function DonateButton({ projectId, projectName, className }: { projectId:
         type="button"
         onClick={() => setOpen(true)}
         className={cn(
-          "inline-flex h-11 items-center gap-2 rounded-md bg-brand-orange px-5 text-small font-bold text-white transition-colors hover:bg-brand-green focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-green/50",
+          "inline-flex h-11 items-center gap-2 rounded-md bg-accent px-5 text-small font-bold text-ink-inverse shadow-glow transition-colors hover:bg-brand-green hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-green/50",
           className
         )}
       >

@@ -32,7 +32,6 @@ html.dark {
   --color-brand-green-hover: 60 201 106;
   --color-brand-red: 230 43 52;
   --color-brand-red-hover: 248 75 75;
-  --color-brand-orange: 247 127 0;
 
   /* Semantic */
   --color-success: 28 182 87;
@@ -95,7 +94,6 @@ html.light {
   --color-brand-green-hover: 0 115 41;
   --color-brand-red: 208 28 41;
   --color-brand-red-hover: 180 20 32;
-  --color-brand-orange: 232 110 0;
 
   --color-success: 0 138 57;
   --color-warning: 180 120 10;

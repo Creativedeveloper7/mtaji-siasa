@@ -114,7 +114,7 @@ export function DonationDialog({
       <div className="relative z-10 flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-xl border border-border bg-bg-elevated shadow-raised sm:rounded-xl">
         <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
-            <p className="meta-label text-brand-orange">Donate</p>
+            <p className="meta-label text-accent">Donate</p>
             <h2 id={titleId} className="mt-1 text-h3 text-ink">
               Support {recipientName}
             </h2>
@@ -225,7 +225,7 @@ export function DonationDialog({
             type="button"
             onClick={() => void donate()}
             disabled={starting}
-            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-brand-orange px-5 text-small font-bold text-white transition-colors hover:bg-brand-green disabled:opacity-60"
+            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-accent px-5 text-small font-bold text-ink-inverse shadow-glow transition-colors hover:bg-brand-green hover:text-white disabled:opacity-60"
           >
             {starting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Heart className="h-4 w-4" aria-hidden />}
             {starting
