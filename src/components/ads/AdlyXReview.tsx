@@ -59,13 +59,18 @@ export function AdlyXReview({
 }) {
   const usable = [review.image, ...review.alternatives].filter((i) => i.ok);
   const [imageUrl, setImageUrl] = useState(photoLocked ? review.original.imageUrl : review.suggested.imageUrl);
-  const shown = photoLocked ? review.findings.filter((f) => f.field !== "image") : review.findings;
+  // The photo stays in an update, so its notes are left out, except a name that differs from the project's.
+  const shown = photoLocked ? review.findings.filter((f) => f.field !== "image" || f.found === "Name on the photo") : review.findings;
   const fixes = shown.filter((f) => f.severity === "fix");
   const advice = shown.filter((f) => f.severity === "advice");
   const { original, suggested } = review;
   const needsImage = review.status === "needs_image" && !photoLocked;
   const notForX = review.status === "not_for_x";
+  // Updating a running ad can't change its photo, so a photo X would reject stops the update.
+  const photoBlocked = photoLocked && !notForX && !review.image.ok;
   const blocks = review.findings.filter((f) => f.severity === "block");
+  const pagePolitical = blocks.some((f) => f.rule === "political");
+  const officeTitle = blocks.some((f) => f.rule === "impersonation");
   const [pageName, setPageName] = useState(review.landing?.suggested.name ?? "");
   const [pageText, setPageText] = useState(review.landing?.suggested.description ?? "");
   const [applying, setApplying] = useState(false);
@@ -103,14 +108,20 @@ export function AdlyXReview({
           <h2 id="adly-x-review-title" className="mt-1 text-h3 text-ink">
             {notForX
               ? "X won't run this ad as the project page stands"
-              : needsImage
-                ? "This ad needs a different photo for X"
-                : "Adly changed your ad so X can approve it"}
+              : photoBlocked
+                ? "X would reject this ad's photo"
+                : needsImage
+                  ? "This ad needs a different photo for X"
+                  : "Adly changed your ad so X can approve it"}
           </h2>
           <p className="mt-1 text-small text-ink-muted">
             {notForX
-              ? "X doesn't allow political ads aimed at Kenya, and its reviewers read the project page this ad links to. That page has political content, so X will reject the ad however its text is written. Adly suggests a version of the page below."
-              : needsImage
+              ? `X's reviewers read the project page this ad links to, and what it shows means X will reject the ad however its text is written${
+                  pagePolitical ? " (X doesn't allow political ads aimed at Kenya)" : ""
+                }.${review.landing ? " Adly suggests a version of the page below." : ""}`
+              : photoBlocked
+                ? "An update can't change the photo of an ad that is already running. Stop this ad and create a new one with a different photo."
+                : needsImage
                 ? "X would reject the photo, and none of this project's other photos can be used either."
                 : "X would likely reject the ad as it is. Here is what Adly changed and why. Nothing is published until you approve and confirm."}
           </p>
@@ -129,9 +140,39 @@ export function AdlyXReview({
                       <span className="font-normal text-ink-muted">“{f.found}”</span>
                     </p>
                     <p className="mt-1 text-ink-muted">{f.why}</p>
+                    {f.rule === "impersonation" && (
+                      <p className="mt-1 text-ink-muted">
+                        {f.change}:{" "}
+                        <Link href="/dashboard/profile" className="font-medium text-accent underline">
+                          edit your profile
+                        </Link>
+                        .
+                      </p>
+                    )}
                   </li>
                 ))}
               </ul>
+            </section>
+          )}
+
+          {photoBlocked && (
+            <section>
+              <h3 className="meta-label mb-2">What X would reject</h3>
+              <div className="rounded-md border border-error/30 bg-error-muted p-3 text-small">
+                <p className="flex items-center gap-2 font-medium text-ink">
+                  <ImageOff className="h-4 w-4 shrink-0 text-error" aria-hidden />
+                  The ad&apos;s photo
+                </p>
+                <ul className="mt-1 list-disc pl-5 text-ink-muted">
+                  {review.image.notes.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+                {review.image.previewDataUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element -- data URL preview of the photo X sees
+                  <img src={review.image.previewDataUrl} alt="" className="mt-3 aspect-[1.91/1] w-full max-w-sm rounded-sm object-cover" />
+                )}
+              </div>
             </section>
           )}
 
@@ -196,7 +237,7 @@ export function AdlyXReview({
             </section>
           )}
 
-          {notForX && !review.landing && (
+          {notForX && pagePolitical && !review.landing && !officeTitle && (
             <p className="text-small text-ink-muted">
               <Link href="/dashboard/projects" className="font-medium text-accent underline">
                 Edit the project
@@ -297,9 +338,9 @@ export function AdlyXReview({
 
         <div className="flex flex-col gap-2 border-t border-border p-5 sm:flex-row">
           <Button type="button" variant="secondary" fullWidth onClick={onEdit}>
-            Edit it myself
+            {photoBlocked ? "Close" : "Edit it myself"}
           </Button>
-          {needsImage || notForX ? (
+          {needsImage || notForX || photoBlocked ? (
             canDropX ? (
               <Button type="button" fullWidth onClick={onDropX}>
                 Run on Google only

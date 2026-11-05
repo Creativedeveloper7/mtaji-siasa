@@ -66,3 +66,15 @@ describe("xPolicyError", () => {
     expect(await xPolicyError(project, copy, project!.name)).toBeNull();
   });
 });
+
+describe("officeTitleBlock", () => {
+  it("blocks a bare national-office title on the project page, not a qualified one", async () => {
+    const { officeTitleBlock } = await import("@/server/ads/x-review");
+    const leader = (position: string) => ({ honorific: "Hon.", name: "Mbehi David", position }) as never;
+    expect(officeTitleBlock(leader("President"), "Mashinani Youth")).toMatchObject({ rule: "impersonation", severity: "block" });
+    expect(officeTitleBlock(leader("President, Mashinani Youth"), "Mashinani Youth")).toBeNull();
+    expect(officeTitleBlock(leader("Member of Parliament — Kisumu Central"), "x")).toBeNull();
+    expect(officeTitleBlock(leader("Senator"), "x")).toBeNull();
+    expect(officeTitleBlock(undefined, "x")).toBeNull();
+  });
+});

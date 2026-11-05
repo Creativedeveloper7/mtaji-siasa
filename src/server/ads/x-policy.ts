@@ -27,6 +27,11 @@ export interface CopyContext {
    * as political content, even without a title like "Hon.".
    */
   officialNames?: string[];
+  /**
+   * Whether the project lists opportunities (jobs, training ...). false turns
+   * on the "jobs" rule; undefined (not known) leaves it off.
+   */
+  hasOpportunities?: boolean;
 }
 
 /**
@@ -102,6 +107,8 @@ interface Rule {
   why: string;
   /** Only when the project is not finished yet */
   unlessCompleted?: boolean;
+  /** Only when the project is known to list no opportunities (hasOpportunities === false) */
+  onlyWithoutOpportunities?: boolean;
 }
 
 const RULES: Rule[] = [
@@ -122,6 +129,13 @@ const RULES: Rule[] = [
     ],
     why:
       "X's Deceptive & Fraudulent Content and financial services policies reject ads that promise money, loans, grants or benefits. This is why the earlier Faida ads were rejected.",
+  },
+  {
+    rule: "financial_promise",
+    action: "drop_sentence",
+    onlyWithoutOpportunities: true,
+    patterns: [/\b(jobs?|employment|hiring|vacanc(?:y|ies)|recruit(?:ing|ment)|job opportunities|get (?:a )?job)\b/i],
+    why: "The ad mentions jobs, but the project lists no job openings. X's Deceptive & Fraudulent Content policy rejects ads that suggest work or income the landing page doesn't offer. Add the openings as opportunities on the project, or leave jobs out.",
   },
   {
     rule: "impersonation",
@@ -208,7 +222,11 @@ export function clipWords(text: string, limit: number): string {
 }
 
 function activeRules(context: CopyContext): Rule[] {
-  const rules = RULES.filter((r) => !(r.unlessCompleted && context.status === "completed"));
+  const rules = RULES.filter(
+    (r) =>
+      !(r.unlessCompleted && context.status === "completed") &&
+      !(r.onlyWithoutOpportunities && context.hasOpportunities !== false)
+  );
   const names = officialNameRule(context.officialNames);
   return names ? [names, ...rules] : rules;
 }
@@ -486,6 +504,45 @@ export function suggestLandingForX(page: LandingPage, context: Pick<CopyContext,
     description = `${name}${nameIsPolitical ? "" : where}: what is being done, where, and who takes part. Follow the plan, the progress so far and the milestones.`;
   }
   return { name, description };
+}
+
+/**
+ * Political words in the text printed on an ad's photo (read by the AI
+ * review): slogans, movement names, leaders' names. X's reviewers read text
+ * in images as part of the ad.
+ */
+export function imageTextProblems(text: string, context: Pick<CopyContext, "officialNames">): string[] {
+  const rules = landingRules(context);
+  const found: string[] = [];
+  for (const line of (text ?? "").split(/[\n.!?|•·]+/)) {
+    const match = politicalMatch(rules, line.trim());
+    if (match && !found.some((f) => f.toLowerCase() === match.toLowerCase())) found.push(match);
+    if (found.length >= 3) break;
+  }
+  return found;
+}
+
+const GENERIC_NAME_WORDS = new Set(["project", "projects", "community", "county", "programme", "program", "initiative", "the", "and", "for"]);
+
+function nameWords(text: string): string[] {
+  return (text.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => !GENERIC_NAME_WORDS.has(w));
+}
+
+/**
+ * The photo shows a name close to the project's but not the same (the ad
+ * says "Mashinani Youth Usawa Movement", the photo "Mashinani Youth Kazi
+ * Delivery Movement"). Returns the project-name words missing from the photo,
+ * or null when the names agree or the photo shows no such name.
+ */
+export function imageNameMismatch(text: string, projectName: string): string[] | null {
+  const words = Array.from(new Set(nameWords(projectName)));
+  if (words.length < 2) return null;
+  const inImage = new Set(nameWords(text));
+  const present = words.filter((w) => inImage.has(w));
+  const missing = words.filter((w) => !inImage.has(w));
+  // Most of the name is on the photo, but not all of it: a different version of the name.
+  if (present.length >= 2 && present.length / words.length > 0.5 && missing.length > 0) return missing;
+  return null;
 }
 
 /** One line for an error message: what X would reject and why. */

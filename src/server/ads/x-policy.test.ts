@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { nameVariants, reviewCopyForX, suggestLandingForX, xCopyProblems, xLandingProblems } from "@/server/ads/x-policy";
+import {
+  imageNameMismatch,
+  imageTextProblems,
+  nameVariants,
+  reviewCopyForX,
+  suggestLandingForX,
+  xCopyProblems,
+  xLandingProblems,
+} from "@/server/ads/x-policy";
 
 const context = {
   projectName: "Nairobi River Cleaning & Regeneration Project",
@@ -174,5 +182,48 @@ describe("suggestLandingForX", () => {
     );
     expect(suggested.name).toBe("Community project in Nairobi County");
     expect(xLandingProblems(suggested, context)).toEqual([]);
+  });
+});
+
+describe("photo text", () => {
+  const poster = [
+    "MASHINANI YOUTH",
+    "KAZI DELIVERY MOVEMENT",
+    "EMPOWERED ENGAGED DELIVERED TRANSFORMED",
+    "KUTOKA GROUND, HADI SINGAPORE!",
+    "Turkana West Pokot Marsabit Mandera Nairobi",
+  ].join("\n");
+
+  it("finds the political slogan on the Mashinani poster", () => {
+    expect(imageTextProblems(poster, { officialNames: ["Mbehi David"] })).toEqual(["KAZI DELIVERY"]);
+    expect(imageTextProblems("Clean water for Kibera. Community day on Saturday.", {})).toEqual([]);
+  });
+
+  it("notices a different version of the project name on the photo", () => {
+    expect(imageNameMismatch(poster, "Mashinani Youth Usawa Movement")).toEqual(["usawa"]);
+    expect(imageNameMismatch("MASHINANI YOUTH USAWA MOVEMENT", "Mashinani Youth Usawa Movement")).toBeNull();
+    // Part of a long name on the photo is not a different name.
+    expect(imageNameMismatch("Nairobi River clean-up day", "Nairobi River Cleaning & Regeneration Project")).toBeNull();
+    expect(imageNameMismatch("A photo with no name", "Mashinani Youth Usawa Movement")).toBeNull();
+  });
+});
+
+describe("jobs without openings", () => {
+  const copy = {
+    headline: "Mashinani Youth Usawa Movement",
+    body: "MYM provides a coordinated platform for youth empowerment through jobs, project ambassadorship, creative arts, volunteerism, and community service towards nation building.",
+    keywords: ["youth jobs", "creative arts"],
+  };
+
+  it("drops the jobs claim when the project lists no opportunities", () => {
+    const review = reviewCopyForX(copy, { ...context, projectName: "Mashinani Youth Usawa Movement", hasOpportunities: false });
+    expect(review.findings.map((f) => f.rule)).toContain("financial_promise");
+    expect(review.suggested.body).not.toMatch(/jobs/);
+    expect(review.suggested.keywords).toEqual(["creative arts"]);
+  });
+
+  it("keeps it when the project lists opportunities, or when that isn't known", () => {
+    expect(xCopyProblems(copy, { ...context, hasOpportunities: true })).toEqual([]);
+    expect(xCopyProblems(copy, context)).toEqual([]);
   });
 });

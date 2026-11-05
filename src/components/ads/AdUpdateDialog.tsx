@@ -80,9 +80,11 @@ export function AdUpdateDialog({
       setReviewing(false);
       if (checked.ok && checked.data.review) {
         const r = checked.data.review;
-        setAdlyNotes(r.findings.filter((f) => f.severity === "advice" && f.field !== "image"));
+        // Photo shape notes don't apply (the photo stays); a name that differs on the photo still does.
+        setAdlyNotes(r.findings.filter((f) => f.severity === "advice" && (f.field !== "image" || f.found === "Name on the photo")));
         const same = copyKey(r.suggested.headline, r.suggested.body, r.suggested.keywords) === copyKey(headline, text, keywords);
-        if (r.status === "not_for_x" || !same) {
+        // The photo can't change in an update, so a photo X would reject is shown (and stops the update) too.
+        if (r.status === "not_for_x" || !r.image.ok || !same) {
           setReview(r);
           return;
         }

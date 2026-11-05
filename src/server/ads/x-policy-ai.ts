@@ -21,7 +21,8 @@ const POLICY_BRIEF = `You review ads for X (Twitter) before they are submitted, 
 - Unverifiable claims: guarantees, "the best", "number one", "instant".
 - Personal attributes: implying the reader is poor, sick, in debt or unemployed.
 - Low quality: clickbait, pressure ("act now", "last chance"), ALL CAPS, repeated punctuation, more than two hashtags.
-For images X also rejects: people in uniform (police, military, officials), government insignia or coat of arms, flags used for campaigning, party colours, campaign posters or a politician as the subject, graphic or shocking content, people shown in distress to provoke pity, piles of cash, before/after comparisons that imply guaranteed results, and images that are mostly text.`;
+- Deceptive claims: job or income offers when the project lists no openings; grand promises nobody can check ("from the ground to Singapore", "delivered", "transformed"); titles that suggest a national office (a bare "President") or a government link; a name in the ad that differs from the name on its image or landing page.
+For images X also rejects: people in uniform (police, military, officials), government insignia or coat of arms, flags or flag colours/stripes used for campaigning, party colours, campaign posters, banners or movement logos, political slogans, raised fists and rally imagery, lists of counties or constituencies (national mobilisation), a politician as the subject, graphic or shocking content, people shown in distress to provoke pity, piles of cash, before/after comparisons that imply guaranteed results, and images that are mostly text. Text printed on an image counts as part of the ad.`;
 
 async function chat(messages: unknown[]): Promise<Record<string, unknown> | null> {
   const key = process.env.OPENAI_API_KEY;
@@ -116,7 +117,13 @@ Answer JSON: {"name":"...","description":"..."}`,
 }
 
 /** What the AI sees in a photo that X would likely reject. `null` when it could not look. */
-export async function aiCheckImage(jpegDataUrl: string): Promise<{ ok: boolean; issues: string[] } | null> {
+/**
+ * What the AI sees in a photo that X would likely reject, and every word
+ * printed on it (`text`), which the caller checks with the same rules as the
+ * ad copy. Looked at in full detail so small slogans and logos are read.
+ * `null` when it could not look.
+ */
+export async function aiCheckImage(jpegDataUrl: string): Promise<{ ok: boolean; issues: string[]; text: string } | null> {
   const answer = await chat([
     { role: "system", content: POLICY_BRIEF },
     {
@@ -124,13 +131,14 @@ export async function aiCheckImage(jpegDataUrl: string): Promise<{ ok: boolean; 
       content: [
         {
           type: "text",
-          text: 'Would X likely reject this ad image? Answer JSON: {"ok":true|false,"issues":["one plain sentence per problem"]}. Only list real problems you can see.',
+          text: 'First write down every word printed on this ad image (titles, slogans, logos, banners, lists), one phrase per line. Then say whether X would likely reject the image, judging the text as part of the ad. Answer JSON: {"text":"...","ok":true|false,"issues":["one plain sentence per problem"]}. Only list real problems.',
         },
-        { type: "image_url", image_url: { url: jpegDataUrl, detail: "low" } },
+        { type: "image_url", image_url: { url: jpegDataUrl, detail: "high" } },
       ],
     },
   ]);
   if (!answer) return null;
   const issues = (Array.isArray(answer.issues) ? answer.issues : []).map((i) => String(i).slice(0, 300)).filter(Boolean);
-  return { ok: answer.ok !== false && issues.length === 0, issues };
+  const text = typeof answer.text === "string" ? answer.text.slice(0, 3000) : "";
+  return { ok: answer.ok !== false && issues.length === 0, issues, text };
 }

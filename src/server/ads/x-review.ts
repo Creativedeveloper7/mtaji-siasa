@@ -8,7 +8,18 @@ import { asString, isRecord } from "@/server/content/parse";
 import { AD_LIMITS } from "@/server/tracker/adly/config";
 import { fetchPublicImage, IMAGE_MAX_BYTES } from "@/server/tracker/adly/safe-fetch";
 import { cropForXCard, fitsXCard } from "@/server/tracker/adly/x-card-image";
-import { describeProblems, reviewCopyForX, suggestLandingForX, xCopyProblems, xLandingProblems, type AdCopy, type CopyContext, type LandingPage } from "@/server/ads/x-policy";
+import {
+  describeProblems,
+  imageNameMismatch,
+  imageTextProblems,
+  reviewCopyForX,
+  suggestLandingForX,
+  xCopyProblems,
+  xLandingProblems,
+  type AdCopy,
+  type CopyContext,
+  type LandingPage,
+} from "@/server/ads/x-policy";
 import { aiCheckImage, aiReviewConfigured, aiReviewCopy, aiRewriteLanding } from "@/server/ads/x-policy-ai";
 import type { AdImageCheck, AdPolicyFinding, AdPolicyReview, Leader, Project } from "@/types";
 import type { AuthSession } from "@/types/auth";
@@ -25,6 +36,7 @@ export function copyContext(project: Project, officialNames: string[] = []): Cop
     status: project.status,
     limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body },
     officialNames,
+    hasOpportunities: Array.isArray(project.opportunityIds) ? project.opportunityIds.length > 0 : undefined,
   };
 }
 
@@ -59,6 +71,31 @@ function leaderBylineAdvice(leader: Leader | undefined): AdPolicyFinding | null 
     severity: "advice",
     found: byline,
     why: `Your project page shows "Led by ${byline}"${office ? ` (${office})` : ""}. X counts an ad whose page names an elected official or a candidate as political content, which it doesn't allow in ads aimed at Kenya, so X may still reject this ad. Keep the project's name and description about the work itself.`,
+  };
+}
+
+/** National offices a bare position title can be read as. */
+const NATIONAL_OFFICE =
+  /^(?:the\s+)?(?:president|deputy president|prime cabinet secretary|cabinet secretary|principal secretary|attorney[- ]general|chief justice|speaker|minister)\b/i;
+
+/**
+ * The project page shows "Led by Hon. X" with a bare national-office title
+ * ("President"). Next to a project, X's reviewers can read it as the national
+ * office: a government connection the ad can't show (Deceptive & Fraudulent
+ * Content). A qualified title ("President, Mashinani Youth") is fine.
+ */
+export function officeTitleBlock(leader: Leader | undefined, projectName: string): AdPolicyFinding | null {
+  const office = leader?.position?.trim();
+  if (!leader || !office || !NATIONAL_OFFICE.test(office)) return null;
+  if (/[,—–(]|\s-\s|\bof\b|\bfor\b/i.test(office)) return null;
+  const byline = `${leader.honorific} ${leader.name}`.trim();
+  return {
+    rule: "impersonation",
+    field: "landing",
+    severity: "block",
+    found: `${byline}, ${office}`,
+    why: `Your project page shows "Led by ${byline}" and your profile gives your position as "${office}". X's reviewers can read that as the national office, which suggests a government connection the ad can't show (Deceptive & Fraudulent Content).`,
+    change: `On your profile, say what you lead, for example "${office}, ${projectName}"`,
   };
 }
 
@@ -102,8 +139,18 @@ async function jpegDataUrl(bytes: Uint8Array, width: number): Promise<string> {
   return `data:image/jpeg;base64,${out.toString("base64")}`;
 }
 
-/** Size and shape (always), and what is in it (when the AI review is on). */
-export async function checkImage(url: string, useAi: boolean): Promise<AdImageCheck> {
+/** What the photo check compares the photo's text with. */
+interface ImageContext {
+  projectName: string;
+  officialNames?: string[];
+}
+
+/**
+ * Size and shape (always), and what is in it (when the AI review is on): the
+ * AI's own judgement, plus the words it reads on the photo, checked with the
+ * same political rules as the ad and the project page.
+ */
+export async function checkImage(url: string, useAi: boolean, context?: ImageContext): Promise<AdImageCheck> {
   let bytes: Uint8Array;
   try {
     bytes = await loadImage(url);
@@ -125,14 +172,32 @@ export async function checkImage(url: string, useAi: boolean): Promise<AdImageCh
     const shown = willCrop ? ((await cropForXCard(bytes)) ?? bytes) : bytes;
     const previewDataUrl = await jpegDataUrl(shown, 480);
     if (willCrop) notes.push("X only shows certain shapes, so Adly crops it to 1200×628. Check the crop still shows what matters.");
+    const advice: string[] = [];
+    let text: string | undefined;
     if (ok && useAi) {
-      const seen = await aiCheckImage(await jpegDataUrl(shown, 768));
-      if (seen && !seen.ok) {
-        ok = false;
-        notes.push(...seen.issues);
+      const seen = await aiCheckImage(await jpegDataUrl(shown, 1280));
+      if (seen) {
+        text = seen.text || undefined;
+        if (!seen.ok) {
+          ok = false;
+          notes.push(...seen.issues);
+        }
+        const political = imageTextProblems(seen.text, { officialNames: context?.officialNames });
+        if (political.length) {
+          ok = false;
+          notes.push(
+            `The photo's text says ${political.map((p) => `"${p}"`).join(", ")}. X reads text on an image as part of the ad, and this is political content, which X doesn't allow in ads aimed at Kenya. Use a real photo of the work, with no logos, slogans or flags.`
+          );
+        }
+        const missing = context ? imageNameMismatch(seen.text, context.projectName) : null;
+        if (missing) {
+          advice.push(
+            `The photo shows a different version of the name than "${context!.projectName}" (no "${missing.join(" ")}"). X treats an ad whose name doesn't match its image and page as misleading: use the same name everywhere.`
+          );
+        }
       }
     }
-    return { url, ok, width, height, willCrop, previewDataUrl, notes };
+    return { url, ok, width, height, willCrop, previewDataUrl, notes, ...(advice.length ? { advice } : {}), ...(text ? { text } : {}) };
   } catch {
     return { url, ok: false, notes: ["This file isn't an image Adly can read. Use a JPEG or PNG."] };
   }
@@ -212,7 +277,10 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
   const copy = copyFromBody(body);
   const officials = await projectOfficials(project);
   const context = copyContext(project, officials.names);
-  const landing = xLandingProblems(project, context);
+  const political = xLandingProblems(project, context);
+  const office = officeTitleBlock(officials.leader, project.name);
+  const landing = office ? [...political, office] : political;
+  const imageContext = { projectName: project.name, officialNames: officials.names };
   const images = await projectAdImages(project);
   const requested = asString(body.imageUrl);
   // Only the project's own photos: the URL is fetched server-side.
@@ -221,17 +289,24 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
 
   const [copyReview, image, landingSuggestion] = await Promise.all([
     reviewCopy(copy, context, useAi),
-    imageUrl ? checkImage(imageUrl, useAi) : Promise.resolve<AdImageCheck>({ url: "", ok: false, notes: ["This project has no photo yet."] }),
-    landing.length ? suggestLanding(project, context, useAi) : Promise.resolve(null),
+    imageUrl
+      ? checkImage(imageUrl, useAi, imageContext)
+      : Promise.resolve<AdImageCheck>({ url: "", ok: false, notes: ["This project has no photo yet."] }),
+    political.length ? suggestLanding(project, context, useAi) : Promise.resolve(null),
   ]);
 
   const findings = [...landing, ...copyReview.findings];
   const byline = landing.length ? null : leaderBylineAdvice(officials.leader);
   if (byline) findings.push(byline);
+  for (const note of image.advice ?? []) {
+    findings.push({ rule: "image", field: "image", severity: "advice", found: "Name on the photo", why: note });
+  }
   let alternatives: AdImageCheck[] = [];
   let suggestedImage = imageUrl;
   if (!image.ok) {
-    alternatives = await Promise.all(images.filter((u) => u !== imageUrl).slice(0, MAX_ALTERNATIVES).map((u) => checkImage(u, useAi)));
+    alternatives = await Promise.all(
+      images.filter((u) => u !== imageUrl).slice(0, MAX_ALTERNATIVES).map((u) => checkImage(u, useAi, imageContext))
+    );
     const usable = alternatives.find((a) => a.ok);
     if (usable) suggestedImage = usable.url;
     findings.push({
@@ -291,11 +366,17 @@ export async function reviewAdForX(session: AuthSession, body: unknown): Promise
  * first, so this only trips when someone skips Adly's version.
  */
 export async function xPolicyError(project: Project | undefined, copy: AdCopy, fallbackName: string): Promise<string | null> {
-  const names = project ? (await projectOfficials(project)).names : [];
+  const officials = project ? await projectOfficials(project) : { names: [] as string[], leader: undefined };
+  const names = officials.names;
+  const leader = officials.leader;
   const context = project
     ? copyContext(project, names)
     : { projectName: fallbackName, limits: { headline: AD_LIMITS.headline, body: AD_LIMITS.body } };
   if (project) {
+    const office = officeTitleBlock(leader, project.name);
+    if (office) {
+      return `Adly stopped this ad before it went to X: ${office.why} ${office.change}.`;
+    }
     const landing = xLandingProblems(project, context);
     if (landing.length) {
       return `Adly stopped this ad before it went to X. X doesn't allow political ads aimed at Kenya, and its reviewers read the project page the ad links to, which has political content: ${describeProblems(landing)}. Edit the project so its name and description describe the work itself, or run the ad on Google only.`;

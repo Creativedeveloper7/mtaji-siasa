@@ -348,6 +348,10 @@ export interface AdImageCheck {
   previewDataUrl?: string;
   /** Why it can't be used, or what to watch for */
   notes: string[];
+  /** Worth checking but not a reason X would reject it (e.g. a name that differs from the project's) */
+  advice?: string[];
+  /** The words printed on the photo, as the AI review read them */
+  text?: string;
 }
 
 /** Adly's X policy review of a draft ad, with a version that should pass. */
